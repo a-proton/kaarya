@@ -37,7 +37,7 @@ interface Client {
   zipCode: string;
   projectCount: number;
   totalRevenue: number;
-  rating: number;
+
   tags: string[];
   notes: string;
   joinedDate: string;
@@ -65,7 +65,7 @@ export default function ViewClientPage() {
     zipCode: "11201",
     projectCount: 8,
     totalRevenue: 124500,
-    rating: 4.9,
+
     tags: ["Repeat Client", "High Value", "Residential"],
     notes:
       "Excellent client with multiple successful projects. Prefers modern designs and has a keen eye for detail. Very responsive and pays on time. Looking to start another renovation project in Q2.",
@@ -170,26 +170,6 @@ export default function ViewClientPage() {
                     {client.company}
                   </p>
                 )}
-              </div>
-
-              {/* Rating */}
-              <div className="flex items-center justify-center gap-3 mb-6 pb-6 border-b border-neutral-100">
-                <span className="heading-3 text-neutral-900">
-                  {client.rating}
-                </span>
-                <div className="flex gap-1">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <FontAwesomeIcon
-                      key={star}
-                      icon={faStar}
-                      className={
-                        star <= client.rating
-                          ? "text-yellow-500"
-                          : "text-neutral-300"
-                      }
-                    />
-                  ))}
-                </div>
               </div>
 
               {/* Quick Stats */}

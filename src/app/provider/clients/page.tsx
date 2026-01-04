@@ -33,7 +33,6 @@ interface Client {
   location: string;
   projectCount: number;
   totalRevenue: number;
-  rating: number;
   tags: string[];
   lastContact: string;
   isFavorite: boolean;
@@ -66,7 +65,7 @@ export default function ClientsPage() {
       location: "Brooklyn, NY",
       projectCount: 8,
       totalRevenue: 12400,
-      rating: 4.9,
+
       tags: ["Repeat Client", "High Value", "Residential"],
       lastContact: "2 days ago",
       isFavorite: true,
@@ -81,7 +80,7 @@ export default function ClientsPage() {
       location: "Manhattan, NY",
       projectCount: 3,
       totalRevenue: 5800,
-      rating: 4.7,
+
       tags: ["Active", "Commercial"],
       lastContact: "5 hours ago",
       isFavorite: false,
@@ -96,7 +95,7 @@ export default function ClientsPage() {
       location: "Queens, NY",
       projectCount: 12,
       totalRevenue: 18900,
-      rating: 5.0,
+
       tags: ["Repeat Client", "High Value", "Residential"],
       lastContact: "1 week ago",
       isFavorite: true,
@@ -111,7 +110,7 @@ export default function ClientsPage() {
       location: "Bronx, NY",
       projectCount: 5,
       totalRevenue: 9200,
-      rating: 4.8,
+
       tags: ["Repeat Client", "Residential"],
       lastContact: "3 days ago",
       isFavorite: false,
@@ -126,7 +125,7 @@ export default function ClientsPage() {
       location: "Staten Island, NY",
       projectCount: 15,
       totalRevenue: 24500,
-      rating: 4.9,
+
       tags: ["High Value", "Commercial", "Repeat Client"],
       lastContact: "1 day ago",
       isFavorite: true,
@@ -141,7 +140,7 @@ export default function ClientsPage() {
       location: "Long Island, NY",
       projectCount: 6,
       totalRevenue: 11300,
-      rating: 4.6,
+
       tags: ["Active", "Residential"],
       lastContact: "4 hours ago",
       isFavorite: false,
@@ -430,9 +429,7 @@ export default function ClientsPage() {
                     <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-600 whitespace-nowrap">
                       REVENUE
                     </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-600 whitespace-nowrap">
-                      RATING
-                    </th>
+
                     <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-600 whitespace-nowrap">
                       TAGS
                     </th>
@@ -517,19 +514,6 @@ export default function ClientsPage() {
                         <span className="font-semibold text-neutral-900 whitespace-nowrap">
                           ${client.totalRevenue.toLocaleString()}
                         </span>
-                      </td>
-
-                      {/* Rating */}
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-neutral-900">
-                            {client.rating}
-                          </span>
-                          <FontAwesomeIcon
-                            icon={faSolidStar}
-                            className="text-yellow-500 text-xs"
-                          />
-                        </div>
                       </td>
 
                       {/* Tags */}
@@ -754,13 +738,6 @@ export default function ClientsPage() {
                       </span>
                     </div>
                     <p className="text-neutral-500 text-xs">Total</p>
-                  </div>
-                  <div className="text-center">
-                    <div className="flex items-center justify-center gap-1 text-yellow-500 text-sm mb-1">
-                      <span className="font-semibold">{client.rating}</span>
-                      <FontAwesomeIcon icon={faSolidStar} className="text-xs" />
-                    </div>
-                    <p className="text-neutral-500 text-xs">Rating</p>
                   </div>
                 </div>
 

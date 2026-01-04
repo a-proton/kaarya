@@ -13,6 +13,10 @@ import {
   faCheckCircle,
   faBriefcase,
   faDollarSign,
+  faLock,
+  faEye,
+  faEyeSlash,
+  faKey,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -24,7 +28,7 @@ export default function AddClientPage() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [location, setLocation] = useState("");
-  const [rating, setRating] = useState(5);
+
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
   const [notes, setNotes] = useState("");
@@ -35,6 +39,15 @@ export default function AddClientPage() {
   const [zipCode, setZipCode] = useState("");
   const [website, setWebsite] = useState("");
   const [budget, setBudget] = useState("");
+
+  // Client Portal Credentials
+  const [createPortalAccount, setCreatePortalAccount] = useState(true);
+  const [clientEmail, setClientEmail] = useState("");
+  const [clientPassword, setClientPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [sendWelcomeEmail, setSendWelcomeEmail] = useState(true);
 
   const predefinedTags = [
     "Repeat Client",
@@ -77,12 +90,29 @@ export default function AddClientPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate portal credentials if enabled
+    if (createPortalAccount) {
+      if (!clientEmail) {
+        alert("Please provide an email for the client portal account");
+        return;
+      }
+      if (!clientPassword || clientPassword.length < 8) {
+        alert("Password must be at least 8 characters long");
+        return;
+      }
+      if (clientPassword !== confirmPassword) {
+        alert("Passwords do not match");
+        return;
+      }
+    }
+
     const clientData = {
       clientName,
       email,
       phone,
       location,
-      rating,
+
       tags,
       notes,
       company,
@@ -92,9 +122,16 @@ export default function AddClientPage() {
       zipCode,
       website,
       budget,
+      portalAccount: createPortalAccount
+        ? {
+            email: clientEmail,
+            password: clientPassword,
+            sendWelcomeEmail,
+          }
+        : null,
     };
     console.log("Client Data:", clientData);
-    alert("Client added successfully!");
+    alert("Client added successfully! Portal credentials have been created.");
     router.push("/provider/clients");
   };
 
@@ -366,6 +403,172 @@ export default function AddClientPage() {
               </div>
             </div>
 
+            {/* Client Portal Account Card */}
+            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="heading-4 text-neutral-900 flex items-center gap-3">
+                  <FontAwesomeIcon icon={faKey} className="text-primary-600" />
+                  Client Portal Account
+                </h2>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={createPortalAccount}
+                    onChange={(e) => setCreatePortalAccount(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-14 h-7 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-neutral-0 after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-neutral-0 after:border-neutral-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary-600"></div>
+                </label>
+              </div>
+
+              {createPortalAccount ? (
+                <div className="space-y-5">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <p className="text-blue-700 text-sm">
+                      <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
+                      Create login credentials for your client to access their
+                      dedicated portal where they can view project updates,
+                      messages, and documents.
+                    </p>
+                  </div>
+
+                  {/* Portal Email */}
+                  <div>
+                    <label
+                      htmlFor="clientEmail"
+                      className="block text-neutral-700 font-semibold mb-2 body-small"
+                    >
+                      <FontAwesomeIcon
+                        icon={faEnvelope}
+                        className="text-primary-600 mr-2"
+                      />
+                      Portal Email Address{" "}
+                      <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      id="clientEmail"
+                      value={clientEmail}
+                      onChange={(e) => setClientEmail(e.target.value)}
+                      placeholder="client@email.com"
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                    />
+                    <p className="text-neutral-500 text-sm mt-1">
+                      This email will be used for portal login
+                    </p>
+                  </div>
+
+                  {/* Portal Password */}
+                  <div>
+                    <label
+                      htmlFor="clientPassword"
+                      className="block text-neutral-700 font-semibold mb-2 body-small"
+                    >
+                      <FontAwesomeIcon
+                        icon={faLock}
+                        className="text-primary-600 mr-2"
+                      />
+                      Portal Password <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        id="clientPassword"
+                        value={clientPassword}
+                        onChange={(e) => setClientPassword(e.target.value)}
+                        placeholder="Create a secure password"
+                        className="w-full px-4 py-3 pr-12 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                      >
+                        <FontAwesomeIcon
+                          icon={showPassword ? faEyeSlash : faEye}
+                        />
+                      </button>
+                    </div>
+                    <p className="text-neutral-500 text-sm mt-1">
+                      Minimum 8 characters
+                    </p>
+                  </div>
+
+                  {/* Confirm Password */}
+                  <div>
+                    <label
+                      htmlFor="confirmPassword"
+                      className="block text-neutral-700 font-semibold mb-2 body-small"
+                    >
+                      <FontAwesomeIcon
+                        icon={faLock}
+                        className="text-primary-600 mr-2"
+                      />
+                      Confirm Password <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showConfirmPassword ? "text" : "password"}
+                        id="confirmPassword"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Re-enter password"
+                        className="w-full px-4 py-3 pr-12 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowConfirmPassword(!showConfirmPassword)
+                        }
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                      >
+                        <FontAwesomeIcon
+                          icon={showConfirmPassword ? faEyeSlash : faEye}
+                        />
+                      </button>
+                    </div>
+                    {confirmPassword && clientPassword !== confirmPassword && (
+                      <p className="text-red-600 text-sm mt-1">
+                        Passwords do not match
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Send Welcome Email */}
+                  <div className="flex items-center gap-3 p-4 bg-neutral-50 rounded-lg">
+                    <input
+                      type="checkbox"
+                      id="sendWelcomeEmail"
+                      checked={sendWelcomeEmail}
+                      onChange={(e) => setSendWelcomeEmail(e.target.checked)}
+                      className="w-5 h-5 text-primary-600 border-neutral-300 rounded focus:ring-2 focus:ring-primary-500/20"
+                    />
+                    <label
+                      htmlFor="sendWelcomeEmail"
+                      className="flex-1 cursor-pointer"
+                    >
+                      <p className="text-neutral-900 font-semibold">
+                        Send Welcome Email
+                      </p>
+                      <p className="text-neutral-600 text-sm">
+                        Send login credentials and welcome message to the client
+                      </p>
+                    </label>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-neutral-600">
+                    Portal account creation is disabled. The client will not be
+                    able to log in to their portal.
+                  </p>
+                  <p className="text-neutral-500 text-sm mt-2">
+                    Enable the toggle above to create portal credentials
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* Additional Details Card */}
             <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
               <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
@@ -397,39 +600,6 @@ export default function AddClientPage() {
                     placeholder="e.g., $50,000"
                     className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                   />
-                </div>
-
-                {/* Rating */}
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-3 body-small">
-                    <FontAwesomeIcon
-                      icon={faStar}
-                      className="text-primary-600 mr-2"
-                    />
-                    Client Rating
-                  </label>
-                  <div className="flex items-center gap-4">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        type="button"
-                        onClick={() => setRating(star)}
-                        className="text-3xl hover:scale-110 transition-transform"
-                      >
-                        <FontAwesomeIcon
-                          icon={faStar}
-                          className={
-                            star <= rating
-                              ? "text-yellow-500"
-                              : "text-neutral-300"
-                          }
-                        />
-                      </button>
-                    ))}
-                    <span className="text-neutral-700 font-semibold ml-2">
-                      {rating}.0
-                    </span>
-                  </div>
                 </div>
 
                 {/* Tags */}
@@ -580,19 +750,6 @@ export default function AddClientPage() {
                   </p>
                 </div>
 
-                <div className="text-center pb-4 border-b border-neutral-100">
-                  <p className="text-neutral-600 body-small mb-1">Rating</p>
-                  <div className="flex items-center justify-center gap-2">
-                    <p className="text-neutral-900 font-semibold text-lg">
-                      {rating}.0
-                    </p>
-                    <FontAwesomeIcon
-                      icon={faStar}
-                      className="text-yellow-500"
-                    />
-                  </div>
-                </div>
-
                 {tags.length > 0 && (
                   <div className="text-center">
                     <p className="text-neutral-600 body-small mb-2">Tags</p>
@@ -607,6 +764,23 @@ export default function AddClientPage() {
                           {tag}
                         </span>
                       ))}
+                    </div>
+                  </div>
+                )}
+
+                {createPortalAccount && (
+                  <div className="text-center">
+                    <p className="text-neutral-600 body-small mb-2">
+                      Portal Access
+                    </p>
+                    <div className="flex items-center justify-center gap-2">
+                      <FontAwesomeIcon
+                        icon={faKey}
+                        className="text-primary-600"
+                      />
+                      <span className="text-primary-700 font-semibold text-sm">
+                        Enabled
+                      </span>
                     </div>
                   </div>
                 )}

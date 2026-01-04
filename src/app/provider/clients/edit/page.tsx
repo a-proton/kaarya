@@ -28,7 +28,7 @@ export default function EditClientPage() {
     email: "sarah.j@email.com",
     phone: "(555) 234-5678",
     location: "Brooklyn, NY",
-    rating: 4.9,
+
     tags: ["Repeat Client", "High Value", "Residential"],
     notes:
       "Excellent client with multiple successful projects. Prefers modern designs and has a keen eye for detail. Very responsive and pays on time. Looking to start another renovation project in Q2.",
@@ -45,7 +45,6 @@ export default function EditClientPage() {
   const [email, setEmail] = useState(existingClient.email);
   const [phone, setPhone] = useState(existingClient.phone);
   const [location, setLocation] = useState(existingClient.location);
-  const [rating, setRating] = useState(existingClient.rating);
   const [tags, setTags] = useState<string[]>(existingClient.tags);
   const [tagInput, setTagInput] = useState("");
   const [notes, setNotes] = useState(existingClient.notes);
@@ -104,7 +103,7 @@ export default function EditClientPage() {
       email,
       phone,
       location,
-      rating,
+
       tags,
       notes,
       company,
@@ -421,39 +420,6 @@ export default function EditClientPage() {
                   />
                 </div>
 
-                {/* Rating */}
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-3 body-small">
-                    <FontAwesomeIcon
-                      icon={faStar}
-                      className="text-primary-600 mr-2"
-                    />
-                    Client Rating
-                  </label>
-                  <div className="flex items-center gap-4">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        type="button"
-                        onClick={() => setRating(star)}
-                        className="text-3xl hover:scale-110 transition-transform"
-                      >
-                        <FontAwesomeIcon
-                          icon={faStar}
-                          className={
-                            star <= rating
-                              ? "text-yellow-500"
-                              : "text-neutral-300"
-                          }
-                        />
-                      </button>
-                    ))}
-                    <span className="text-neutral-700 font-semibold ml-2">
-                      {rating}.0
-                    </span>
-                  </div>
-                </div>
-
                 {/* Tags */}
                 <div>
                   <label className="block text-neutral-700 font-semibold mb-3 body-small">
@@ -600,19 +566,6 @@ export default function EditClientPage() {
                   <p className="text-neutral-900 font-semibold">
                     {location || "Not specified"}
                   </p>
-                </div>
-
-                <div className="text-center pb-4 border-b border-neutral-100">
-                  <p className="text-neutral-600 body-small mb-1">Rating</p>
-                  <div className="flex items-center justify-center gap-2">
-                    <p className="text-neutral-900 font-semibold text-lg">
-                      {rating}.0
-                    </p>
-                    <FontAwesomeIcon
-                      icon={faStar}
-                      className="text-yellow-500"
-                    />
-                  </div>
                 </div>
 
                 {tags.length > 0 && (

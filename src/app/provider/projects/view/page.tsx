@@ -15,6 +15,8 @@ import {
   faTimes,
   faFileAlt,
   faChartLine,
+  faDollarSign,
+  faMoneyBill,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -24,6 +26,7 @@ interface Milestone {
   title: string;
   description: string;
   dueDate: string;
+  amount: number;
   status: "pending" | "in-progress" | "completed";
 }
 
@@ -39,9 +42,12 @@ interface Project {
   endDate: string;
   category: string;
   description: string;
+  budget: string;
   progress: number;
   status: "On Track" | "Needs Attention" | "Completed" | "Archived";
   milestones: Milestone[];
+  initialPaymentTaken: boolean;
+  initialPaymentAmount: number;
   team: Array<{
     initials: string;
     color: string;
@@ -56,7 +62,6 @@ export default function ViewProjectPage() {
     null
   );
 
-  // Sample project data - replace with actual data fetching
   const project: Project = {
     id: "1",
     name: "Kitchen Renovation",
@@ -68,16 +73,20 @@ export default function ViewProjectPage() {
     startDate: "2024-01-15",
     endDate: "2024-02-28",
     category: "Renovation",
+    budget: "$75,000",
     description:
       "Complete kitchen renovation including new cabinets, countertops, appliances, and electrical work. The project involves removing old fixtures, updating plumbing, installing modern lighting, and creating an open-concept design that flows into the dining area.",
     progress: 65,
     status: "On Track",
+    initialPaymentTaken: true,
+    initialPaymentAmount: 15000,
     milestones: [
       {
         id: "1",
         title: "Demolition Complete",
         description: "Remove old cabinets, countertops, and fixtures",
         dueDate: "2024-01-20",
+        amount: 8000,
         status: "completed",
       },
       {
@@ -85,6 +94,7 @@ export default function ViewProjectPage() {
         title: "Electrical & Plumbing Rough-In",
         description: "Install new electrical wiring and plumbing lines",
         dueDate: "2024-02-05",
+        amount: 12000,
         status: "in-progress",
       },
       {
@@ -92,6 +102,7 @@ export default function ViewProjectPage() {
         title: "Cabinet Installation",
         description: "Install new custom cabinets and hardware",
         dueDate: "2024-02-15",
+        amount: 18000,
         status: "pending",
       },
       {
@@ -99,6 +110,7 @@ export default function ViewProjectPage() {
         title: "Countertop & Appliance Installation",
         description: "Install granite countertops and all appliances",
         dueDate: "2024-02-25",
+        amount: 13000,
         status: "pending",
       },
     ],
@@ -110,7 +122,6 @@ export default function ViewProjectPage() {
   };
 
   const handleDelete = () => {
-    // Handle delete logic here
     console.log("Deleting project:", project.id);
     setShowDeleteModal(false);
     router.push("/provider/projects");
@@ -118,6 +129,13 @@ export default function ViewProjectPage() {
 
   const handleEdit = () => {
     router.push(`/provider/projects/edit`);
+  };
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+    }).format(amount);
   };
 
   const getStatusColor = (status: Project["status"]) => {
@@ -160,6 +178,17 @@ export default function ViewProjectPage() {
   const completedMilestones = project.milestones.filter(
     (m) => m.status === "completed"
   ).length;
+  const totalMilestoneAmount = project.milestones.reduce(
+    (sum, m) => sum + m.amount,
+    0
+  );
+  const totalProjectValue = totalMilestoneAmount + project.initialPaymentAmount;
+  const paidAmount =
+    project.milestones
+      .filter((m) => m.status === "completed")
+      .reduce((sum, m) => sum + m.amount, 0) +
+    (project.initialPaymentTaken ? project.initialPaymentAmount : 0);
+  const remainingAmount = totalProjectValue - paidAmount;
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -269,6 +298,65 @@ export default function ViewProjectPage() {
               </div>
             </div>
 
+            {/* Financial Summary Card */}
+            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
+                <FontAwesomeIcon
+                  icon={faDollarSign}
+                  className="text-primary-600"
+                />
+                Financial Summary
+              </h2>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-lg border border-green-200">
+                    <p className="text-green-700 text-sm font-medium mb-1">
+                      Total Project Value
+                    </p>
+                    <p className="text-green-900 font-bold text-2xl">
+                      {formatCurrency(totalProjectValue)}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg border border-blue-200">
+                    <p className="text-blue-700 text-sm font-medium mb-1">
+                      Amount Paid
+                    </p>
+                    <p className="text-blue-900 font-bold text-2xl">
+                      {formatCurrency(paidAmount)}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg border border-yellow-200">
+                    <p className="text-yellow-700 text-sm font-medium mb-1">
+                      Remaining
+                    </p>
+                    <p className="text-yellow-900 font-bold text-2xl">
+                      {formatCurrency(remainingAmount)}
+                    </p>
+                  </div>
+                </div>
+
+                {project.initialPaymentTaken && (
+                  <div className="p-4 bg-primary-50 border border-primary-200 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FontAwesomeIcon
+                          icon={faCheckCircle}
+                          className="text-primary-600"
+                        />
+                        <span className="font-semibold text-neutral-900">
+                          Initial Payment Received
+                        </span>
+                      </div>
+                      <span className="text-primary-600 font-bold text-lg">
+                        {formatCurrency(project.initialPaymentAmount)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Description Card */}
             <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
               <h2 className="heading-4 text-neutral-900 mb-4 flex items-center gap-3">
@@ -291,7 +379,7 @@ export default function ViewProjectPage() {
                     icon={faCheckCircle}
                     className="text-primary-600"
                   />
-                  Milestones
+                  Milestones & Payments
                   <span className="text-sm font-normal text-neutral-500">
                     ({completedMilestones}/{project.milestones.length}{" "}
                     completed)
@@ -323,7 +411,15 @@ export default function ViewProjectPage() {
                         <h4 className="font-semibold text-neutral-900 truncate">
                           {milestone.title}
                         </h4>
-                        <div className="flex items-center gap-3 mt-1">
+                        <div className="flex items-center gap-3 mt-1 flex-wrap">
+                          <span className="text-primary-600 font-semibold text-sm flex items-center gap-1">
+                            <FontAwesomeIcon
+                              icon={faDollarSign}
+                              className="text-xs"
+                            />
+                            {formatCurrency(milestone.amount)}
+                          </span>
+                          <span className="text-neutral-400">•</span>
                           <span className="text-neutral-500 text-sm flex items-center gap-1">
                             <FontAwesomeIcon
                               icon={faCalendar}
@@ -360,6 +456,17 @@ export default function ViewProjectPage() {
                     </button>
                   </div>
                 ))}
+
+                <div className="mt-4 p-4 bg-gradient-to-r from-green-50 to-primary-50 border border-green-200 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-neutral-700">
+                      Total Milestone Payments:
+                    </span>
+                    <span className="text-2xl font-bold text-green-600">
+                      {formatCurrency(totalMilestoneAmount)}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -382,6 +489,19 @@ export default function ViewProjectPage() {
                     <p className="text-neutral-600 body-small mb-1">Category</p>
                     <p className="text-neutral-900 font-semibold">
                       {project.category}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3 pb-5 border-b border-neutral-100">
+                  <FontAwesomeIcon
+                    icon={faMoneyBill}
+                    className="text-primary-600 mt-1"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-neutral-600 body-small mb-1">Budget</p>
+                    <p className="text-neutral-900 font-semibold">
+                      {project.budget}
                     </p>
                   </div>
                 </div>
@@ -502,8 +622,15 @@ export default function ViewProjectPage() {
       {viewingMilestone && (
         <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full">
-            <div className="sticky top-0 bg-neutral-0 border-b border-neutral-200 px-6 py-4 flex items-center justify-between rounded-t-xl">
-              <h3 className="heading-4 text-neutral-900">Milestone Details</h3>
+            <div className="sticky top-0 bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between rounded-t-xl">
+              <div>
+                <h3 className="heading-4 text-neutral-900">
+                  Milestone Details
+                </h3>
+                <p className="text-neutral-600 text-sm mt-1">
+                  Review milestone information and payment
+                </p>
+              </div>
               <button
                 onClick={() => setViewingMilestone(null)}
                 className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
@@ -528,50 +655,77 @@ export default function ViewProjectPage() {
                   <label className="block text-neutral-600 font-medium mb-2 body-small">
                     Description
                   </label>
-                  <p className="text-neutral-700 body-regular leading-relaxed">
-                    {viewingMilestone.description}
-                  </p>
+                  <div className="bg-neutral-50 rounded-lg p-4 border border-neutral-200">
+                    <p className="text-neutral-700 body-regular leading-relaxed">
+                      {viewingMilestone.description}
+                    </p>
+                  </div>
                 </div>
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-neutral-600 font-medium mb-2 body-small">
-                    Due Date
+                    Payment Amount
                   </label>
-                  <div className="flex items-center gap-2 text-neutral-900 font-medium">
+                  <div className="flex items-center gap-2 text-neutral-900 font-bold text-2xl bg-green-50 p-4 rounded-lg border border-green-200">
                     <FontAwesomeIcon
-                      icon={faCalendar}
-                      className="text-primary-600"
+                      icon={faDollarSign}
+                      className="text-green-600"
                     />
-                    {new Date(viewingMilestone.dueDate).toLocaleDateString(
-                      "en-US",
-                      {
-                        weekday: "long",
-                        year: "numeric",
-                        month: "long",
-                        day: "numeric",
-                      }
-                    )}
+                    {formatCurrency(viewingMilestone.amount)}
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-neutral-600 font-medium mb-2 body-small">
-                    Status
+                    Due Date
                   </label>
-                  <span
-                    className={`inline-flex px-3 py-1.5 rounded-lg text-sm font-semibold border ${getMilestoneBadgeColor(
-                      viewingMilestone.status
-                    )}`}
-                  >
-                    {viewingMilestone.status === "in-progress"
-                      ? "In Progress"
-                      : viewingMilestone.status.charAt(0).toUpperCase() +
-                        viewingMilestone.status.slice(1)}
-                  </span>
+                  <div className="flex items-center gap-2 text-neutral-900 font-medium bg-neutral-50 p-4 rounded-lg border border-neutral-200">
+                    <FontAwesomeIcon
+                      icon={faCalendar}
+                      className="text-primary-600"
+                    />
+                    <span className="text-sm">
+                      {new Date(viewingMilestone.dueDate).toLocaleDateString(
+                        "en-US",
+                        {
+                          weekday: "long",
+                          year: "numeric",
+                          month: "long",
+                          day: "numeric",
+                        }
+                      )}
+                    </span>
+                  </div>
                 </div>
               </div>
+
+              <div>
+                <label className="block text-neutral-600 font-medium mb-2 body-small">
+                  Status
+                </label>
+                <span
+                  className={`inline-flex px-3 py-1.5 rounded-lg text-sm font-semibold border ${getMilestoneBadgeColor(
+                    viewingMilestone.status
+                  )}`}
+                >
+                  {viewingMilestone.status === "in-progress"
+                    ? "In Progress"
+                    : viewingMilestone.status.charAt(0).toUpperCase() +
+                      viewingMilestone.status.slice(1)}
+                </span>
+              </div>
+
+              {viewingMilestone.status === "completed" && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <p className="text-green-700 text-sm font-medium flex items-center gap-2">
+                    <FontAwesomeIcon icon={faCheckCircle} />
+                    Payment of {formatCurrency(viewingMilestone.amount)} has
+                    been completed for this milestone
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="sticky bottom-0 bg-neutral-50 border-t border-neutral-200 px-6 py-4 flex items-center justify-end rounded-b-xl">

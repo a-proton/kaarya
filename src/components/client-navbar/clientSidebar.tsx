@@ -2,50 +2,68 @@
 
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faTableCellsLarge,
-  faFolder,
-  faUsers,
-  faUserGroup,
-  faCalendar,
-  faMessage,
-  faDollarSign,
-  faGear,
+  faHome,
+  faClipboardList,
   faNewspaper,
-  faCheckCircle,
+  faFileAlt,
+  faMessage,
+  faCalendar,
+  faCreditCard,
+  faBell,
+  faQuestionCircle,
   faSignOut,
-  faExclamationTriangle,
-  faTimes,
+  faCheckCircle,
+  faGear,
 } from "@fortawesome/free-solid-svg-icons";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 const navigationItems = [
-  { icon: faTableCellsLarge, label: "Dashboard", href: "/provider/dashboard" },
-  { icon: faFolder, label: "Projects", href: "/provider/projects" },
-  { icon: faCheckCircle, label: "Milestones", href: "/provider/milestones" },
+  { icon: faHome, label: "Dashboard", href: "/client/dashboard" },
+  {
+    icon: faClipboardList,
+    label: "Project Updates",
+    href: "/client/project-updates",
+  },
 
   {
-    icon: faNewspaper,
-    label: "Daily Updates",
-    href: "/provider/daily-updates",
+    icon: faCheckCircle,
+    label: "Milestones",
+    href: "/client/milestones",
   },
-  { icon: faUsers, label: "Clients", href: "/provider/clients" },
-  { icon: faUserGroup, label: "Team", href: "/provider/teams" },
-  { icon: faCalendar, label: "Calendar", href: "/provider/calendar" },
-  { icon: faMessage, label: "Messages", href: "/provider/messages", badge: 8 },
-  { icon: faDollarSign, label: "Earnings", href: "/provider/earnings" },
-  { icon: faGear, label: "Settings", href: "/provider/settings" },
+  {
+    icon: faMessage,
+    label: "Messages",
+    href: "/client/messages",
+    badge: 5,
+  },
+
+  {
+    icon: faCreditCard,
+    label: "Payments",
+    href: "/client/payments",
+  },
+  {
+    icon: faGear,
+    label: "Settings",
+    href: "/client/settings",
+  },
+
+  {
+    icon: faQuestionCircle,
+    label: "Help & Support",
+    href: "/client/support",
+  },
 ];
 
-export default function ProviderSidebar() {
+export default function ClientSidebar() {
   const pathname = usePathname();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const handleLogout = () => {
-    console.log("Logging out...");
+    console.log("Client logging out...");
     // Add your logout logic here
-    // e.g., clear tokens, redirect to login page
     alert("Logged out successfully!");
     setShowLogoutModal(false);
   };
@@ -56,9 +74,7 @@ export default function ProviderSidebar() {
         {/* Logo Section */}
         <div className="p-6 border-b border-neutral-200">
           <h1 className="text-2xl font-bold text-neutral-900">Karya</h1>
-          <p className="text-xs text-neutral-600 mt-1">
-            WHERE SKILLS MEET OPPORTUNITY
-          </p>
+          <p className="text-xs text-neutral-600 mt-1">CLIENT PORTAL</p>
         </div>
 
         {/* Navigation */}
@@ -93,7 +109,7 @@ export default function ProviderSidebar() {
                       {item.label}
                     </span>
                     {item.badge && (
-                      <span className="w-6 h-6 bg-primary-600 text-neutral-0 rounded-full flex items-center justify-center text-xs font-semibold">
+                      <span className="px-2 py-0.5 bg-primary-600 text-neutral-0 rounded-full text-xs font-semibold min-w-[20px] text-center">
                         {item.badge}
                       </span>
                     )}
@@ -110,12 +126,12 @@ export default function ProviderSidebar() {
             onClick={() => setShowLogoutModal(true)}
             className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-neutral-50 cursor-pointer transition-colors"
           >
-            <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-neutral-0 font-semibold">
-              MR
+            <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-neutral-0 font-semibold">
+              JS
             </div>
             <div className="flex-1 text-left">
               <p className="text-sm font-semibold text-neutral-900">
-                Michael Rodriguez
+                John Smith
               </p>
               <p className="text-xs text-neutral-600">View Profile</p>
             </div>
@@ -148,8 +164,8 @@ export default function ProviderSidebar() {
             {/* Modal Content */}
             <div className="p-6">
               <p className="text-neutral-700 body-regular">
-                You will be logged out of your account and redirected to the
-                login page.
+                You will be logged out of your client portal and redirected to
+                the login page.
               </p>
             </div>
 
