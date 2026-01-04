@@ -40,7 +40,9 @@ interface DailyUpdate {
   id: string;
   projectId: string;
   date: string;
+  title: string;
   content: string;
+  status: "completed" | "in-progress" | "blocked";
   media: MediaFile[];
   timestamp: Date;
 }
@@ -50,7 +52,11 @@ export default function DailyUpdatesPage() {
   const [updateDate, setUpdateDate] = useState<string>(
     new Date().toISOString().split("T")[0]
   );
+  const [updateTitle, setUpdateTitle] = useState<string>("");
   const [updateContent, setUpdateContent] = useState<string>("");
+  const [updateStatus, setUpdateStatus] = useState<
+    "completed" | "in-progress" | "blocked"
+  >("completed");
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -133,8 +139,8 @@ export default function DailyUpdatesPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!selectedProject || !updateContent.trim()) {
-      alert("Please select a project and add update content");
+    if (!selectedProject || !updateTitle.trim() || !updateContent.trim()) {
+      alert("Please select a project, add a title, and add update content");
       return;
     }
 
@@ -151,7 +157,9 @@ export default function DailyUpdatesPage() {
                   ...update,
                   projectId: selectedProject,
                   date: updateDate,
+                  title: updateTitle,
                   content: updateContent,
+                  status: updateStatus,
                   media: mediaFiles,
                 }
               : update
@@ -164,7 +172,9 @@ export default function DailyUpdatesPage() {
           id: Date.now().toString(),
           projectId: selectedProject,
           date: updateDate,
+          title: updateTitle,
           content: updateContent,
+          status: updateStatus,
           media: mediaFiles,
           timestamp: new Date(),
         };
@@ -178,7 +188,9 @@ export default function DailyUpdatesPage() {
       setTimeout(() => setShowSuccess(false), 3000);
 
       // Reset form
+      setUpdateTitle("");
       setUpdateContent("");
+      setUpdateStatus("completed");
       setMediaFiles([]);
       setSelectedProject("");
       setUpdateDate(new Date().toISOString().split("T")[0]);
@@ -193,7 +205,9 @@ export default function DailyUpdatesPage() {
   const handleEditUpdate = (update: DailyUpdate) => {
     setSelectedProject(update.projectId);
     setUpdateDate(update.date);
+    setUpdateTitle(update.title);
     setUpdateContent(update.content);
+    setUpdateStatus(update.status);
     setMediaFiles(update.media);
     setEditingUpdate(update);
     setViewingUpdate(null);
@@ -210,7 +224,9 @@ export default function DailyUpdatesPage() {
 
   const handleCancelEdit = () => {
     setEditingUpdate(null);
+    setUpdateTitle("");
     setUpdateContent("");
+    setUpdateStatus("completed");
     setMediaFiles([]);
     setSelectedProject("");
     setUpdateDate(new Date().toISOString().split("T")[0]);
@@ -380,6 +396,72 @@ export default function DailyUpdatesPage() {
             </div>
           </div>
 
+          {/* Title & Status Card */}
+          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Title */}
+              <div>
+                <label
+                  htmlFor="title"
+                  className="block text-neutral-700 font-semibold mb-3 body-small flex items-center gap-2"
+                >
+                  <FontAwesomeIcon
+                    icon={faFileAlt}
+                    className="text-primary-600"
+                  />
+                  Update Title <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  id="title"
+                  value={updateTitle}
+                  onChange={(e) => setUpdateTitle(e.target.value)}
+                  placeholder="e.g., Electrical Wiring Installation Completed"
+                  required
+                  className="w-full px-4 py-3.5 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                />
+              </div>
+
+              {/* Status */}
+              <div>
+                <label
+                  htmlFor="status"
+                  className="block text-neutral-700 font-semibold mb-3 body-small flex items-center gap-2"
+                >
+                  <FontAwesomeIcon
+                    icon={faCheck}
+                    className="text-primary-600"
+                  />
+                  Work Status <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <select
+                    id="status"
+                    value={updateStatus}
+                    onChange={(e) =>
+                      setUpdateStatus(
+                        e.target.value as
+                          | "completed"
+                          | "in-progress"
+                          | "blocked"
+                      )
+                    }
+                    required
+                    className="w-full appearance-none px-4 py-3.5 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                  >
+                    <option value="completed">✓ Completed</option>
+                    <option value="in-progress">⏱ In Progress</option>
+                    <option value="blocked">⚠ Blocked</option>
+                  </select>
+                  <FontAwesomeIcon
+                    icon={faChevronDown}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Update Content Card */}
           <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
             <label
@@ -532,12 +614,14 @@ export default function DailyUpdatesPage() {
                     "Are you sure you want to discard this update? All content will be lost."
                   )
                 ) {
+                  setUpdateTitle("");
                   setUpdateContent("");
+                  setUpdateStatus("completed");
                   setMediaFiles([]);
                   setSelectedProject("");
                 }
               }}
-              className="px-6 py-3 border-2 border-neutral-200 btn-secondary text-neutral-700 rounded-lg font-semibold hover:bg-neutral-50 transition-colors"
+              className="px-6 py-3 border-2 border-neutral-200 text-neutral-700 rounded-lg font-semibold hover:bg-neutral-50 transition-colors"
             >
               Discard
             </button>
@@ -661,6 +745,22 @@ export default function DailyUpdatesPage() {
                               </p>
                             </div>
                           </div>
+                          <h4 className="font-semibold text-neutral-900 text-lg mb-2">
+                            {update.title}
+                          </h4>
+                          <span
+                            className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 border rounded ${
+                              update.status === "completed"
+                                ? "bg-green-50 text-green-700 border-green-200"
+                                : update.status === "in-progress"
+                                ? "bg-blue-50 text-blue-700 border-blue-200"
+                                : "bg-red-50 text-red-700 border-red-200"
+                            }`}
+                          >
+                            {update.status === "completed" && "✓ COMPLETED"}
+                            {update.status === "in-progress" && "⏱ IN PROGRESS"}
+                            {update.status === "blocked" && "⚠ BLOCKED"}
+                          </span>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
@@ -808,6 +908,36 @@ export default function DailyUpdatesPage() {
                     }
                   </p>
                 </div>
+              </div>
+
+              {/* Title */}
+              <div>
+                <label className="block text-neutral-600 font-medium mb-2 body-small">
+                  Update Title
+                </label>
+                <h2 className="heading-4 text-neutral-900">
+                  {viewingUpdate.title}
+                </h2>
+              </div>
+
+              {/* Status */}
+              <div>
+                <label className="block text-neutral-600 font-medium mb-2 body-small">
+                  Work Status
+                </label>
+                <span
+                  className={`inline-flex items-center gap-1 text-sm font-semibold px-3 py-1.5 border rounded-lg ${
+                    viewingUpdate.status === "completed"
+                      ? "bg-green-50 text-green-700 border-green-200"
+                      : viewingUpdate.status === "in-progress"
+                      ? "bg-blue-50 text-blue-700 border-blue-200"
+                      : "bg-red-50 text-red-700 border-red-200"
+                  }`}
+                >
+                  {viewingUpdate.status === "completed" && "✓ COMPLETED"}
+                  {viewingUpdate.status === "in-progress" && "⏱ IN PROGRESS"}
+                  {viewingUpdate.status === "blocked" && "⚠ BLOCKED"}
+                </span>
               </div>
 
               {/* Date */}
