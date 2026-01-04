@@ -19,6 +19,7 @@ import {
   faExclamationTriangle,
   faDollarSign,
   faSave,
+  faUsers,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -40,6 +41,83 @@ interface MilestoneFormData {
   status: "pending" | "in-progress" | "completed";
 }
 
+interface TeamMember {
+  id: string;
+  name: string;
+  initials: string;
+  role: string;
+  department: string;
+  color: string;
+}
+
+// Mock team members data
+const availableTeamMembers: TeamMember[] = [
+  {
+    id: "1",
+    name: "Michael Rodriguez",
+    initials: "MR",
+    role: "Lead Electrician",
+    department: "Technical",
+    color: "bg-primary-600",
+  },
+  {
+    id: "2",
+    name: "Sarah Johnson",
+    initials: "SJ",
+    role: "Project Manager",
+    department: "Operations",
+    color: "bg-secondary-600",
+  },
+  {
+    id: "3",
+    name: "John Davis",
+    initials: "JD",
+    role: "Carpenter",
+    department: "Technical",
+    color: "bg-yellow-600",
+  },
+  {
+    id: "4",
+    name: "Emily Chen",
+    initials: "EC",
+    role: "Interior Designer",
+    department: "Design",
+    color: "bg-purple-600",
+  },
+  {
+    id: "5",
+    name: "Robert Miller",
+    initials: "RM",
+    role: "HVAC Specialist",
+    department: "Technical",
+    color: "bg-green-600",
+  },
+  {
+    id: "6",
+    name: "Amanda Wilson",
+    initials: "AW",
+    role: "Plumber",
+    department: "Technical",
+    color: "bg-blue-600",
+  },
+  {
+    id: "7",
+    name: "David Brown",
+    initials: "DB",
+    role: "Supervisor",
+    department: "Operations",
+    color: "bg-orange-600",
+  },
+  {
+    id: "8",
+    name: "Lisa Anderson",
+    initials: "LA",
+    role: "Landscaper",
+    department: "Outdoor Services",
+    color: "bg-teal-600",
+  },
+];
+
 export default function EditProjectPage() {
   const router = useRouter();
 
@@ -57,12 +135,13 @@ export default function EditProjectPage() {
       "Complete kitchen renovation including new cabinets, countertops, appliances, and electrical work. The project involves removing old fixtures, updating plumbing, installing modern lighting, and creating an open-concept design that flows into the dining area.",
     initialPaymentTaken: true,
     initialPaymentAmount: "15000",
+    teamMemberIds: ["1", "2", "3"], // Pre-assigned team members
     milestones: [
       {
         id: "1",
         title: "Demolition Complete",
         description: "Remove old cabinets, countertops, and fixtures",
-        dueDate: "2024-01-20",
+        dueDate: "2024-01-25",
         amount: 8000,
         status: "completed" as const,
       },
@@ -100,6 +179,9 @@ export default function EditProjectPage() {
   );
   const [initialPaymentAmount, setInitialPaymentAmount] = useState(
     existingProject.initialPaymentAmount
+  );
+  const [selectedTeamMembers, setSelectedTeamMembers] = useState<string[]>(
+    existingProject.teamMemberIds || []
   );
   const [milestones, setMilestones] = useState<Milestone[]>(
     existingProject.milestones
@@ -248,6 +330,11 @@ export default function EditProjectPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    const assignedTeam = selectedTeamMembers
+      .map((id) => availableTeamMembers.find((m) => m.id === id))
+      .filter(Boolean);
+
     const projectData = {
       id: existingProject.id,
       projectName,
@@ -260,11 +347,14 @@ export default function EditProjectPage() {
       description,
       initialPaymentTaken,
       initialPaymentAmount: initialPayment,
+      teamMembers: assignedTeam,
       milestones,
       totalProjectValue,
     };
     console.log("Updated Project Data:", projectData);
-    showSuccessNotification("Project updated successfully!");
+    showSuccessNotification(
+      `Project updated successfully with ${assignedTeam.length} team member(s)!`
+    );
     setTimeout(() => {
       router.push(`/provider/projects/${existingProject.id}`);
     }, 1500);
@@ -277,6 +367,16 @@ export default function EditProjectPage() {
       )
     ) {
       router.back();
+    }
+  };
+
+  const toggleTeamMember = (memberId: string) => {
+    if (selectedTeamMembers.includes(memberId)) {
+      setSelectedTeamMembers(
+        selectedTeamMembers.filter((id) => id !== memberId)
+      );
+    } else {
+      setSelectedTeamMembers([...selectedTeamMembers, memberId]);
     }
   };
 
@@ -592,6 +692,72 @@ export default function EditProjectPage() {
               </div>
             </div>
 
+            {/* Team Assignment Card */}
+            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
+                <FontAwesomeIcon icon={faUsers} className="text-primary-600" />
+                Assign Team Members
+                {selectedTeamMembers.length > 0 && (
+                  <span className="text-sm font-normal text-neutral-500">
+                    ({selectedTeamMembers.length} selected)
+                  </span>
+                )}
+              </h2>
+
+              <div className="space-y-3">
+                {availableTeamMembers.map((member) => (
+                  <div
+                    key={member.id}
+                    className={`flex items-center gap-4 p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                      selectedTeamMembers.includes(member.id)
+                        ? "border-primary-500 bg-primary-50"
+                        : "border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50"
+                    }`}
+                    onClick={() => toggleTeamMember(member.id)}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedTeamMembers.includes(member.id)}
+                      onChange={() => {}}
+                      className="w-5 h-5 text-primary-600 border-neutral-300 rounded focus:ring-2 focus:ring-primary-500"
+                    />
+                    <div
+                      className={`w-12 h-12 rounded-full ${member.color} text-neutral-0 flex items-center justify-center text-lg font-semibold flex-shrink-0`}
+                    >
+                      {member.initials}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-semibold text-neutral-900">
+                        {member.name}
+                      </h4>
+                      <p className="text-neutral-600 text-sm">
+                        {member.role} • {member.department}
+                      </p>
+                    </div>
+                    {selectedTeamMembers.includes(member.id) && (
+                      <FontAwesomeIcon
+                        icon={faCheckCircle}
+                        className="text-primary-600 text-xl"
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {selectedTeamMembers.length === 0 && (
+                <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-yellow-700 text-sm">
+                    <FontAwesomeIcon
+                      icon={faExclamationTriangle}
+                      className="mr-2"
+                    />
+                    No team members assigned. Select team members to work on
+                    this project.
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* Milestones Card */}
             <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
               <div className="flex items-center justify-between mb-6">
@@ -761,6 +927,43 @@ export default function EditProjectPage() {
                           )}`
                         : "Not specified"}
                     </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
+                  <FontAwesomeIcon
+                    icon={faUsers}
+                    className="text-primary-600 mt-1"
+                  />
+                  <div className="flex-1">
+                    <p className="text-neutral-600 body-small mb-2">
+                      Team Members
+                    </p>
+                    {selectedTeamMembers.length > 0 ? (
+                      <div className="space-y-2">
+                        {selectedTeamMembers.map((id) => {
+                          const member = availableTeamMembers.find(
+                            (m) => m.id === id
+                          );
+                          return member ? (
+                            <div key={id} className="flex items-center gap-2">
+                              <div
+                                className={`w-6 h-6 rounded-full ${member.color} text-neutral-0 flex items-center justify-center text-xs font-semibold flex-shrink-0`}
+                              >
+                                {member.initials}
+                              </div>
+                              <span className="text-xs text-neutral-700 truncate">
+                                {member.name}
+                              </span>
+                            </div>
+                          ) : null;
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-neutral-500 text-sm">
+                        No team assigned
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -1159,6 +1362,23 @@ export default function EditProjectPage() {
           </div>
         </div>
       )}
+
+      <style jsx>{`
+        @keyframes slide-in-right {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+
+        .animate-slide-in-right {
+          animation: slide-in-right 0.3s ease-out;
+        }
+      `}</style>
     </div>
   );
 }
