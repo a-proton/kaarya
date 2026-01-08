@@ -734,22 +734,7 @@ export default function ProjectsPage() {
                             />
                             Edit Project
                           </button>
-                          <button
-                            onClick={() =>
-                              handleAction(
-                                "milestones",
-                                project.id,
-                                project.name
-                              )
-                            }
-                            className="w-full px-4 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-3 transition-colors"
-                          >
-                            <FontAwesomeIcon
-                              icon={faCheckCircle}
-                              className="text-primary-600 w-4"
-                            />
-                            Manage Milestones
-                          </button>
+
                           <button
                             onClick={() =>
                               handleAction("delete", project.id, project.name)
