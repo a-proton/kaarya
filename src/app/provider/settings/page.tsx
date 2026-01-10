@@ -420,7 +420,7 @@ export default function SettingsPage() {
                     </button>
                   </div>
                   <div className="text-neutral-100 text-sm">
-                    Profile URL: karya.com/provider/{profileSlug}
+                    Profile URL: karya.com/services/{profileSlug}
                   </div>
                 </div>
 
