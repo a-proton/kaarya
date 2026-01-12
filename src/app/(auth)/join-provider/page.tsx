@@ -52,7 +52,7 @@ export default function JoinProviderPage() {
 
         if (response.ok) {
           const data = await response.json();
-          setCategories(data.results || data); // Handle both paginated and non-paginated responses
+          setCategories(data.categories || []);
         } else {
           console.error("Failed to fetch categories");
           // Fallback categories if API fails
