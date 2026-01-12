@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
+import { useRouter } from "next/navigation";
 
 interface FormData {
   fullName: string;
@@ -16,7 +17,13 @@ interface FormData {
   serviceCategory: string;
 }
 
+interface Category {
+  id: number;
+  name: string;
+}
+
 export default function JoinProviderPage() {
+  const router = useRouter();
   const {
     register,
     handleSubmit,
@@ -30,10 +37,129 @@ export default function JoinProviderPage() {
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [apiError, setApiError] = useState<string>("");
+  const [successMessage, setSuccessMessage] = useState<string>("");
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(true);
+
+  // Fetch categories from backend
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const API_BASE_URL =
+          process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+        const response = await fetch(`${API_BASE_URL}/api/v1/categories/`);
+
+        if (response.ok) {
+          const data = await response.json();
+          setCategories(data.results || data); // Handle both paginated and non-paginated responses
+        } else {
+          console.error("Failed to fetch categories");
+          // Fallback categories if API fails
+          setCategories([
+            { id: 1, name: "Electrical Services" },
+            { id: 2, name: "Plumbing Services" },
+            { id: 3, name: "HVAC Services" },
+            { id: 4, name: "Carpentry" },
+            { id: 5, name: "Painting" },
+            { id: 6, name: "Cleaning Services" },
+            { id: 7, name: "Gardening & Landscaping" },
+            { id: 8, name: "Other" },
+          ]);
+        }
+      } catch (error) {
+        console.error("Error fetching categories:", error);
+        // Fallback categories
+        setCategories([
+          { id: 1, name: "Electrical Services" },
+          { id: 2, name: "Plumbing Services" },
+          { id: 3, name: "HVAC Services" },
+          { id: 4, name: "Carpentry" },
+          { id: 5, name: "Painting" },
+          { id: 6, name: "Cleaning Services" },
+          { id: 7, name: "Gardening & Landscaping" },
+          { id: 8, name: "Other" },
+        ]);
+      } finally {
+        setLoadingCategories(false);
+      }
+    };
+
+    fetchCategories();
+  }, []);
 
   const onSubmit = async (data: FormData) => {
-    console.log("Provider registration:", data);
-    // Add your registration API call here
+    try {
+      setApiError("");
+      setSuccessMessage("");
+
+      // Prepare the request payload matching Django backend structure
+      const payload = {
+        email: data.email,
+        phone: data.phoneNumber,
+        country_code: data.countryCode,
+        country: data.countryCode === "+977" ? "Nepal" : "Other",
+        password: data.password,
+        password_confirm: data.confirmPassword,
+        full_name: data.fullName,
+        business_name: data.businessName,
+        category_id: parseInt(data.serviceCategory),
+        city: data.city,
+      };
+
+      const API_BASE_URL =
+        process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/auth/register/provider/`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        // Handle validation errors from backend
+        if (result.errors || result.error || result.message) {
+          const errorMessage =
+            result.message ||
+            result.error ||
+            (typeof result.errors === "string"
+              ? result.errors
+              : JSON.stringify(result.errors));
+          throw new Error(errorMessage);
+        }
+        throw new Error("Registration failed. Please try again.");
+      }
+
+      // Success - show message and redirect
+      setSuccessMessage("Registration successful! Redirecting to login...");
+
+      // Store any token if provided
+      if (result.token || result.access_token || result.access) {
+        localStorage.setItem(
+          "authToken",
+          result.token || result.access_token || result.access
+        );
+      }
+
+      // Redirect to login after 2 seconds
+      setTimeout(() => {
+        router.push("/login?type=provider&registered=true");
+      }, 2000);
+    } catch (error) {
+      console.error("Provider registration error:", error);
+      setApiError(
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred. Please try again."
+      );
+    }
   };
 
   const calculatePasswordStrength = (pwd: string) => {
@@ -49,7 +175,6 @@ export default function JoinProviderPage() {
     return "text-success";
   };
 
-  // Get password value safely
   const password = watch("password", "");
   const passwordStrength = calculatePasswordStrength(password);
 
@@ -82,6 +207,42 @@ export default function JoinProviderPage() {
               </Link>
             </p>
           </div>
+
+          {/* API Error Message */}
+          {apiError && (
+            <div className="max-w-2xl mx-auto mb-6 p-4 rounded-xl bg-red-50 border-2 border-red-200">
+              <div className="flex items-start gap-3">
+                <i className="fas fa-exclamation-circle text-red-500 text-xl mt-0.5"></i>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-red-800 mb-1">
+                    Registration Error
+                  </h3>
+                  <p className="text-sm text-red-700">{apiError}</p>
+                </div>
+                <button
+                  onClick={() => setApiError("")}
+                  className="text-red-400 hover:text-red-600 transition-colors"
+                >
+                  <i className="fas fa-times"></i>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Success Message */}
+          {successMessage && (
+            <div className="max-w-2xl mx-auto mb-6 p-4 rounded-xl bg-green-50 border-2 border-green-200">
+              <div className="flex items-start gap-3">
+                <i className="fas fa-check-circle text-green-500 text-xl mt-0.5"></i>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-green-800 mb-1">
+                    Success!
+                  </h3>
+                  <p className="text-sm text-green-700">{successMessage}</p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Single Unified Card */}
           <div className="rounded-2xl shadow-xl overflow-hidden bg-white border border-neutral-100">
@@ -412,7 +573,7 @@ export default function JoinProviderPage() {
                     )}
                   </div>
 
-                  {/* Service Category */}
+                  {/* Service Category - Dynamic from Backend */}
                   <div>
                     <label
                       htmlFor="serviceCategory"
@@ -427,23 +588,23 @@ export default function JoinProviderPage() {
                         {...register("serviceCategory", {
                           required: "Please select a service category",
                         })}
+                        disabled={loadingCategories}
                         className={`w-full pl-12 pr-10 py-3.5 rounded-xl border-2 transition-all duration-300 ${
                           errors.serviceCategory
                             ? "border-error focus:border-error focus:ring-4 focus:ring-error/10"
                             : "border-neutral-200 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10"
-                        } bg-white focus:outline-none appearance-none cursor-pointer text-neutral-700`}
+                        } bg-white focus:outline-none appearance-none cursor-pointer text-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
-                        <option value="">Select your primary service</option>
-                        <option value="electrical">Electrical Services</option>
-                        <option value="plumbing">Plumbing Services</option>
-                        <option value="hvac">HVAC Services</option>
-                        <option value="carpentry">Carpentry</option>
-                        <option value="painting">Painting</option>
-                        <option value="cleaning">Cleaning Services</option>
-                        <option value="gardening">
-                          Gardening & Landscaping
+                        <option value="">
+                          {loadingCategories
+                            ? "Loading categories..."
+                            : "Select your primary service"}
                         </option>
-                        <option value="other">Other</option>
+                        {categories.map((category) => (
+                          <option key={category.id} value={category.id}>
+                            {category.name}
+                          </option>
+                        ))}
                       </select>
                       <i className="fas fa-chevron-down absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"></i>
                     </div>
@@ -458,7 +619,7 @@ export default function JoinProviderPage() {
                   {/* Submit Button */}
                   <button
                     type="submit"
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || loadingCategories}
                     className="w-full bg-primary-500 text-white py-3.5 px-6 rounded-xl font-semibold text-base transition-all duration-300 hover:bg-primary-600 hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 flex items-center justify-center gap-2 mt-6"
                   >
                     {isSubmitting ? (
