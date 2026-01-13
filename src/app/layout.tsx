@@ -12,7 +12,7 @@ const poppins = Poppins({
   variable: "--font-poppins",
 });
 
-export const metadata: Metadata = {
+export const metadata: Metadata = {   
   title: "Kaarya - Service Provider Platform",
   description: "Connect with verified service providers in your area",
 };

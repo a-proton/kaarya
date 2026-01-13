@@ -676,7 +676,7 @@ export default function JoinProviderPage() {
                 <div className="space-y-4">
                   {/* Benefit 1 */}
                   <div className="flex gap-4 p-5 rounded-xl bg-white/10 backdrop-blur-sm transition-all duration-300 hover:bg-white/15">
-                    <div className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 bg-white/20">
+                    <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0 bg-white/20">
                       <i className="fas fa-users text-xl text-white"></i>
                     </div>
                     <div>
