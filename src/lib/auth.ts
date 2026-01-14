@@ -9,10 +9,20 @@ export interface LoginResponse {
     user?: {
       id: number;
       email: string;
+      phone?: string;
       full_name?: string;
       user_type?: string;
     };
-    profile?: any;
+    profile?: {
+      id: number;
+      full_name?: string;
+      business_name?: string;
+      profile_image?: string;
+      initials?: string;
+      slug?: string;
+      category_name?: string;
+      [key: string]: any;
+    };
     tokens?: {
       access?: string;
       refresh?: string;
@@ -33,7 +43,19 @@ export interface LoginResponse {
     full_name?: string;
     user_type?: string;
   };
-  [key: string]: any; // Allow for other response structures
+  [key: string]: any;
+}
+
+export interface UserProfile {
+  id: number;
+  email: string;
+  phone?: string;
+  full_name?: string;
+  business_name?: string;
+  profile_image?: string;
+  initials?: string;
+  user_type?: string;
+  category_name?: string;
 }
 
 export interface LogoutRequest {
@@ -157,11 +179,144 @@ export function getRefreshToken(): string | null {
   return localStorage.getItem("refreshToken");
 }
 
+// src/lib/auth.ts
+// Replace the storeUserProfile and getUserProfile functions with these:
+
+// Store user profile in localStorage
+export function storeUserProfile(profile: UserProfile): void {
+  console.log("=== storeUserProfile CALLED ===");
+  console.log("typeof window:", typeof window);
+
+  if (typeof window === "undefined") {
+    console.error("❌ Window is undefined - cannot store profile (SSR)");
+    return;
+  }
+
+  try {
+    console.log("Profile to store:", profile);
+
+    // Validate profile has required fields
+    if (!profile.id || !profile.email) {
+      console.error("❌ Invalid profile - missing required fields:", profile);
+      return;
+    }
+
+    const profileString = JSON.stringify(profile);
+    console.log(
+      "Stringified profile length:",
+      profileString.length,
+      "characters"
+    );
+
+    localStorage.setItem("userProfile", profileString);
+    console.log("✅ localStorage.setItem completed");
+
+    // Immediate verification
+    const verification = localStorage.getItem("userProfile");
+
+    if (!verification) {
+      console.error("❌ CRITICAL: Storage verification failed!");
+      console.error("localStorage.setItem was called but getItem returns null");
+
+      // Try to diagnose
+      try {
+        const test = "test_storage_" + Date.now();
+        localStorage.setItem("test_key", test);
+        const testResult = localStorage.getItem("test_key");
+        if (testResult === test) {
+          console.log("✅ localStorage is working (test passed)");
+          console.error(
+            "❌ But userProfile storage still failed - this is strange!"
+          );
+        } else {
+          console.error(
+            "❌ localStorage test also failed - localStorage might be blocked"
+          );
+        }
+        localStorage.removeItem("test_key");
+      } catch (testError) {
+        console.error("❌ localStorage test error:", testError);
+      }
+    } else {
+      console.log("✅ Storage verification successful");
+      const parsed = JSON.parse(verification);
+      console.log("Verified stored full_name:", parsed.full_name);
+      console.log("Verified stored business_name:", parsed.business_name);
+    }
+  } catch (error) {
+    console.error("❌ Error in storeUserProfile:", error);
+
+    if (error instanceof Error) {
+      console.error("Error name:", error.name);
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+    }
+  }
+
+  console.log("=== storeUserProfile END ===");
+}
+
+// Get user profile from localStorage
+export function getUserProfile(): UserProfile | null {
+  console.log("=== getUserProfile CALLED ===");
+  console.log("typeof window:", typeof window);
+
+  if (typeof window === "undefined") {
+    console.log("Window is undefined - returning null (SSR)");
+    return null;
+  }
+
+  try {
+    const profile = localStorage.getItem("userProfile");
+    console.log(
+      "Raw profile from storage:",
+      profile ? `Found (${profile.length} chars)` : "null"
+    );
+
+    if (!profile) {
+      console.log("No profile found in localStorage");
+
+      // Debug: List all localStorage keys
+      console.log("All localStorage keys:", Object.keys(localStorage));
+
+      return null;
+    }
+
+    const parsed = JSON.parse(profile);
+    console.log("Parsed profile successfully");
+    console.log("Profile details:");
+    console.log("  id:", parsed.id);
+    console.log("  email:", parsed.email);
+    console.log("  full_name:", parsed.full_name);
+    console.log("  business_name:", parsed.business_name);
+    console.log("  initials:", parsed.initials);
+    console.log("✅ getUserProfile returning profile");
+
+    return parsed;
+  } catch (error) {
+    console.error("❌ Error in getUserProfile:", error);
+
+    if (error instanceof Error) {
+      console.error("Error name:", error.name);
+      console.error("Error message:", error.message);
+    }
+
+    return null;
+  }
+}
+
+// Clear user profile from localStorage
+export function clearUserProfile(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("userProfile");
+}
+
 // Clear tokens from localStorage
 export function clearTokens(): void {
   localStorage.removeItem("accessToken");
   localStorage.removeItem("refreshToken");
   localStorage.removeItem("authToken"); // Clear old token if exists
+  clearUserProfile(); // Also clear user profile
 }
 
 // Check if user is authenticated

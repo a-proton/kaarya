@@ -13,18 +13,17 @@ import {
   faNewspaper,
   faCheckCircle,
   faSignOut,
-  faExclamationTriangle,
-  faTimes,
+  faSpinner,
 } from "@fortawesome/free-solid-svg-icons";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { useUser } from "@/contexts/UserContext";
 
 const navigationItems = [
   { icon: faTableCellsLarge, label: "Dashboard", href: "/provider/dashboard" },
   { icon: faFolder, label: "Projects", href: "/provider/projects" },
   { icon: faCheckCircle, label: "Milestones", href: "/provider/milestones" },
-
   {
     icon: faNewspaper,
     label: "Daily Updates",
@@ -45,19 +44,51 @@ const navigationItems = [
 
 export default function ProviderSidebar() {
   const pathname = usePathname();
+  const { user, isLoading: userLoading, logout } = useUser();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  const handleLogout = () => {
-    console.log("Logging out...");
-    // Add your logout logic here
-    // e.g., clear tokens, redirect to login page
-    alert("Logged out successfully!");
-    setShowLogoutModal(false);
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await logout();
+    } catch (error) {
+      console.error("Logout failed:", error);
+    } finally {
+      setIsLoggingOut(false);
+      setShowLogoutModal(false);
+    }
+  };
+
+  // Get user initials
+  const getUserInitials = () => {
+    if (!user) return "U";
+
+    // Use stored initials if available
+    if (user.initials) {
+      return user.initials;
+    }
+
+    if (user.full_name) {
+      const names = user.full_name.split(" ");
+      return names.length > 1
+        ? `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase()
+        : names[0].substring(0, 2).toUpperCase();
+    }
+
+    return user.email?.[0]?.toUpperCase() || "U";
+  };
+
+  const getDisplayName = () => {
+    if (!user) return "User";
+
+    // Prioritize full_name, then business_name, then email
+    return user.full_name || user.business_name || user.email || "User";
   };
 
   return (
     <>
-      <aside className="fixed left-0 top-0 h-screen w-64 bg-neutral-0 border-r border-neutral-200 flex flex-col">
+      <aside className="fixed left-0 top-0 h-screen w-64 bg-neutral-0 border-r border-neutral-200 flex flex-col z-40">
         {/* Logo Section */}
         <div className="p-6 border-b border-neutral-200">
           <h1 className="text-2xl font-bold text-neutral-900">Karya</h1>
@@ -113,14 +144,23 @@ export default function ProviderSidebar() {
         <div className="p-4 border-t border-neutral-200">
           <button
             onClick={() => setShowLogoutModal(true)}
-            className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-neutral-50 cursor-pointer transition-colors"
+            disabled={userLoading}
+            className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-neutral-50 cursor-pointer transition-colors disabled:opacity-50"
           >
-            <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-neutral-0 font-semibold">
-              MR
-            </div>
-            <div className="flex-1 text-left">
-              <p className="text-sm font-semibold text-neutral-900">
-                Michael Rodriguez
+            {user?.profile_image ? (
+              <img
+                src={user.profile_image}
+                alt={getDisplayName()}
+                className="w-10 h-10 rounded-full object-cover"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-neutral-0 font-semibold text-sm">
+                {getUserInitials()}
+              </div>
+            )}
+            <div className="flex-1 text-left min-w-0">
+              <p className="text-sm font-semibold text-neutral-900 truncate">
+                {userLoading ? "Loading..." : getDisplayName()}
               </p>
               <p className="text-xs text-neutral-600">View Profile</p>
             </div>
@@ -142,7 +182,7 @@ export default function ProviderSidebar() {
                   />
                 </div>
                 <div>
-                  <h3 className="heading-4 text-neutral-900">Logout</h3>
+                  <h3 className="text-lg font-bold text-neutral-900">Logout</h3>
                   <p className="text-neutral-600 text-sm">
                     Are you sure you want to logout?
                   </p>
@@ -152,7 +192,7 @@ export default function ProviderSidebar() {
 
             {/* Modal Content */}
             <div className="p-6">
-              <p className="text-neutral-700 body-regular">
+              <p className="text-neutral-700">
                 You will be logged out of your account and redirected to the
                 login page.
               </p>
@@ -162,16 +202,30 @@ export default function ProviderSidebar() {
             <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowLogoutModal(false)}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
+                disabled={isLoggingOut}
+                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleLogout}
-                className="px-5 py-2.5 bg-red-600 text-neutral-0 rounded-lg hover:bg-red-700 transition-colors font-semibold flex items-center gap-2"
+                disabled={isLoggingOut}
+                className="px-5 py-2.5 bg-red-600 text-neutral-0 rounded-lg hover:bg-red-700 transition-colors font-semibold flex items-center gap-2 disabled:opacity-50"
               >
-                <FontAwesomeIcon icon={faSignOut} />
-                Logout
+                {isLoggingOut ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faSpinner}
+                      className="animate-spin"
+                    />
+                    Logging out...
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon icon={faSignOut} />
+                    Logout
+                  </>
+                )}
               </button>
             </div>
           </div>

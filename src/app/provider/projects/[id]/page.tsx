@@ -17,178 +17,269 @@ import {
   faChartLine,
   faDollarSign,
   faMoneyBill,
+  faSpinner,
 } from "@fortawesome/free-solid-svg-icons";
-import { useState } from "react";
+import { useState, use } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+
+interface Client {
+  id: number;
+  full_name: string;
+  user_email: string;
+  user_phone: string;
+  profile_image: string | null;
+}
+
+interface ServiceProvider {
+  id: number;
+  full_name: string;
+  business_name: string;
+  user_email: string;
+  profile_image: string | null;
+}
 
 interface Milestone {
-  id: string;
+  id: number;
   title: string;
   description: string;
-  dueDate: string;
-  amount: number;
-  status: "pending" | "in-progress" | "completed";
+  due_date: string;
+  amount: string;
+  status: "pending" | "in_progress" | "completed";
+  payment_status: string;
 }
 
 interface Project {
-  id: string;
-  name: string;
-  location: string;
-  client: {
-    name: string;
-    initials: string;
-  };
-  startDate: string;
-  endDate: string;
-  category: string;
+  id: number;
+  project_name: string;
   description: string;
-  budget: string;
-  progress: number;
-  status: "On Track" | "Needs Attention" | "Completed" | "Archived";
+  site_address: string;
+  status:
+    | "not_started"
+    | "in_progress"
+    | "completed"
+    | "on_hold"
+    | "cancelled"
+    | "pending";
+  status_display: string;
+  start_date: string;
+  expected_end_date: string;
+  actual_end_date: string | null;
+  total_cost: string;
+  advance_payment: string;
+  balance_payment: string;
+  client: Client | null;
+  service_provider: ServiceProvider;
   milestones: Milestone[];
-  initialPaymentTaken: boolean;
-  initialPaymentAmount: number;
-  team: Array<{
-    initials: string;
-    color: string;
-    name: string;
+  milestone_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface PageProps {
+  params: Promise<{
+    id: string;
   }>;
 }
 
-export default function ViewProjectPage() {
+export default function ViewProjectPage({ params }: PageProps) {
+  const { id: projectId } = use(params);
   const router = useRouter();
+  const queryClient = useQueryClient();
+
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [viewingMilestone, setViewingMilestone] = useState<Milestone | null>(
     null
   );
 
-  const project: Project = {
-    id: "1",
-    name: "Kitchen Renovation",
-    location: "123 Main Street, New York, NY",
-    client: {
-      name: "Sarah Johnson",
-      initials: "SJ",
+  // Fetch project data
+  const {
+    data: project,
+    isLoading,
+    isError,
+    error,
+  } = useQuery<Project>({
+    queryKey: ["project", projectId],
+    queryFn: async () => {
+      try {
+        const response = await api.get<Project>(
+          `/api/v1/projects/${projectId}/`
+        );
+        return response;
+      } catch (error: any) {
+        // Handle 401 Unauthorized - redirect to login
+        if (error.status === 401) {
+          router.push("/login");
+          throw new Error("Session expired. Please login again.");
+        }
+        throw error;
+      }
     },
-    startDate: "2024-01-15",
-    endDate: "2024-02-28",
-    category: "Renovation",
-    budget: "$75,000",
-    description:
-      "Complete kitchen renovation including new cabinets, countertops, appliances, and electrical work. The project involves removing old fixtures, updating plumbing, installing modern lighting, and creating an open-concept design that flows into the dining area.",
-    progress: 65,
-    status: "On Track",
-    initialPaymentTaken: true,
-    initialPaymentAmount: 15000,
-    milestones: [
-      {
-        id: "1",
-        title: "Demolition Complete",
-        description: "Remove old cabinets, countertops, and fixtures",
-        dueDate: "2024-01-20",
-        amount: 8000,
-        status: "completed",
-      },
-      {
-        id: "2",
-        title: "Electrical & Plumbing Rough-In",
-        description: "Install new electrical wiring and plumbing lines",
-        dueDate: "2024-02-05",
-        amount: 12000,
-        status: "in-progress",
-      },
-      {
-        id: "3",
-        title: "Cabinet Installation",
-        description: "Install new custom cabinets and hardware",
-        dueDate: "2024-02-15",
-        amount: 18000,
-        status: "pending",
-      },
-      {
-        id: "4",
-        title: "Countertop & Appliance Installation",
-        description: "Install granite countertops and all appliances",
-        dueDate: "2024-02-25",
-        amount: 13000,
-        status: "pending",
-      },
-    ],
-    team: [
-      { initials: "SJ", color: "bg-primary-600", name: "Sarah Johnson" },
-      { initials: "MR", color: "bg-secondary-600", name: "Mike Roberts" },
-      { initials: "JD", color: "bg-yellow-600", name: "John Davis" },
-    ],
-  };
+    enabled: !!projectId,
+    retry: (failureCount, error: any) => {
+      // Don't retry on 401
+      if (error.status === 401) return false;
+      return failureCount < 3;
+    },
+  });
+
+  // Delete project mutation
+  const deleteProjectMutation = useMutation({
+    mutationFn: async () => {
+      await api.delete(`/api/v1/projects/${projectId}/`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      router.push("/provider/projects");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to delete project: ${
+          error.data?.detail || error.message || "Unknown error"
+        }`
+      );
+    },
+  });
 
   const handleDelete = () => {
-    console.log("Deleting project:", project.id);
-    setShowDeleteModal(false);
-    router.push("/provider/projects");
+    deleteProjectMutation.mutate();
   };
 
   const handleEdit = () => {
-    router.push(`/provider/projects/edit`);
+    router.push(`/provider/projects/${projectId}/edit`);
   };
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: string | number) => {
+    const numAmount = typeof amount === "string" ? parseFloat(amount) : amount;
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
-    }).format(amount);
+    }).format(numAmount);
   };
 
-  const getStatusColor = (status: Project["status"]) => {
-    const colors = {
-      "On Track": "bg-green-600",
-      "Needs Attention": "bg-yellow-600",
-      Completed: "bg-primary-600",
-      Archived: "bg-neutral-400",
+  const getStatusColor = (status: string) => {
+    const colors: Record<string, string> = {
+      in_progress: "bg-blue-600",
+      completed: "bg-green-600",
+      not_started: "bg-yellow-600",
+      pending: "bg-yellow-600",
+      on_hold: "bg-orange-600",
+      cancelled: "bg-red-600",
     };
     return colors[status] || "bg-neutral-400";
   };
 
-  const getStatusBadgeColor = (status: Project["status"]) => {
-    const colors = {
-      "On Track": "bg-green-100 text-green-700 border-green-200",
-      "Needs Attention": "bg-yellow-100 text-yellow-700 border-yellow-200",
-      Completed: "bg-primary-50 text-primary-700 border-primary-200",
-      Archived: "bg-neutral-100 text-neutral-600 border-neutral-200",
+  const getStatusBadgeColor = (status: string) => {
+    const colors: Record<string, string> = {
+      in_progress: "bg-blue-100 text-blue-700 border-blue-200",
+      completed: "bg-green-100 text-green-700 border-green-200",
+      not_started: "bg-yellow-100 text-yellow-700 border-yellow-200",
+      pending: "bg-yellow-100 text-yellow-700 border-yellow-200",
+      on_hold: "bg-orange-100 text-orange-700 border-orange-200",
+      cancelled: "bg-red-100 text-red-700 border-red-200",
     };
     return (
       colors[status] || "bg-neutral-100 text-neutral-600 border-neutral-200"
     );
   };
 
-  const getMilestoneBadgeColor = (status: Milestone["status"]) => {
-    const colors = {
+  const getMilestoneBadgeColor = (status: string) => {
+    const colors: Record<string, string> = {
       pending: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      "in-progress": "bg-blue-100 text-blue-700 border-blue-200",
+      in_progress: "bg-blue-100 text-blue-700 border-blue-200",
       completed: "bg-green-100 text-green-700 border-green-200",
     };
-    return colors[status];
+    return (
+      colors[status] || "bg-neutral-100 text-neutral-600 border-neutral-200"
+    );
   };
 
-  const getMilestoneIcon = (status: Milestone["status"]) => {
+  const getMilestoneIcon = (status: string) => {
     if (status === "completed") return faCheckCircle;
-    if (status === "in-progress") return faChartLine;
+    if (status === "in_progress") return faChartLine;
     return faCalendar;
   };
+
+  const getClientInitials = (fullName: string) => {
+    const names = fullName.split(" ");
+    if (names.length > 1) {
+      return `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase();
+    }
+    return fullName.substring(0, 2).toUpperCase();
+  };
+
+  const calculateProgress = (project: Project) => {
+    const start = new Date(project.start_date).getTime();
+    const end = new Date(project.expected_end_date).getTime();
+    const now = Date.now();
+
+    if (project.status === "completed") return 100;
+    if (project.status === "not_started" || project.status === "pending")
+      return 0;
+    if (now < start) return 0;
+    if (now > end) return 100;
+
+    const total = end - start;
+    const elapsed = now - start;
+    return Math.round((elapsed / total) * 100);
+  };
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center">
+          <FontAwesomeIcon
+            icon={faSpinner}
+            className="text-primary-600 text-4xl mb-4 animate-spin"
+          />
+          <p className="text-neutral-600">Loading project details...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (isError || !project) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FontAwesomeIcon icon={faTimes} className="text-red-600 text-2xl" />
+          </div>
+          <h3 className="text-lg font-semibold text-red-900 mb-2">
+            Error Loading Project
+          </h3>
+          <p className="text-red-700 mb-4">
+            {error instanceof Error ? error.message : "Failed to load project"}
+          </p>
+          <button
+            onClick={() => router.push("/provider/projects")}
+            className="btn-primary"
+          >
+            Back to Projects
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const completedMilestones = project.milestones.filter(
     (m) => m.status === "completed"
   ).length;
   const totalMilestoneAmount = project.milestones.reduce(
-    (sum, m) => sum + m.amount,
+    (sum, m) => sum + parseFloat(m.amount),
     0
   );
-  const totalProjectValue = totalMilestoneAmount + project.initialPaymentAmount;
+  const advancePayment = parseFloat(project.advance_payment);
+  const totalProjectValue = parseFloat(project.total_cost);
   const paidAmount =
     project.milestones
       .filter((m) => m.status === "completed")
-      .reduce((sum, m) => sum + m.amount, 0) +
-    (project.initialPaymentTaken ? project.initialPaymentAmount : 0);
+      .reduce((sum, m) => sum + parseFloat(m.amount), 0) + advancePayment;
   const remainingAmount = totalProjectValue - paidAmount;
+  const progress = calculateProgress(project);
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -197,7 +288,7 @@ export default function ViewProjectPage() {
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => router.back()}
+              onClick={() => router.push("/provider/projects")}
               className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
               aria-label="Go back"
             >
@@ -207,7 +298,9 @@ export default function ViewProjectPage() {
               />
             </button>
             <div>
-              <h1 className="heading-2 text-neutral-900">{project.name}</h1>
+              <h1 className="heading-2 text-neutral-900">
+                {project.project_name}
+              </h1>
               <p className="text-neutral-600 body-regular mt-1">
                 Project Details & Progress
               </p>
@@ -245,7 +338,7 @@ export default function ViewProjectPage() {
                     project.status
                   )}`}
                 >
-                  {project.status}
+                  {project.status_display}
                 </span>
               </div>
 
@@ -256,7 +349,7 @@ export default function ViewProjectPage() {
                       Overall Progress
                     </span>
                     <span className="text-neutral-900 font-semibold text-lg">
-                      {project.progress}%
+                      {progress}%
                     </span>
                   </div>
                   <div className="w-full h-3 bg-neutral-100 rounded-full overflow-hidden">
@@ -264,7 +357,7 @@ export default function ViewProjectPage() {
                       className={`h-full ${getStatusColor(
                         project.status
                       )} rounded-full transition-all`}
-                      style={{ width: `${project.progress}%` }}
+                      style={{ width: `${progress}%` }}
                     />
                   </div>
                 </div>
@@ -275,23 +368,29 @@ export default function ViewProjectPage() {
                       Start Date
                     </p>
                     <p className="text-neutral-900 font-semibold">
-                      {new Date(project.startDate).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      })}
+                      {new Date(project.start_date).toLocaleDateString(
+                        "en-US",
+                        {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        }
+                      )}
                     </p>
                   </div>
                   <div className="p-4 bg-secondary-50 rounded-lg border border-secondary-200">
                     <p className="text-secondary-600 text-sm font-medium mb-1">
-                      End Date
+                      Expected End Date
                     </p>
                     <p className="text-neutral-900 font-semibold">
-                      {new Date(project.endDate).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      })}
+                      {new Date(project.expected_end_date).toLocaleDateString(
+                        "en-US",
+                        {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        }
+                      )}
                     </p>
                   </div>
                 </div>
@@ -328,7 +427,7 @@ export default function ViewProjectPage() {
                   </div>
                   <div className="p-4 bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg border border-yellow-200">
                     <p className="text-yellow-700 text-sm font-medium mb-1">
-                      Remaining
+                      Balance Remaining
                     </p>
                     <p className="text-yellow-900 font-bold text-2xl">
                       {formatCurrency(remainingAmount)}
@@ -336,7 +435,7 @@ export default function ViewProjectPage() {
                   </div>
                 </div>
 
-                {project.initialPaymentTaken && (
+                {advancePayment > 0 && (
                   <div className="p-4 bg-primary-50 border border-primary-200 rounded-lg">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -345,11 +444,11 @@ export default function ViewProjectPage() {
                           className="text-primary-600"
                         />
                         <span className="font-semibold text-neutral-900">
-                          Initial Payment Received
+                          Advance Payment Received
                         </span>
                       </div>
                       <span className="text-primary-600 font-bold text-lg">
-                        {formatCurrency(project.initialPaymentAmount)}
+                        {formatCurrency(advancePayment)}
                       </span>
                     </div>
                   </div>
@@ -367,7 +466,7 @@ export default function ViewProjectPage() {
                 Project Description
               </h2>
               <p className="text-neutral-700 body-regular leading-relaxed">
-                {project.description}
+                {project.description || "No description provided."}
               </p>
             </div>
 
@@ -380,94 +479,111 @@ export default function ViewProjectPage() {
                     className="text-primary-600"
                   />
                   Milestones & Payments
-                  <span className="text-sm font-normal text-neutral-500">
-                    ({completedMilestones}/{project.milestones.length}{" "}
-                    completed)
-                  </span>
+                  {project.milestones.length > 0 && (
+                    <span className="text-sm font-normal text-neutral-500">
+                      ({completedMilestones}/{project.milestones.length}{" "}
+                      completed)
+                    </span>
+                  )}
                 </h2>
               </div>
 
-              <div className="space-y-3">
-                {project.milestones.map((milestone, index) => (
-                  <div
-                    key={milestone.id}
-                    className="flex items-center justify-between p-4 border border-neutral-200 rounded-lg hover:border-primary-500 transition-colors"
-                  >
-                    <div className="flex items-center gap-4 flex-1 min-w-0">
-                      <div
-                        className={`flex items-center justify-center w-10 h-10 rounded-full ${
-                          milestone.status === "completed"
-                            ? "bg-green-100 text-green-600"
-                            : milestone.status === "in-progress"
-                            ? "bg-blue-100 text-blue-600"
-                            : "bg-neutral-100 text-neutral-500"
-                        } font-semibold flex-shrink-0`}
-                      >
-                        <FontAwesomeIcon
-                          icon={getMilestoneIcon(milestone.status)}
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-semibold text-neutral-900 truncate">
-                          {milestone.title}
-                        </h4>
-                        <div className="flex items-center gap-3 mt-1 flex-wrap">
-                          <span className="text-primary-600 font-semibold text-sm flex items-center gap-1">
-                            <FontAwesomeIcon
-                              icon={faDollarSign}
-                              className="text-xs"
-                            />
-                            {formatCurrency(milestone.amount)}
-                          </span>
-                          <span className="text-neutral-400">•</span>
-                          <span className="text-neutral-500 text-sm flex items-center gap-1">
-                            <FontAwesomeIcon
-                              icon={faCalendar}
-                              className="text-xs"
-                            />
-                            {new Date(milestone.dueDate).toLocaleDateString(
-                              "en-US",
-                              {
-                                month: "short",
-                                day: "numeric",
-                                year: "numeric",
-                              }
-                            )}
-                          </span>
-                          <span
-                            className={`px-2 py-0.5 rounded text-xs font-semibold border ${getMilestoneBadgeColor(
-                              milestone.status
-                            )}`}
-                          >
-                            {milestone.status === "in-progress"
-                              ? "In Progress"
-                              : milestone.status.charAt(0).toUpperCase() +
-                                milestone.status.slice(1)}
-                          </span>
+              {project.milestones.length > 0 ? (
+                <div className="space-y-3">
+                  {project.milestones.map((milestone, index) => (
+                    <div
+                      key={milestone.id}
+                      className="flex items-center justify-between p-4 border border-neutral-200 rounded-lg hover:border-primary-500 transition-colors"
+                    >
+                      <div className="flex items-center gap-4 flex-1 min-w-0">
+                        <div
+                          className={`flex items-center justify-center w-10 h-10 rounded-full ${
+                            milestone.status === "completed"
+                              ? "bg-green-100 text-green-600"
+                              : milestone.status === "in_progress"
+                              ? "bg-blue-100 text-blue-600"
+                              : "bg-neutral-100 text-neutral-500"
+                          } font-semibold flex-shrink-0`}
+                        >
+                          <FontAwesomeIcon
+                            icon={getMilestoneIcon(milestone.status)}
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-semibold text-neutral-900 truncate">
+                            {milestone.title}
+                          </h4>
+                          <div className="flex items-center gap-3 mt-1 flex-wrap">
+                            <span className="text-primary-600 font-semibold text-sm flex items-center gap-1">
+                              <FontAwesomeIcon
+                                icon={faDollarSign}
+                                className="text-xs"
+                              />
+                              {formatCurrency(milestone.amount)}
+                            </span>
+                            <span className="text-neutral-400">•</span>
+                            <span className="text-neutral-500 text-sm flex items-center gap-1">
+                              <FontAwesomeIcon
+                                icon={faCalendar}
+                                className="text-xs"
+                              />
+                              {new Date(milestone.due_date).toLocaleDateString(
+                                "en-US",
+                                {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                }
+                              )}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-xs font-semibold border ${getMilestoneBadgeColor(
+                                milestone.status
+                              )}`}
+                            >
+                              {milestone.status === "in_progress"
+                                ? "In Progress"
+                                : milestone.status.charAt(0).toUpperCase() +
+                                  milestone.status.slice(1)}
+                            </span>
+                          </div>
                         </div>
                       </div>
+                      <button
+                        onClick={() => setViewingMilestone(milestone)}
+                        className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors flex-shrink-0"
+                        aria-label="View milestone"
+                      >
+                        <FontAwesomeIcon icon={faEye} />
+                      </button>
                     </div>
-                    <button
-                      onClick={() => setViewingMilestone(milestone)}
-                      className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors flex-shrink-0"
-                      aria-label="View milestone"
-                    >
-                      <FontAwesomeIcon icon={faEye} />
-                    </button>
-                  </div>
-                ))}
+                  ))}
 
-                <div className="mt-4 p-4 bg-gradient-to-r from-green-50 to-primary-50 border border-green-200 rounded-lg">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-neutral-700">
-                      Total Milestone Payments:
-                    </span>
-                    <span className="text-2xl font-bold text-green-600">
-                      {formatCurrency(totalMilestoneAmount)}
-                    </span>
-                  </div>
+                  {totalMilestoneAmount > 0 && (
+                    <div className="mt-4 p-4 bg-gradient-to-r from-green-50 to-primary-50 border border-green-200 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-neutral-700">
+                          Total Milestone Payments:
+                        </span>
+                        <span className="text-2xl font-bold text-green-600">
+                          {formatCurrency(totalMilestoneAmount)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
+              ) : (
+                <div className="text-center py-12 text-neutral-500">
+                  <FontAwesomeIcon
+                    icon={faCheckCircle}
+                    className="text-5xl mb-4 opacity-30"
+                  />
+                  <p className="body-regular">No milestones added yet</p>
+                  <p className="body-small mt-2">
+                    Milestones will appear here once they are created
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -486,9 +602,11 @@ export default function ViewProjectPage() {
                     className="text-primary-600 mt-1"
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">Category</p>
+                    <p className="text-neutral-600 body-small mb-1">
+                      Project ID
+                    </p>
                     <p className="text-neutral-900 font-semibold">
-                      {project.category}
+                      #{project.id}
                     </p>
                   </div>
                 </div>
@@ -499,9 +617,11 @@ export default function ViewProjectPage() {
                     className="text-primary-600 mt-1"
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">Budget</p>
+                    <p className="text-neutral-600 body-small mb-1">
+                      Total Cost
+                    </p>
                     <p className="text-neutral-900 font-semibold">
-                      {project.budget}
+                      {formatCurrency(project.total_cost)}
                     </p>
                   </div>
                 </div>
@@ -513,14 +633,20 @@ export default function ViewProjectPage() {
                   />
                   <div className="flex-1 min-w-0">
                     <p className="text-neutral-600 body-small mb-1">Client</p>
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center text-sm font-semibold">
-                        {project.client.initials}
+                    {project.client ? (
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center text-sm font-semibold">
+                          {getClientInitials(project.client.full_name)}
+                        </div>
+                        <p className="text-neutral-900 font-semibold truncate">
+                          {project.client.full_name}
+                        </p>
                       </div>
-                      <p className="text-neutral-900 font-semibold truncate">
-                        {project.client.name}
+                    ) : (
+                      <p className="text-neutral-500 italic">
+                        No client assigned
                       </p>
-                    </div>
+                    )}
                   </div>
                 </div>
 
@@ -532,7 +658,7 @@ export default function ViewProjectPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-neutral-600 body-small mb-1">Location</p>
                     <p className="text-neutral-900 font-semibold">
-                      {project.location}
+                      {project.site_address}
                     </p>
                   </div>
                 </div>
@@ -544,24 +670,30 @@ export default function ViewProjectPage() {
                   />
                   <div className="flex-1">
                     <p className="text-neutral-600 body-small mb-3">
-                      Team Members
+                      Service Provider
                     </p>
-                    <div className="space-y-2">
-                      {project.team.map((member, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center gap-2 p-2 rounded-lg hover:bg-neutral-50 transition-colors"
-                        >
-                          <div
-                            className={`w-8 h-8 rounded-full ${member.color} text-neutral-0 flex items-center justify-center text-xs font-semibold`}
-                          >
-                            {member.initials}
-                          </div>
-                          <span className="text-neutral-700 text-sm font-medium">
-                            {member.name}
-                          </span>
+                    <div className="flex items-center gap-2 p-2 rounded-lg bg-neutral-50">
+                      {project.service_provider.profile_image ? (
+                        <img
+                          src={project.service_provider.profile_image}
+                          alt={project.service_provider.full_name}
+                          className="w-8 h-8 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center text-xs font-semibold">
+                          {getClientInitials(
+                            project.service_provider.full_name
+                          )}
                         </div>
-                      ))}
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-neutral-700 text-sm font-medium truncate">
+                          {project.service_provider.full_name}
+                        </p>
+                        <p className="text-neutral-500 text-xs truncate">
+                          {project.service_provider.business_name}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -586,9 +718,9 @@ export default function ViewProjectPage() {
                 Delete Project?
               </h3>
               <p className="text-neutral-600 text-center mb-6">
-                Are you sure you want to delete "{project.name}"? This action
-                cannot be undone and will permanently remove all project data,
-                milestones, and updates.
+                Are you sure you want to delete "{project.project_name}"? This
+                action cannot be undone and will permanently remove all project
+                data, milestones, and updates.
               </p>
 
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
@@ -601,16 +733,30 @@ export default function ViewProjectPage() {
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setShowDeleteModal(false)}
-                  className="flex-1 px-5 py-3 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-50 transition-colors"
+                  disabled={deleteProjectMutation.isPending}
+                  className="flex-1 px-5 py-3 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-50 transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleDelete}
-                  className="flex-1 px-5 py-3 bg-red-600 text-neutral-0 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+                  disabled={deleteProjectMutation.isPending}
+                  className="flex-1 px-5 py-3 bg-red-600 text-neutral-0 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  <FontAwesomeIcon icon={faTrash} />
-                  Delete Project
+                  {deleteProjectMutation.isPending ? (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faSpinner}
+                        className="animate-spin"
+                      />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon icon={faTrash} />
+                      Delete Project
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -687,7 +833,7 @@ export default function ViewProjectPage() {
                       className="text-primary-600"
                     />
                     <span className="text-sm">
-                      {new Date(viewingMilestone.dueDate).toLocaleDateString(
+                      {new Date(viewingMilestone.due_date).toLocaleDateString(
                         "en-US",
                         {
                           weekday: "long",
@@ -710,7 +856,7 @@ export default function ViewProjectPage() {
                     viewingMilestone.status
                   )}`}
                 >
-                  {viewingMilestone.status === "in-progress"
+                  {viewingMilestone.status === "in_progress"
                     ? "In Progress"
                     : viewingMilestone.status.charAt(0).toUpperCase() +
                       viewingMilestone.status.slice(1)}

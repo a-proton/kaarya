@@ -10,8 +10,8 @@ import {
   storeTokens,
   extractAccessToken,
   extractRefreshToken,
+  storeUserProfile, // Add this
 } from "@/lib/auth";
-
 interface LoginFormData {
   email: string;
   password: string;
@@ -75,34 +75,106 @@ function LoginContent() {
     setToast(null);
   };
 
+  // src/app/(auth)/login/page.tsx
+  // Replace your onSubmit function with this:
+
   const onSubmit = async (data: LoginFormData) => {
     try {
       setToast(null);
 
+      console.log("=== LOGIN ATTEMPT ===");
+      console.log("Email:", data.email);
+
       // Call login API
       const response = await login(data.email, data.password);
 
-      console.log("Full login response:", response); // Debug log
+      console.log("=== LOGIN API RESPONSE ===");
+      console.log("Full response:", JSON.stringify(response, null, 2));
 
       // Extract tokens using helper functions
       const accessToken = extractAccessToken(response);
       const refreshToken = extractRefreshToken(response);
 
-      console.log("Extracted access token:", accessToken); // Debug log
-      console.log("Extracted refresh token:", refreshToken); // Debug log
+      console.log(
+        "Extracted access token:",
+        accessToken ? "✅ Found" : "❌ Not found"
+      );
+      console.log(
+        "Extracted refresh token:",
+        refreshToken ? "✅ Found" : "❌ Not found"
+      );
 
       if (!accessToken) {
-        console.error(
-          "Full response object:",
-          JSON.stringify(response, null, 2)
-        );
+        console.error("NO ACCESS TOKEN FOUND!");
         throw new Error(
           "No access token received. Please check the backend response format."
         );
       }
 
-      // Store tokens
+      // Store tokens FIRST
+      console.log("=== STORING TOKENS ===");
       storeTokens(accessToken, refreshToken || undefined);
+
+      // Verify token storage immediately
+      const storedAccessToken = localStorage.getItem("accessToken");
+      const storedRefreshToken = localStorage.getItem("refreshToken");
+      console.log("Token storage verification:");
+      console.log("  Access token stored?", !!storedAccessToken);
+      console.log("  Refresh token stored?", !!storedRefreshToken);
+
+      // Store user profile
+      console.log("=== PREPARING USER PROFILE ===");
+      console.log("response.data exists?", !!response.data);
+      console.log("response.data.profile exists?", !!response.data?.profile);
+      console.log("response.data.user exists?", !!response.data?.user);
+
+      if (response.data?.profile && response.data?.user) {
+        const userProfile = {
+          id: response.data.user.id,
+          email: response.data.user.email,
+          phone: response.data.user.phone,
+          full_name: response.data.profile.full_name,
+          business_name: response.data.profile.business_name,
+          profile_image: response.data.profile.profile_image,
+          initials: response.data.profile.initials,
+          user_type: response.data.user.user_type,
+          category_name: response.data.profile.category_name,
+        };
+
+        console.log("=== USER PROFILE TO STORE ===");
+        console.log("Profile object:", JSON.stringify(userProfile, null, 2));
+        console.log("Key fields:");
+        console.log("  full_name:", userProfile.full_name);
+        console.log("  business_name:", userProfile.business_name);
+        console.log("  initials:", userProfile.initials);
+
+        // Store the profile
+        console.log("=== CALLING storeUserProfile ===");
+        storeUserProfile(userProfile);
+
+        // CRITICAL: Verify storage immediately
+        console.log("=== VERIFYING STORAGE ===");
+        const stored = localStorage.getItem("userProfile");
+        console.log("Raw stored string:", stored);
+
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          console.log("✅ Storage successful!");
+          console.log("Parsed stored profile:", parsed);
+          console.log("Verification:");
+          console.log("  Stored full_name:", parsed.full_name);
+          console.log("  Stored business_name:", parsed.business_name);
+          console.log("  Stored initials:", parsed.initials);
+        } else {
+          console.error("❌ STORAGE FAILED - Nothing in localStorage!");
+          console.error("This is the problem! Profile was not saved.");
+        }
+        console.log("=== END VERIFICATION ===");
+      } else {
+        console.error("❌ MISSING DATA IN RESPONSE");
+        console.error("response.data:", response.data);
+        throw new Error("Invalid response format from server");
+      }
 
       // Show success toast
       setToast({
@@ -110,16 +182,23 @@ function LoginContent() {
         message: "Login successful! Redirecting...",
       });
 
-      // Redirect based on account type
+      console.log("=== REDIRECTING ===");
+      console.log("Active tab:", activeTab);
+
+      // Redirect based on account type with a slight delay to ensure storage completes
       setTimeout(() => {
+        console.log("Executing redirect...");
         if (activeTab === "provider") {
+          console.log("Redirecting to /provider/dashboard");
           router.push("/provider/dashboard");
         } else {
-          router.push("/dashboard");
+          console.log("Redirecting to /client/dashboard");
+          router.push("/client/dashboard");
         }
       }, 1500);
     } catch (error) {
-      console.error("Login error:", error); // Debug log
+      console.error("=== LOGIN ERROR ===");
+      console.error("Error:", error);
       setToast({
         type: "error",
         message:

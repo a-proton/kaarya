@@ -3,57 +3,66 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faArrowLeft,
-  faPlus,
-  faTrash,
   faCalendar,
   faMapMarkerAlt,
   faUser,
   faFileAlt,
   faBriefcase,
   faCheckCircle,
-  faPenToSquare,
-  faEye,
-  faMoneyBill,
   faTimes,
   faCheck,
-  faExclamationTriangle,
   faDollarSign,
-  faUsers,
+  faMoneyBill,
   faSpinner,
-  faCircle,
 } from "@fortawesome/free-solid-svg-icons";
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
-interface Milestone {
-  id: string;
-  title: string;
+interface Client {
+  id: number;
+  full_name: string;
+  user_email: string;
+  user_phone: string;
+  profile_image: string | null;
+}
+
+interface ServiceProvider {
+  id: number;
+  full_name: string;
+  business_name: string;
+  user_email: string;
+  profile_image: string | null;
+}
+
+interface Project {
+  id: number;
+  project_name: string;
   description: string;
-  dueDate: string;
-  amount: number;
-  status: "pending" | "in-progress" | "completed";
+  site_address: string;
+  status:
+    | "not_started"
+    | "in_progress"
+    | "completed"
+    | "on_hold"
+    | "cancelled"
+    | "pending";
+  status_display: string;
+  start_date: string;
+  expected_end_date: string;
+  actual_end_date: string | null;
+  total_cost: string;
+  advance_payment: string;
+  balance_payment: string;
+  client: Client | null;
+  service_provider: ServiceProvider;
+  milestone_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
-interface MilestoneFormData {
-  title: string;
-  description: string;
-  dueDate: string;
-  amount: string;
-  status: "pending" | "in-progress" | "completed";
-}
-
-interface TeamMember {
-  id: string;
-  name: string;
-  initials: string;
-  role: string;
-  department: string;
-  color: string;
-}
-
-interface CreateProjectPayload {
+interface UpdateProjectPayload {
   project_name: string;
   description: string;
   site_address: string;
@@ -65,125 +74,102 @@ interface CreateProjectPayload {
   balance_payment: string;
 }
 
-// Mock team members data
-const availableTeamMembers: TeamMember[] = [
-  {
-    id: "1",
-    name: "Michael Rodriguez",
-    initials: "MR",
-    role: "Lead Electrician",
-    department: "Technical",
-    color: "bg-primary-600",
-  },
-  {
-    id: "2",
-    name: "Sarah Johnson",
-    initials: "SJ",
-    role: "Project Manager",
-    department: "Operations",
-    color: "bg-secondary-600",
-  },
-  {
-    id: "3",
-    name: "John Davis",
-    initials: "JD",
-    role: "Carpenter",
-    department: "Technical",
-    color: "bg-yellow-600",
-  },
-  {
-    id: "4",
-    name: "Emily Chen",
-    initials: "EC",
-    role: "Interior Designer",
-    department: "Design",
-    color: "bg-purple-600",
-  },
-  {
-    id: "5",
-    name: "Robert Miller",
-    initials: "RM",
-    role: "HVAC Specialist",
-    department: "Technical",
-    color: "bg-green-600",
-  },
-  {
-    id: "6",
-    name: "Amanda Wilson",
-    initials: "AW",
-    role: "Plumber",
-    department: "Technical",
-    color: "bg-blue-600",
-  },
-  {
-    id: "7",
-    name: "David Brown",
-    initials: "DB",
-    role: "Supervisor",
-    department: "Operations",
-    color: "bg-orange-600",
-  },
-  {
-    id: "8",
-    name: "Lisa Anderson",
-    initials: "LA",
-    role: "Landscaper",
-    department: "Outdoor Services",
-    color: "bg-teal-600",
-  },
-];
+interface PageProps {
+  params: Promise<{
+    id: string;
+  }>;
+}
 
-export default function CreateProjectPage() {
+export default function EditProjectPage({ params }: PageProps) {
+  const { id: projectId } = use(params);
   const router = useRouter();
+  const queryClient = useQueryClient();
+
   const [projectName, setProjectName] = useState("");
   const [location, setLocation] = useState("");
-  const [clientName, setClientName] = useState("");
   const [projectBudget, setProjectBudget] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [category, setCategory] = useState("");
+  const [status, setStatus] = useState("pending");
   const [description, setDescription] = useState("");
-  const [status, setStatus] = useState("pending"); // Add status state
   const [initialPaymentTaken, setInitialPaymentTaken] = useState(false);
   const [initialPaymentAmount, setInitialPaymentAmount] = useState("");
-  const [selectedTeamMembers, setSelectedTeamMembers] = useState<string[]>([]);
-  const [milestones, setMilestones] = useState<Milestone[]>([]);
-  const [showMilestoneModal, setShowMilestoneModal] = useState(false);
-  const [editingMilestone, setEditingMilestone] = useState<Milestone | null>(
-    null
-  );
-  const [milestoneForm, setMilestoneForm] = useState<MilestoneFormData>({
-    title: "",
-    description: "",
-    dueDate: "",
-    amount: "",
-    status: "pending",
-  });
-  const [viewingMilestone, setViewingMilestone] = useState<Milestone | null>(
-    null
-  );
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
 
-  // Create project mutation
-  const createProjectMutation = useMutation({
-    mutationFn: async (payload: CreateProjectPayload) => {
+  // Fetch project data
+  const {
+    data: project,
+    isLoading,
+    isError,
+    error,
+  } = useQuery<Project>({
+    queryKey: ["project", projectId],
+    queryFn: async () => {
       try {
-        // Using the correct endpoint: /api/v1/projects/create/
-        const response = await api.post("/api/v1/projects/create/", payload);
+        const response = await api.get<Project>(
+          `/api/v1/projects/${projectId}/`
+        );
+        return response;
+      } catch (error: any) {
+        // Handle 401 Unauthorized - redirect to login
+        if (error.status === 401) {
+          router.push("/login");
+          throw new Error("Session expired. Please login again.");
+        }
+        throw error;
+      }
+    },
+    enabled: !!projectId,
+    retry: (failureCount, error: any) => {
+      // Don't retry on 401
+      if (error.status === 401) return false;
+      return failureCount < 3;
+    },
+  });
+
+  // Populate form when project data is loaded
+  useEffect(() => {
+    if (project) {
+      setProjectName(project.project_name);
+      setLocation(project.site_address);
+      setProjectBudget(project.total_cost);
+      setStartDate(project.start_date);
+      setEndDate(project.expected_end_date);
+      setStatus(project.status);
+      setDescription(project.description);
+
+      const advancePayment = parseFloat(project.advance_payment);
+      if (advancePayment > 0) {
+        setInitialPaymentTaken(true);
+        setInitialPaymentAmount(advancePayment.toString());
+      }
+    }
+  }, [project]);
+
+  // Update project mutation
+  const updateProjectMutation = useMutation({
+    mutationFn: async (payload: UpdateProjectPayload) => {
+      try {
+        // Using /update/ to match Django URL pattern
+        const response = await api.put(
+          `/api/v1/projects/${projectId}/update/`,
+          payload
+        );
         return response;
       } catch (error: any) {
         console.error("API Error:", error);
         console.error("Error data:", error.data);
-        console.error("Error status:", error.status);
         throw error;
       }
     },
     onSuccess: (data) => {
-      console.log("Project created:", data);
-      showSuccessNotification("Project created successfully!");
+      console.log("Project updated:", data);
+      showSuccessNotification("Project updated successfully!");
+      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
       setTimeout(() => {
-        router.push("/provider/projects");
+        router.push(`/provider/projects/${projectId}`);
       }, 1500);
     },
     onError: (error: any) => {
@@ -192,45 +178,10 @@ export default function CreateProjectPage() {
         error.data?.detail ||
         error.data?.message ||
         error.message ||
-        "Failed to create project. Check console for details.";
+        "Failed to update project. Check console for details.";
       alert(`Error: ${errorMessage}`);
     },
   });
-
-  const openMilestoneModal = (milestone?: Milestone) => {
-    if (milestone) {
-      setEditingMilestone(milestone);
-      setMilestoneForm({
-        title: milestone.title,
-        description: milestone.description,
-        dueDate: milestone.dueDate,
-        amount: milestone.amount.toString(),
-        status: milestone.status,
-      });
-    } else {
-      setEditingMilestone(null);
-      setMilestoneForm({
-        title: "",
-        description: "",
-        dueDate: "",
-        amount: "",
-        status: "pending",
-      });
-    }
-    setShowMilestoneModal(true);
-  };
-
-  const closeMilestoneModal = () => {
-    setShowMilestoneModal(false);
-    setEditingMilestone(null);
-    setMilestoneForm({
-      title: "",
-      description: "",
-      dueDate: "",
-      amount: "",
-      status: "pending",
-    });
-  };
 
   const showSuccessNotification = (message: string) => {
     setSuccessMessage(message);
@@ -240,87 +191,12 @@ export default function CreateProjectPage() {
     }, 3000);
   };
 
-  const saveMilestone = () => {
-    if (
-      !milestoneForm.title ||
-      !milestoneForm.dueDate ||
-      !milestoneForm.amount
-    ) {
-      alert("Please fill in all required fields including payment amount");
-      return;
-    }
-
-    const amount = parseFloat(milestoneForm.amount);
-    if (isNaN(amount) || amount <= 0) {
-      alert("Please enter a valid payment amount");
-      return;
-    }
-
-    if (editingMilestone) {
-      setMilestones(
-        milestones.map((m) =>
-          m.id === editingMilestone.id ? { ...m, ...milestoneForm, amount } : m
-        )
-      );
-      showSuccessNotification("Milestone updated successfully!");
-    } else {
-      const newMilestone: Milestone = {
-        id: Date.now().toString(),
-        title: milestoneForm.title,
-        description: milestoneForm.description,
-        dueDate: milestoneForm.dueDate,
-        amount,
-        status: milestoneForm.status,
-      };
-      setMilestones([...milestones, newMilestone]);
-      showSuccessNotification("Milestone added successfully!");
-    }
-    closeMilestoneModal();
-  };
-
-  const deleteMilestone = (id: string) => {
-    if (confirm("Are you sure you want to delete this milestone?")) {
-      setMilestones(milestones.filter((m) => m.id !== id));
-      showSuccessNotification("Milestone deleted successfully!");
-    }
-  };
-
-  const viewMilestone = (milestone: Milestone) => {
-    setViewingMilestone(milestone);
-  };
-
-  const closeViewModal = () => {
-    setViewingMilestone(null);
-  };
-
-  const getStatusBadgeColor = (status: Milestone["status"]) => {
-    const colors = {
-      pending: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      "in-progress": "bg-blue-100 text-blue-700 border-blue-200",
-      completed: "bg-green-100 text-green-700 border-green-200",
-    };
-    return colors[status];
-  };
-
-  const getStatusIcon = (status: Milestone["status"]) => {
-    const icons = {
-      pending: faExclamationTriangle,
-      "in-progress": faCheckCircle,
-      completed: faCheck,
-    };
-    return icons[status];
-  };
-
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
     }).format(amount);
   };
-
-  const totalMilestoneAmount = milestones.reduce((sum, m) => sum + m.amount, 0);
-  const initialPayment = parseFloat(initialPaymentAmount) || 0;
-  const totalProjectValue = totalMilestoneAmount + initialPayment;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -339,15 +215,17 @@ export default function CreateProjectPage() {
     }
 
     // Calculate balance payment
-    const advancePayment = initialPaymentTaken ? initialPayment : 0;
+    const advancePayment = initialPaymentTaken
+      ? parseFloat(initialPaymentAmount) || 0
+      : 0;
     const balancePayment = budgetValue - advancePayment;
 
     // Prepare payload matching the API structure
-    const payload: CreateProjectPayload = {
+    const payload: UpdateProjectPayload = {
       project_name: projectName,
-      description: description || `${category} project at ${location}`,
+      description: description,
       site_address: location,
-      status: status, // Use selected status from dropdown
+      status: status,
       start_date: startDate,
       expected_end_date: endDate,
       total_cost: budgetValue.toFixed(2),
@@ -355,10 +233,10 @@ export default function CreateProjectPage() {
       balance_payment: balancePayment.toFixed(2),
     };
 
-    console.log("Submitting payload:", payload);
+    console.log("Submitting update payload:", payload);
 
     // Submit to API
-    createProjectMutation.mutate(payload);
+    updateProjectMutation.mutate(payload);
   };
 
   const handleCancel = () => {
@@ -367,19 +245,51 @@ export default function CreateProjectPage() {
         "Are you sure you want to cancel? All unsaved changes will be lost."
       )
     ) {
-      router.push("/provider/projects");
+      router.push(`/provider/projects/${projectId}`);
     }
   };
 
-  const toggleTeamMember = (memberId: string) => {
-    if (selectedTeamMembers.includes(memberId)) {
-      setSelectedTeamMembers(
-        selectedTeamMembers.filter((id) => id !== memberId)
-      );
-    } else {
-      setSelectedTeamMembers([...selectedTeamMembers, memberId]);
-    }
-  };
+  const initialPayment = parseFloat(initialPaymentAmount) || 0;
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center">
+          <FontAwesomeIcon
+            icon={faSpinner}
+            className="text-primary-600 text-4xl mb-4 animate-spin"
+          />
+          <p className="text-neutral-600">Loading project...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (isError || !project) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FontAwesomeIcon icon={faTimes} className="text-red-600 text-2xl" />
+          </div>
+          <h3 className="text-lg font-semibold text-red-900 mb-2">
+            Error Loading Project
+          </h3>
+          <p className="text-red-700 mb-4">
+            {error instanceof Error ? error.message : "Failed to load project"}
+          </p>
+          <button
+            onClick={() => router.push("/provider/projects")}
+            className="btn-primary"
+          >
+            Back to Projects
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -407,7 +317,7 @@ export default function CreateProjectPage() {
       <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
         <div className="flex items-center gap-4 mb-2">
           <button
-            onClick={() => router.push("/provider/projects")}
+            onClick={() => router.push(`/provider/projects/${projectId}`)}
             className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
             aria-label="Go back"
           >
@@ -417,9 +327,9 @@ export default function CreateProjectPage() {
             />
           </button>
           <div>
-            <h1 className="heading-2 text-neutral-900">Create New Project</h1>
+            <h1 className="heading-2 text-neutral-900">Edit Project</h1>
             <p className="text-neutral-600 body-regular mt-1">
-              Fill in the details to create your project
+              Update project details and information
             </p>
           </div>
         </div>
@@ -458,32 +368,6 @@ export default function CreateProjectPage() {
                     required
                     className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                   />
-                </div>
-
-                {/* Category */}
-                <div>
-                  <label
-                    htmlFor="category"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    Category <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    id="category"
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    required
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
-                  >
-                    <option value="">Select a category</option>
-                    <option value="Renovation">Renovation</option>
-                    <option value="Electrical">Electrical</option>
-                    <option value="Plumbing">Plumbing</option>
-                    <option value="HVAC">HVAC</option>
-                    <option value="Landscaping">Landscaping</option>
-                    <option value="Commercial">Commercial</option>
-                    <option value="Residential">Residential</option>
-                  </select>
                 </div>
 
                 {/* Status */}
@@ -534,31 +418,6 @@ export default function CreateProjectPage() {
                     required
                     className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                   />
-                </div>
-
-                {/* Client Name */}
-                <div>
-                  <label
-                    htmlFor="clientName"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    <FontAwesomeIcon
-                      icon={faUser}
-                      className="text-primary-600 mr-2"
-                    />
-                    Client Name
-                  </label>
-                  <input
-                    type="text"
-                    id="clientName"
-                    value={clientName}
-                    onChange={(e) => setClientName(e.target.value)}
-                    placeholder="e.g., John Smith (Optional - can be assigned later)"
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                  <p className="text-neutral-500 text-xs mt-1">
-                    Client can be assigned later if not available now
-                  </p>
                 </div>
 
                 {/* Project Budget */}
@@ -622,8 +481,7 @@ export default function CreateProjectPage() {
                         icon={faCalendar}
                         className="text-primary-600 mr-2"
                       />
-                      End Date (Estimated){" "}
-                      <span className="text-red-500">*</span>
+                      Expected End Date <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="date"
@@ -668,7 +526,7 @@ export default function CreateProjectPage() {
                   icon={faDollarSign}
                   className="text-primary-600"
                 />
-                Initial Payment (Advance)
+                Advance Payment
               </h2>
 
               <div className="space-y-5">
@@ -689,7 +547,7 @@ export default function CreateProjectPage() {
                       htmlFor="initialPayment"
                       className="text-neutral-900 font-semibold block cursor-pointer"
                     >
-                      Initial payment received
+                      Advance payment received
                     </label>
                     <p className="text-neutral-600 text-sm mt-1">
                       Check this if you've received an advance payment from the
@@ -750,39 +608,6 @@ export default function CreateProjectPage() {
                 )}
               </div>
             </div>
-
-            {/* Team Assignment Card - For Future Use */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 opacity-50">
-              <h2 className="heading-4 text-neutral-900 mb-4 flex items-center gap-3">
-                <FontAwesomeIcon icon={faUsers} className="text-primary-600" />
-                Assign Team Members
-                <span className="text-sm font-normal text-neutral-500">
-                  (Coming Soon)
-                </span>
-              </h2>
-              <p className="text-neutral-600 text-sm">
-                Team member assignment will be available in a future update.
-              </p>
-            </div>
-
-            {/* Milestones Card - For Future Use */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 opacity-50">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="heading-4 text-neutral-900 flex items-center gap-3">
-                  <FontAwesomeIcon
-                    icon={faCheckCircle}
-                    className="text-primary-600"
-                  />
-                  Project Milestones
-                  <span className="text-sm font-normal text-neutral-500">
-                    (Coming Soon)
-                  </span>
-                </h2>
-              </div>
-              <p className="text-neutral-600 text-sm">
-                Milestones can be added after project creation.
-              </p>
-            </div>
           </div>
 
           {/* Sidebar - Takes 1 column */}
@@ -804,19 +629,6 @@ export default function CreateProjectPage() {
                     </p>
                     <p className="text-neutral-900 font-semibold truncate">
                       {projectName || "Not specified"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
-                    icon={faUser}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">Client</p>
-                    <p className="text-neutral-900 font-semibold truncate">
-                      {clientName || "To be assigned"}
                     </p>
                   </div>
                 </div>
@@ -961,28 +773,28 @@ export default function CreateProjectPage() {
               <div className="space-y-3">
                 <button
                   type="submit"
-                  disabled={createProjectMutation.isPending}
+                  disabled={updateProjectMutation.isPending}
                   className="w-full btn-primary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {createProjectMutation.isPending ? (
+                  {updateProjectMutation.isPending ? (
                     <>
                       <FontAwesomeIcon
                         icon={faSpinner}
                         className="animate-spin"
                       />
-                      Creating Project...
+                      Updating Project...
                     </>
                   ) : (
                     <>
-                      <FontAwesomeIcon icon={faPlus} />
-                      Create Project
+                      <FontAwesomeIcon icon={faCheckCircle} />
+                      Update Project
                     </>
                   )}
                 </button>
                 <button
                   type="button"
                   onClick={handleCancel}
-                  disabled={createProjectMutation.isPending}
+                  disabled={updateProjectMutation.isPending}
                   className="w-full btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
@@ -992,8 +804,8 @@ export default function CreateProjectPage() {
               <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
                 <p className="text-blue-700 body-small">
                   <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                  <strong>Note:</strong> Project will be created with "Not
-                  Started" status. You can update it later.
+                  <strong>Note:</strong> Changes will be saved immediately and
+                  reflected across the system.
                 </p>
               </div>
             </div>
