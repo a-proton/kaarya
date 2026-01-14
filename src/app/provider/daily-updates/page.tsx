@@ -19,14 +19,28 @@ import {
   faPenToSquare,
   faTrash,
   faFilter,
+  faClock,
+  faUser,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState, useRef } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { getAccessToken } from "@/lib/auth";
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+
+interface Client {
+  id: number;
+  full_name: string;
+  user_email: string;
+}
 
 interface Project {
-  id: string;
-  name: string;
-  client: string;
-  category: string;
+  id: number;
+  project_name: string;
+  client: Client | null;
+  start_date: string;
+  expected_end_date: string;
 }
 
 interface MediaFile {
@@ -36,78 +50,339 @@ interface MediaFile {
   preview: string;
 }
 
-interface DailyUpdate {
-  id: string;
-  projectId: string;
-  date: string;
+interface ApiUpdate {
+  id: number;
+  update_text: string;
+  work_hours: string;
+  posted_by_name: string;
+  milestone: number | null;
+  media: any[];
+  created_at: string;
+}
+
+interface DailyUpdate extends ApiUpdate {
+  project_id: number;
+  project_name?: string;
+  client_name?: string;
+  title?: string;
+  status?: "completed" | "in-progress" | "blocked";
+}
+
+interface UpdateFormData {
+  project: string;
   title: string;
   content: string;
   status: "completed" | "in-progress" | "blocked";
-  media: MediaFile[];
-  timestamp: Date;
+  work_hours: string;
+}
+
+// Custom API function for FormData uploads
+async function uploadUpdateWithMedia(
+  projectId: string,
+  formData: FormData
+): Promise<any> {
+  const token = getAccessToken();
+
+  if (!token) {
+    throw new Error("No authentication token found");
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/projects/${projectId}/updates/create/`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        // DO NOT set Content-Type - browser will set it with boundary
+      },
+      body: formData,
+      credentials: "include",
+    }
+  );
+
+  if (!response.ok) {
+    let errorData;
+    try {
+      errorData = await response.json();
+    } catch {
+      errorData = { detail: `HTTP ${response.status} Error` };
+    }
+
+    // Extract error message
+    let errorMessage = "Failed to create update";
+    if (errorData.detail) {
+      errorMessage = errorData.detail;
+    } else if (errorData.error) {
+      errorMessage = errorData.error;
+    } else if (typeof errorData === "object") {
+      // Handle field-specific errors
+      const fieldErrors = Object.entries(errorData)
+        .map(([field, messages]) => {
+          const msgArray = Array.isArray(messages) ? messages : [messages];
+          return `${field}: ${msgArray.join(", ")}`;
+        })
+        .join("\n");
+      if (fieldErrors) errorMessage = fieldErrors;
+    }
+
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+}
+
+// Custom API function for DELETE requests
+async function deleteUpdate(
+  projectId: number,
+  updateId: number
+): Promise<void> {
+  const token = getAccessToken();
+
+  if (!token) {
+    throw new Error("No authentication token found");
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/projects/${projectId}/updates/${updateId}/delete/`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+    }
+  );
+
+  if (!response.ok) {
+    let errorData;
+    try {
+      errorData = await response.json();
+    } catch {
+      errorData = { detail: `HTTP ${response.status} Error` };
+    }
+    throw new Error(
+      errorData.detail || errorData.error || "Failed to delete update"
+    );
+  }
+}
+
+// Custom API function for GET requests
+async function fetchProjects(): Promise<{ results: Project[] }> {
+  const token = getAccessToken();
+
+  if (!token) {
+    throw new Error("No authentication token found");
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/projects/`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch projects");
+  }
+
+  return response.json();
+}
+
+async function fetchProjectUpdates(
+  projectId: number
+): Promise<{ results: ApiUpdate[] }> {
+  const token = getAccessToken();
+
+  if (!token) {
+    throw new Error("No authentication token found");
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/projects/${projectId}/updates/`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch updates for project ${projectId}`);
+  }
+
+  return response.json();
 }
 
 export default function DailyUpdatesPage() {
+  const queryClient = useQueryClient();
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [updateDate, setUpdateDate] = useState<string>(
     new Date().toISOString().split("T")[0]
   );
   const [updateTitle, setUpdateTitle] = useState<string>("");
   const [updateContent, setUpdateContent] = useState<string>("");
+  const [workHours, setWorkHours] = useState<string>("");
   const [updateStatus, setUpdateStatus] = useState<
     "completed" | "in-progress" | "blocked"
   >("completed");
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [dailyUpdates, setDailyUpdates] = useState<DailyUpdate[]>([]);
   const [viewingUpdate, setViewingUpdate] = useState<DailyUpdate | null>(null);
   const [editingUpdate, setEditingUpdate] = useState<DailyUpdate | null>(null);
   const [filterProject, setFilterProject] = useState<string>("all");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sample projects
-  const projects: Project[] = [
-    {
-      id: "1",
-      name: "Kitchen Renovation",
-      client: "Sarah Johnson",
-      category: "Renovation",
+  // Fetch projects
+  const { data: projectsData, isLoading: projectsLoading } = useQuery({
+    queryKey: ["projects"],
+    queryFn: fetchProjects,
+  });
+
+  // Fetch all updates from all projects
+  const {
+    data: allUpdatesData,
+    isLoading: updatesLoading,
+    isError,
+  } = useQuery({
+    queryKey: ["all-daily-updates"],
+    queryFn: async () => {
+      let projects: Project[] = [];
+      if (projectsData && Array.isArray(projectsData.results)) {
+        projects = projectsData.results;
+      } else {
+        const projRes = await fetchProjects();
+        projects = projRes.results || [];
+      }
+
+      if (projects.length === 0) return [];
+
+      const updatesPromises = projects.map(async (project) => {
+        try {
+          const res = await fetchProjectUpdates(project.id);
+          const results = res.results || [];
+          return results.map((update) => ({
+            ...update,
+            project_id: project.id,
+            project_name: project.project_name,
+            client_name: project.client?.full_name || "Unassigned",
+            // Extract title from first line of update_text
+            title: update.update_text.split("\n")[0].substring(0, 100),
+            // Infer status from work_hours (you can adjust this logic)
+            status:
+              parseFloat(update.work_hours) > 0 ? "completed" : "in-progress",
+          }));
+        } catch (err) {
+          console.error(
+            `Error fetching updates for project ${project.id}:`,
+            err
+          );
+          return [];
+        }
+      });
+
+      const updatesArrays = await Promise.all(updatesPromises);
+      return updatesArrays.flat();
     },
-    {
-      id: "2",
-      name: "Bathroom Upgrade",
-      client: "David Martinez",
-      category: "Plumbing",
+    enabled: true,
+  });
+
+  const createUpdateMutation = useMutation({
+    mutationFn: async (data: UpdateFormData & { media: MediaFile[] }) => {
+      const formData = new FormData();
+
+      // Add update text (title + content combined)
+      formData.append("update_text", `${data.title}\n\n${data.content}`);
+
+      // Add work hours (backend expects decimal, default to 0 if empty)
+      const hours = data.work_hours.trim();
+      formData.append("work_hours", hours || "0");
+
+      // Add media files - backend expects files named 'media_files'
+      // Based on your Django model, it should accept multiple files
+      data.media.forEach((media) => {
+        formData.append("media_files", media.file, media.file.name);
+      });
+
+      // Log FormData contents for debugging
+      console.log("📤 Sending FormData:");
+      for (const [key, value] of formData.entries()) {
+        if (value instanceof File) {
+          console.log(
+            `${key}: File(${value.name}, ${value.size} bytes, ${value.type})`
+          );
+        } else {
+          console.log(`${key}: ${value}`);
+        }
+      }
+
+      return uploadUpdateWithMedia(data.project, formData);
     },
-    {
-      id: "3",
-      name: "Electrical Panel Upgrade",
-      client: "Jennifer White",
-      category: "Electrical",
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-daily-updates"] });
+      showSuccessNotification("Update posted successfully!");
+      resetForm();
     },
-    {
-      id: "4",
-      name: "HVAC System Installation",
-      client: "Michael Brown",
-      category: "HVAC",
+    onError: (error: Error) => {
+      console.error("❌ Create update error:", error);
+      alert(error.message || "Failed to post update");
     },
-    {
-      id: "5",
-      name: "Garden & Landscape Design",
-      client: "Robert Anderson",
-      category: "Landscaping",
+  });
+
+  // Delete update mutation
+  const deleteUpdateMutation = useMutation({
+    mutationFn: async ({
+      projectId,
+      updateId,
+    }: {
+      projectId: number;
+      updateId: number;
+    }) => {
+      await deleteUpdate(projectId, updateId);
     },
-  ];
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-daily-updates"] });
+      showSuccessNotification("Update deleted successfully!");
+      setViewingUpdate(null);
+    },
+    onError: (error: Error) => {
+      alert(error.message || "Failed to delete update");
+    },
+  });
+
+  const projects = projectsData?.results || [];
+  const dailyUpdates = Array.isArray(allUpdatesData) ? allUpdatesData : [];
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
 
-    Array.from(files).forEach((file) => {
-      const fileType = file.type.startsWith("image/") ? "image" : "video";
+    const newFiles: MediaFile[] = [];
 
-      // Create preview URL
+    Array.from(files).forEach((file) => {
+      // Validate file type
+      const isImage = file.type.startsWith("image/");
+      const isVideo = file.type.startsWith("video/");
+
+      if (!isImage && !isVideo) {
+        alert(`File ${file.name} is not a valid image or video`);
+        return;
+      }
+
+      // Validate file size (50MB limit)
+      const maxSize = 50 * 1024 * 1024; // 50MB
+      if (file.size > maxSize) {
+        alert(`File ${file.name} is too large. Maximum size is 50MB`);
+        return;
+      }
+
+      const fileType = isImage ? "image" : "video";
       const preview = URL.createObjectURL(file);
 
       const newMedia: MediaFile = {
@@ -117,10 +392,11 @@ export default function DailyUpdatesPage() {
         preview,
       };
 
-      setMediaFiles((prev) => [...prev, newMedia]);
+      newFiles.push(newMedia);
     });
 
-    // Reset input
+    setMediaFiles((prev) => [...prev, ...newFiles]);
+
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -139,105 +415,122 @@ export default function DailyUpdatesPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!selectedProject || !updateTitle.trim() || !updateContent.trim()) {
-      alert("Please select a project, add a title, and add update content");
+    // Validation
+    if (!selectedProject) {
+      alert("Please select a project");
+      return;
+    }
+
+    if (!updateTitle.trim()) {
+      alert("Please add a title");
+      return;
+    }
+
+    if (!updateContent.trim()) {
+      alert("Please add update content");
       return;
     }
 
     setIsSubmitting(true);
 
-    // Simulate API call
-    setTimeout(() => {
-      if (editingUpdate) {
-        // Update existing update
-        setDailyUpdates((prev) =>
-          prev.map((update) =>
-            update.id === editingUpdate.id
-              ? {
-                  ...update,
-                  projectId: selectedProject,
-                  date: updateDate,
-                  title: updateTitle,
-                  content: updateContent,
-                  status: updateStatus,
-                  media: mediaFiles,
-                }
-              : update
-          )
-        );
-        setEditingUpdate(null);
-      } else {
-        // Create new update
-        const newUpdate: DailyUpdate = {
-          id: Date.now().toString(),
-          projectId: selectedProject,
-          date: updateDate,
-          title: updateTitle,
-          content: updateContent,
-          status: updateStatus,
-          media: mediaFiles,
-          timestamp: new Date(),
-        };
-        setDailyUpdates((prev) => [newUpdate, ...prev]);
-      }
-
-      console.log("Daily Update Submitted");
-
-      // Show success message
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
-
-      // Reset form
-      setUpdateTitle("");
-      setUpdateContent("");
-      setUpdateStatus("completed");
-      setMediaFiles([]);
-      setSelectedProject("");
-      setUpdateDate(new Date().toISOString().split("T")[0]);
+    try {
+      await createUpdateMutation.mutateAsync({
+        project: selectedProject,
+        title: updateTitle,
+        content: updateContent,
+        status: updateStatus,
+        work_hours: workHours,
+        media: mediaFiles,
+      });
+    } catch (error) {
+      console.error("Submission error:", error);
+    } finally {
       setIsSubmitting(false);
-    }, 1500);
+    }
+  };
+
+  const resetForm = () => {
+    setUpdateTitle("");
+    setUpdateContent("");
+    setUpdateStatus("completed");
+    setWorkHours("");
+    mediaFiles.forEach((media) => URL.revokeObjectURL(media.preview));
+    setMediaFiles([]);
+    setSelectedProject("");
+    setUpdateDate(new Date().toISOString().split("T")[0]);
+    setEditingUpdate(null);
+  };
+
+  const showSuccessNotification = (message: string) => {
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
   };
 
   const handleViewUpdate = (update: DailyUpdate) => {
     setViewingUpdate(update);
   };
 
-  const handleEditUpdate = (update: DailyUpdate) => {
-    setSelectedProject(update.projectId);
-    setUpdateDate(update.date);
-    setUpdateTitle(update.title);
-    setUpdateContent(update.content);
-    setUpdateStatus(update.status);
-    setMediaFiles(update.media);
-    setEditingUpdate(update);
-    setViewingUpdate(null);
-    // Scroll to form
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  const handleDeleteUpdate = (id: string) => {
+  const handleDeleteUpdate = (update: DailyUpdate) => {
     if (confirm("Are you sure you want to delete this update?")) {
-      setDailyUpdates((prev) => prev.filter((update) => update.id !== id));
-      setViewingUpdate(null);
+      deleteUpdateMutation.mutate({
+        projectId: update.project_id,
+        updateId: update.id,
+      });
     }
   };
 
   const handleCancelEdit = () => {
-    setEditingUpdate(null);
-    setUpdateTitle("");
-    setUpdateContent("");
-    setUpdateStatus("completed");
-    setMediaFiles([]);
-    setSelectedProject("");
-    setUpdateDate(new Date().toISOString().split("T")[0]);
+    resetForm();
   };
 
-  const selectedProjectData = projects.find((p) => p.id === selectedProject);
+  const selectedProjectData = projects.find(
+    (p) => p.id.toString() === selectedProject
+  );
 
   const filteredUpdates =
     filterProject === "all"
       ? dailyUpdates
-      : dailyUpdates.filter((update) => update.projectId === filterProject);
+      : dailyUpdates.filter(
+          (update) => update.project_id.toString() === filterProject
+        );
+
+  const isLoading = projectsLoading || updatesLoading;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center">
+          <FontAwesomeIcon
+            icon={faSpinner}
+            className="text-primary-600 text-4xl mb-4 animate-spin"
+          />
+          <p className="text-neutral-600">Loading updates...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FontAwesomeIcon icon={faTimes} className="text-red-600 text-2xl" />
+          </div>
+          <h3 className="text-lg font-semibold text-red-900 mb-2">
+            Error Loading Updates
+          </h3>
+          <p className="text-red-700 mb-4">Failed to load daily updates</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="btn-primary"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -313,7 +606,7 @@ export default function DailyUpdatesPage() {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Project Selection & Date Card */}
+          {/* Project Selection & Work Hours Card */}
           <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Project Selection */}
@@ -339,7 +632,8 @@ export default function DailyUpdatesPage() {
                     <option value="">Choose a project...</option>
                     {projects.map((project) => (
                       <option key={project.id} value={project.id}>
-                        {project.name} - {project.client}
+                        {project.project_name} -{" "}
+                        {project.client?.full_name || "No client"}
                       </option>
                     ))}
                   </select>
@@ -351,46 +645,37 @@ export default function DailyUpdatesPage() {
                 {selectedProjectData && (
                   <div className="mt-3 p-3 bg-primary-50 rounded-lg border border-primary-200">
                     <p className="text-primary-700 text-sm">
-                      <span className="font-semibold">Category:</span>{" "}
-                      {selectedProjectData.category}
-                    </p>
-                    <p className="text-primary-700 text-sm">
                       <span className="font-semibold">Client:</span>{" "}
-                      {selectedProjectData.client}
+                      {selectedProjectData.client?.full_name || "Unassigned"}
                     </p>
                   </div>
                 )}
               </div>
 
-              {/* Date Selection */}
+              {/* Work Hours */}
               <div>
                 <label
-                  htmlFor="date"
+                  htmlFor="work_hours"
                   className="block text-neutral-700 font-semibold mb-3 body-small flex items-center gap-2"
                 >
                   <FontAwesomeIcon
-                    icon={faCalendar}
+                    icon={faClock}
                     className="text-primary-600"
                   />
-                  Update Date <span className="text-red-500">*</span>
+                  Work Hours
                 </label>
                 <input
-                  type="date"
-                  id="date"
-                  value={updateDate}
-                  onChange={(e) => setUpdateDate(e.target.value)}
-                  max={new Date().toISOString().split("T")[0]}
-                  required
+                  type="number"
+                  id="work_hours"
+                  value={workHours}
+                  onChange={(e) => setWorkHours(e.target.value)}
+                  min="0"
+                  step="0.5"
+                  placeholder="e.g., 8.5"
                   className="w-full px-4 py-3.5 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                 />
-                <p className="mt-3 text-neutral-500 text-sm flex items-center gap-2">
-                  <FontAwesomeIcon icon={faCalendar} className="text-xs" />
-                  {new Date(updateDate).toLocaleDateString("en-US", {
-                    weekday: "long",
-                    month: "long",
-                    day: "numeric",
-                    year: "numeric",
-                  })}
+                <p className="mt-2 text-neutral-500 text-sm">
+                  Total hours worked on this update
                 </p>
               </div>
             </div>
@@ -483,9 +768,6 @@ export default function DailyUpdatesPage() {
             <div className="mt-2 flex items-center justify-between">
               <p className="text-neutral-500 text-sm">
                 {updateContent.length} characters
-              </p>
-              <p className="text-neutral-400 text-xs">
-                Markdown formatting supported
               </p>
             </div>
           </div>
@@ -614,11 +896,7 @@ export default function DailyUpdatesPage() {
                     "Are you sure you want to discard this update? All content will be lost."
                   )
                 ) {
-                  setUpdateTitle("");
-                  setUpdateContent("");
-                  setUpdateStatus("completed");
-                  setMediaFiles([]);
-                  setSelectedProject("");
+                  resetForm();
                 }
               }}
               className="px-6 py-3 border-2 border-neutral-200 text-neutral-700 rounded-lg font-semibold hover:bg-neutral-50 transition-colors"
@@ -627,18 +905,18 @@ export default function DailyUpdatesPage() {
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || createUpdateMutation.isPending}
               className="btn-primary-lg flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed min-w-[200px] justify-center"
             >
-              {isSubmitting ? (
+              {isSubmitting || createUpdateMutation.isPending ? (
                 <>
                   <FontAwesomeIcon icon={faSpinner} className="animate-spin" />
-                  {editingUpdate ? "Updating..." : "Posting..."}
+                  Posting...
                 </>
               ) : (
                 <>
                   <FontAwesomeIcon icon={faPaperPlane} />
-                  {editingUpdate ? "Update" : "Post Update"}
+                  Post Update
                 </>
               )}
             </button>
@@ -708,7 +986,7 @@ export default function DailyUpdatesPage() {
                     <option value="all">All Projects</option>
                     {projects.map((project) => (
                       <option key={project.id} value={project.id}>
-                        {project.name}
+                        {project.project_name}
                       </option>
                     ))}
                   </select>
@@ -722,7 +1000,9 @@ export default function DailyUpdatesPage() {
 
             <div className="space-y-4">
               {filteredUpdates.map((update) => {
-                const project = projects.find((p) => p.id === update.projectId);
+                const project = projects.find(
+                  (p) => p.id === update.project_id
+                );
                 return (
                   <div
                     key={update.id}
@@ -734,33 +1014,43 @@ export default function DailyUpdatesPage() {
                         <div className="flex-1">
                           <div className="flex items-center gap-3 mb-2">
                             <div className="w-10 h-10 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-semibold text-sm">
-                              {project?.name.charAt(0)}
+                              {project?.project_name.charAt(0)}
                             </div>
                             <div>
                               <h3 className="font-semibold text-neutral-900">
-                                {project?.name}
+                                {project?.project_name}
                               </h3>
                               <p className="text-neutral-500 text-sm">
-                                {project?.client}
+                                {project?.client?.full_name || "Unassigned"}
                               </p>
                             </div>
                           </div>
                           <h4 className="font-semibold text-neutral-900 text-lg mb-2">
                             {update.title}
                           </h4>
-                          <span
-                            className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 border rounded ${
-                              update.status === "completed"
-                                ? "bg-green-50 text-green-700 border-green-200"
-                                : update.status === "in-progress"
-                                ? "bg-blue-50 text-blue-700 border-blue-200"
-                                : "bg-red-50 text-red-700 border-red-200"
-                            }`}
-                          >
-                            {update.status === "completed" && "✓ COMPLETED"}
-                            {update.status === "in-progress" && "⏱ IN PROGRESS"}
-                            {update.status === "blocked" && "⚠ BLOCKED"}
-                          </span>
+                          <div className="flex items-center gap-2 mb-3">
+                            <span
+                              className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 border rounded ${
+                                update.status === "completed"
+                                  ? "bg-green-50 text-green-700 border-green-200"
+                                  : update.status === "in-progress"
+                                  ? "bg-blue-50 text-blue-700 border-blue-200"
+                                  : "bg-red-50 text-red-700 border-red-200"
+                              }`}
+                            >
+                              {update.status === "completed" && "✓ COMPLETED"}
+                              {update.status === "in-progress" &&
+                                "⏱ IN PROGRESS"}
+                              {update.status === "blocked" && "⚠ BLOCKED"}
+                            </span>
+                            {update.work_hours &&
+                              parseFloat(update.work_hours) > 0 && (
+                                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 bg-neutral-100 text-neutral-700 border border-neutral-200 rounded">
+                                  <FontAwesomeIcon icon={faClock} />
+                                  {update.work_hours} hrs
+                                </span>
+                              )}
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
@@ -771,16 +1061,10 @@ export default function DailyUpdatesPage() {
                             <FontAwesomeIcon icon={faEye} />
                           </button>
                           <button
-                            onClick={() => handleEditUpdate(update)}
-                            className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                            aria-label="Edit update"
-                          >
-                            <FontAwesomeIcon icon={faPenToSquare} />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteUpdate(update.id)}
+                            onClick={() => handleDeleteUpdate(update)}
                             className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                             aria-label="Delete update"
+                            disabled={deleteUpdateMutation.isPending}
                           >
                             <FontAwesomeIcon icon={faTrash} />
                           </button>
@@ -794,52 +1078,49 @@ export default function DailyUpdatesPage() {
                           className="text-xs"
                         />
                         <span>
-                          {new Date(update.date).toLocaleDateString("en-US", {
-                            weekday: "long",
-                            month: "long",
-                            day: "numeric",
-                            year: "numeric",
-                          })}
+                          {new Date(update.created_at).toLocaleDateString(
+                            "en-US",
+                            {
+                              weekday: "long",
+                              month: "long",
+                              day: "numeric",
+                              year: "numeric",
+                            }
+                          )}
                         </span>
                         <span className="text-neutral-400">•</span>
                         <span className="text-neutral-500">
-                          Posted{" "}
-                          {new Date(update.timestamp).toLocaleTimeString(
-                            "en-US",
-                            { hour: "2-digit", minute: "2-digit" }
-                          )}
+                          Posted by {update.posted_by_name}
                         </span>
                       </div>
 
                       {/* Content Preview */}
                       <p className="text-neutral-700 body-regular line-clamp-3 mb-4">
-                        {update.content}
+                        {update.update_text}
                       </p>
 
                       {/* Media Thumbnails */}
-                      {update.media.length > 0 && (
+                      {update.media && update.media.length > 0 && (
                         <div className="flex items-center gap-2 flex-wrap">
-                          {update.media.slice(0, 4).map((media) => (
-                            <div
-                              key={media.id}
-                              className="w-20 h-20 rounded-lg overflow-hidden border border-neutral-200 relative"
-                            >
-                              {media.type === "image" ? (
+                          {update.media
+                            .slice(0, 4)
+                            .map((media: any, index: number) => (
+                              <div
+                                key={index}
+                                className="w-20 h-20 rounded-lg overflow-hidden border border-neutral-200 relative"
+                              >
                                 <img
-                                  src={media.preview}
+                                  src={
+                                    media.media_file ||
+                                    media.media_url ||
+                                    media.file ||
+                                    media.url
+                                  }
                                   alt="Update media"
                                   className="w-full h-full object-cover"
                                 />
-                              ) : (
-                                <div className="w-full h-full bg-neutral-100 flex items-center justify-center">
-                                  <FontAwesomeIcon
-                                    icon={faVideo}
-                                    className="text-neutral-400"
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                              </div>
+                            ))}
                           {update.media.length > 4 && (
                             <div className="w-20 h-20 rounded-lg bg-neutral-100 border border-neutral-200 flex items-center justify-center text-neutral-600 font-semibold text-sm">
                               +{update.media.length - 4}
@@ -890,22 +1171,14 @@ export default function DailyUpdatesPage() {
               {/* Project Info */}
               <div className="flex items-center gap-4 p-4 bg-primary-50 rounded-lg border border-primary-200">
                 <div className="w-12 h-12 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-bold text-lg">
-                  {projects
-                    .find((p) => p.id === viewingUpdate.projectId)
-                    ?.name.charAt(0)}
+                  {viewingUpdate.project_name?.charAt(0)}
                 </div>
                 <div>
                   <h4 className="font-semibold text-neutral-900">
-                    {
-                      projects.find((p) => p.id === viewingUpdate.projectId)
-                        ?.name
-                    }
+                    {viewingUpdate.project_name}
                   </h4>
                   <p className="text-neutral-600 text-sm">
-                    {
-                      projects.find((p) => p.id === viewingUpdate.projectId)
-                        ?.client
-                    }
+                    {viewingUpdate.client_name}
                   </p>
                 </div>
               </div>
@@ -920,30 +1193,47 @@ export default function DailyUpdatesPage() {
                 </h2>
               </div>
 
-              {/* Status */}
-              <div>
-                <label className="block text-neutral-600 font-medium mb-2 body-small">
-                  Work Status
-                </label>
-                <span
-                  className={`inline-flex items-center gap-1 text-sm font-semibold px-3 py-1.5 border rounded-lg ${
-                    viewingUpdate.status === "completed"
-                      ? "bg-green-50 text-green-700 border-green-200"
-                      : viewingUpdate.status === "in-progress"
-                      ? "bg-blue-50 text-blue-700 border-blue-200"
-                      : "bg-red-50 text-red-700 border-red-200"
-                  }`}
-                >
-                  {viewingUpdate.status === "completed" && "✓ COMPLETED"}
-                  {viewingUpdate.status === "in-progress" && "⏱ IN PROGRESS"}
-                  {viewingUpdate.status === "blocked" && "⚠ BLOCKED"}
-                </span>
+              {/* Status & Work Hours */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-neutral-600 font-medium mb-2 body-small">
+                    Status
+                  </label>
+                  <span
+                    className={`inline-flex items-center gap-1 text-sm font-semibold px-3 py-1.5 border rounded-lg ${
+                      viewingUpdate.status === "completed"
+                        ? "bg-green-50 text-green-700 border-green-200"
+                        : viewingUpdate.status === "in-progress"
+                        ? "bg-blue-50 text-blue-700 border-blue-200"
+                        : "bg-red-50 text-red-700 border-red-200"
+                    }`}
+                  >
+                    {viewingUpdate.status === "completed" && "✓ COMPLETED"}
+                    {viewingUpdate.status === "in-progress" && "⏱ IN PROGRESS"}
+                    {viewingUpdate.status === "blocked" && "⚠ BLOCKED"}
+                  </span>
+                </div>
+                {viewingUpdate.work_hours &&
+                  parseFloat(viewingUpdate.work_hours) > 0 && (
+                    <div>
+                      <label className="block text-neutral-600 font-medium mb-2 body-small">
+                        Work Hours
+                      </label>
+                      <div className="flex items-center gap-2 text-neutral-900 font-medium">
+                        <FontAwesomeIcon
+                          icon={faClock}
+                          className="text-primary-600"
+                        />
+                        {viewingUpdate.work_hours} hours
+                      </div>
+                    </div>
+                  )}
               </div>
 
               {/* Date */}
               <div>
                 <label className="block text-neutral-600 font-medium mb-2 body-small">
-                  Date
+                  Posted On
                 </label>
                 <div className="flex items-center gap-2 text-neutral-900">
                   <FontAwesomeIcon
@@ -951,12 +1241,15 @@ export default function DailyUpdatesPage() {
                     className="text-primary-600"
                   />
                   <span className="font-medium">
-                    {new Date(viewingUpdate.date).toLocaleDateString("en-US", {
-                      weekday: "long",
-                      month: "long",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
+                    {new Date(viewingUpdate.created_at).toLocaleDateString(
+                      "en-US",
+                      {
+                        weekday: "long",
+                        month: "long",
+                        day: "numeric",
+                        year: "numeric",
+                      }
+                    )}
                   </span>
                 </div>
               </div>
@@ -968,49 +1261,58 @@ export default function DailyUpdatesPage() {
                 </label>
                 <div className="bg-neutral-50 rounded-lg p-4 border border-neutral-200">
                   <p className="text-neutral-900 body-regular whitespace-pre-wrap leading-relaxed">
-                    {viewingUpdate.content}
+                    {viewingUpdate.update_text}
                   </p>
                 </div>
               </div>
 
               {/* Media */}
-              {viewingUpdate.media.length > 0 && (
+              {viewingUpdate.media && viewingUpdate.media.length > 0 && (
                 <div>
                   <label className="block text-neutral-600 font-medium mb-3 body-small">
                     Media ({viewingUpdate.media.length})
                   </label>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {viewingUpdate.media.map((media) => (
+                    {viewingUpdate.media.map((media: any, index: number) => (
                       <div
-                        key={media.id}
+                        key={index}
                         className="aspect-square rounded-lg overflow-hidden border border-neutral-200"
                       >
-                        {media.type === "image" ? (
-                          <img
-                            src={media.preview}
-                            alt="Update media"
-                            className="w-full h-full object-cover hover:scale-105 transition-transform cursor-pointer"
-                            onClick={() => window.open(media.preview, "_blank")}
-                          />
-                        ) : (
-                          <div className="w-full h-full relative group cursor-pointer">
-                            <video
-                              src={media.preview}
-                              className="w-full h-full object-cover"
-                            />
-                            <div className="absolute inset-0 flex items-center justify-center bg-neutral-900/50 group-hover:bg-neutral-900/40 transition-colors">
-                              <FontAwesomeIcon
-                                icon={faVideo}
-                                className="text-neutral-0 text-4xl"
-                              />
-                            </div>
-                          </div>
-                        )}
+                        <img
+                          src={
+                            media.media_file ||
+                            media.media_url ||
+                            media.file ||
+                            media.url
+                          }
+                          alt="Update media"
+                          className="w-full h-full object-cover hover:scale-105 transition-transform cursor-pointer"
+                          onClick={() =>
+                            window.open(
+                              media.media_file ||
+                                media.media_url ||
+                                media.file ||
+                                media.url,
+                              "_blank"
+                            )
+                          }
+                        />
                       </div>
                     ))}
                   </div>
                 </div>
               )}
+
+              {/* Posted By */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-blue-700 text-sm">
+                  <FontAwesomeIcon icon={faUser} className="mr-2" />
+                  Posted by{" "}
+                  <span className="font-semibold">
+                    {viewingUpdate.posted_by_name}
+                  </span>
+                </p>
+              </div>
             </div>
 
             <div className="sticky bottom-0 bg-neutral-50 border-t border-neutral-200 px-6 py-4 flex items-center justify-end gap-3">
@@ -1021,15 +1323,13 @@ export default function DailyUpdatesPage() {
                 Close
               </button>
               <button
-                onClick={() => handleEditUpdate(viewingUpdate)}
-                className="btn-primary flex items-center gap-2"
-              >
-                <FontAwesomeIcon icon={faPenToSquare} />
-                Edit Update
-              </button>
-              <button
-                onClick={() => handleDeleteUpdate(viewingUpdate.id)}
+                onClick={() => {
+                  if (confirm("Are you sure you want to delete this update?")) {
+                    handleDeleteUpdate(viewingUpdate);
+                  }
+                }}
                 className="px-5 py-2.5 bg-red-600 text-neutral-0 rounded-lg font-medium hover:bg-red-700 transition-colors flex items-center gap-2"
+                disabled={deleteUpdateMutation.isPending}
               >
                 <FontAwesomeIcon icon={faTrash} />
                 Delete

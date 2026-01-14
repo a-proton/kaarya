@@ -1,4 +1,4 @@
-// lib/auth.ts
+// lib/auth.ts - Enhanced version with token expiration checking
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -66,6 +66,12 @@ export interface RefreshTokenRequest {
   refresh: string;
 }
 
+interface TokenPayload {
+  exp: number;
+  user_id: number;
+  [key: string]: any;
+}
+
 // Login API call
 export async function login(
   email: string,
@@ -85,10 +91,7 @@ export async function login(
   }
 
   const data = await response.json();
-
-  // Log the full response for debugging
   console.log("Login response:", data);
-
   return data;
 }
 
@@ -127,14 +130,59 @@ export async function refreshToken(
   return response.json();
 }
 
+// Decode JWT token without verification (client-side only)
+function decodeToken(token: string): TokenPayload | null {
+  try {
+    const base64Url = token.split(".")[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    );
+    return JSON.parse(jsonPayload);
+  } catch (error) {
+    console.error("Error decoding token:", error);
+    return null;
+  }
+}
+
+// Check if token is expired or will expire soon
+export function isTokenExpired(
+  token: string,
+  bufferSeconds: number = 60
+): boolean {
+  const payload = decodeToken(token);
+
+  if (!payload || !payload.exp) {
+    return true;
+  }
+
+  const currentTime = Math.floor(Date.now() / 1000);
+  const expirationTime = payload.exp;
+
+  // Return true if token is expired or will expire within buffer time
+  return currentTime >= expirationTime - bufferSeconds;
+}
+
+// Get token expiration time
+export function getTokenExpiration(token: string): Date | null {
+  const payload = decodeToken(token);
+
+  if (!payload || !payload.exp) {
+    return null;
+  }
+
+  return new Date(payload.exp * 1000);
+}
+
 // Extract access token from various response formats
 export function extractAccessToken(response: LoginResponse): string | null {
-  // Check for nested data.tokens structure (your backend format)
   if (response.data?.tokens?.access) {
     return response.data.tokens.access;
   }
 
-  // Try all possible token field names
   return (
     response.access_token ||
     response.access ||
@@ -146,7 +194,6 @@ export function extractAccessToken(response: LoginResponse): string | null {
 
 // Extract refresh token from various response formats
 export function extractRefreshToken(response: LoginResponse): string | null {
-  // Check for nested data.tokens structure (your backend format)
   if (response.data?.tokens?.refresh) {
     return response.data.tokens.refresh;
   }
@@ -159,11 +206,19 @@ export function extractRefreshToken(response: LoginResponse): string | null {
   );
 }
 
-// Store tokens in localStorage
+// Store tokens in localStorage with timestamp
 export function storeTokens(accessToken: string, refreshToken?: string): void {
   localStorage.setItem("accessToken", accessToken);
+  localStorage.setItem("tokenStoredAt", Date.now().toString());
+
   if (refreshToken) {
     localStorage.setItem("refreshToken", refreshToken);
+  }
+
+  // Log token expiration for debugging
+  const expiration = getTokenExpiration(accessToken);
+  if (expiration) {
+    console.log("🔑 Token will expire at:", expiration.toLocaleString());
   }
 }
 
@@ -179,128 +234,43 @@ export function getRefreshToken(): string | null {
   return localStorage.getItem("refreshToken");
 }
 
-// src/lib/auth.ts
-// Replace the storeUserProfile and getUserProfile functions with these:
-
 // Store user profile in localStorage
 export function storeUserProfile(profile: UserProfile): void {
-  console.log("=== storeUserProfile CALLED ===");
-  console.log("typeof window:", typeof window);
-
   if (typeof window === "undefined") {
     console.error("❌ Window is undefined - cannot store profile (SSR)");
     return;
   }
 
   try {
-    console.log("Profile to store:", profile);
-
-    // Validate profile has required fields
     if (!profile.id || !profile.email) {
       console.error("❌ Invalid profile - missing required fields:", profile);
       return;
     }
 
     const profileString = JSON.stringify(profile);
-    console.log(
-      "Stringified profile length:",
-      profileString.length,
-      "characters"
-    );
-
     localStorage.setItem("userProfile", profileString);
-    console.log("✅ localStorage.setItem completed");
-
-    // Immediate verification
-    const verification = localStorage.getItem("userProfile");
-
-    if (!verification) {
-      console.error("❌ CRITICAL: Storage verification failed!");
-      console.error("localStorage.setItem was called but getItem returns null");
-
-      // Try to diagnose
-      try {
-        const test = "test_storage_" + Date.now();
-        localStorage.setItem("test_key", test);
-        const testResult = localStorage.getItem("test_key");
-        if (testResult === test) {
-          console.log("✅ localStorage is working (test passed)");
-          console.error(
-            "❌ But userProfile storage still failed - this is strange!"
-          );
-        } else {
-          console.error(
-            "❌ localStorage test also failed - localStorage might be blocked"
-          );
-        }
-        localStorage.removeItem("test_key");
-      } catch (testError) {
-        console.error("❌ localStorage test error:", testError);
-      }
-    } else {
-      console.log("✅ Storage verification successful");
-      const parsed = JSON.parse(verification);
-      console.log("Verified stored full_name:", parsed.full_name);
-      console.log("Verified stored business_name:", parsed.business_name);
-    }
+    console.log("✅ User profile stored successfully");
   } catch (error) {
     console.error("❌ Error in storeUserProfile:", error);
-
-    if (error instanceof Error) {
-      console.error("Error name:", error.name);
-      console.error("Error message:", error.message);
-      console.error("Error stack:", error.stack);
-    }
   }
-
-  console.log("=== storeUserProfile END ===");
 }
 
 // Get user profile from localStorage
 export function getUserProfile(): UserProfile | null {
-  console.log("=== getUserProfile CALLED ===");
-  console.log("typeof window:", typeof window);
-
   if (typeof window === "undefined") {
-    console.log("Window is undefined - returning null (SSR)");
     return null;
   }
 
   try {
     const profile = localStorage.getItem("userProfile");
-    console.log(
-      "Raw profile from storage:",
-      profile ? `Found (${profile.length} chars)` : "null"
-    );
 
     if (!profile) {
-      console.log("No profile found in localStorage");
-
-      // Debug: List all localStorage keys
-      console.log("All localStorage keys:", Object.keys(localStorage));
-
       return null;
     }
 
-    const parsed = JSON.parse(profile);
-    console.log("Parsed profile successfully");
-    console.log("Profile details:");
-    console.log("  id:", parsed.id);
-    console.log("  email:", parsed.email);
-    console.log("  full_name:", parsed.full_name);
-    console.log("  business_name:", parsed.business_name);
-    console.log("  initials:", parsed.initials);
-    console.log("✅ getUserProfile returning profile");
-
-    return parsed;
+    return JSON.parse(profile);
   } catch (error) {
     console.error("❌ Error in getUserProfile:", error);
-
-    if (error instanceof Error) {
-      console.error("Error name:", error.name);
-      console.error("Error message:", error.message);
-    }
-
     return null;
   }
 }
@@ -313,13 +283,28 @@ export function clearUserProfile(): void {
 
 // Clear tokens from localStorage
 export function clearTokens(): void {
+  if (typeof window === "undefined") return;
+
   localStorage.removeItem("accessToken");
   localStorage.removeItem("refreshToken");
-  localStorage.removeItem("authToken"); // Clear old token if exists
-  clearUserProfile(); // Also clear user profile
+  localStorage.removeItem("tokenStoredAt");
+  localStorage.removeItem("authToken");
+  clearUserProfile();
 }
 
-// Check if user is authenticated
+// Check if user is authenticated with valid token
 export function isAuthenticated(): boolean {
-  return !!getAccessToken();
+  const token = getAccessToken();
+
+  if (!token) {
+    return false;
+  }
+
+  // Check if token is expired
+  if (isTokenExpired(token)) {
+    console.log("⚠️ Access token is expired");
+    return false;
+  }
+
+  return true;
 }
