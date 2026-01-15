@@ -18,81 +18,111 @@ import {
   faUserGroup,
   faMessage,
   faFolder,
+  faSpinner,
+  faTimes,
+  faCheck,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 interface TeamMember {
-  id: string;
-  name: string;
+  id: number;
+  full_name: string;
   initials: string;
   email: string;
   phone: string;
   role: string;
   department: string;
-  status: "Active" | "Inactive" | "On Leave";
-  employeeId: string;
-  joinDate: string;
+  employee_id: string;
+  status: "active" | "inactive" | "on_leave";
+  join_date: string;
   address: string;
   city: string;
   state: string;
-  zipCode: string;
-  emergencyContact: string;
-  emergencyPhone: string;
+  zip_code: string;
+  emergency_contact: string;
+  emergency_phone: string;
   salary: string;
   skills: string[];
-  projects: number;
   notes: string;
-  color: string;
+  photo: string | null;
+  is_active: boolean;
+  projects_count: number;
+  current_projects: Array<{ id: number; name: string }>;
+  created_at: string;
+  updated_at: string;
 }
 
 export default function ViewTeamMemberPage() {
   const router = useRouter();
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const params = useParams();
+  const queryClient = useQueryClient();
+  const employeeId = params.id as string;
 
-  // Sample team member data - replace with actual data fetching
-  const member: TeamMember = {
-    id: "1",
-    name: "Sarah Johnson",
-    initials: "SJ",
-    email: "sarah.j@company.com",
-    phone: "+1 (555) 123-4567",
-    role: "Project Manager",
-    department: "Operations",
-    status: "Active",
-    employeeId: "EMP-001",
-    joinDate: "2022-01-15",
-    address: "456 Park Avenue",
-    city: "Brooklyn",
-    state: "NY",
-    zipCode: "11201",
-    emergencyContact: "John Johnson",
-    emergencyPhone: "+1 (555) 987-6543",
-    salary: "$75,000",
-    skills: ["Project Management", "Supervision", "Electrical", "Plumbing"],
-    projects: 8,
-    notes:
-      "Excellent project manager with strong leadership skills. Has successfully completed multiple large-scale renovation projects. Known for maintaining excellent client relationships and managing teams effectively.",
-    color: "bg-primary-600",
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+
+  // Fetch employee details
+  const {
+    data: member,
+    isLoading,
+    isError,
+    error,
+  } = useQuery<TeamMember>({
+    queryKey: ["team-member", employeeId],
+    queryFn: async () => {
+      const response = await api.get<TeamMember>(
+        `/api/v1/employees/${employeeId}/`
+      );
+      return response;
+    },
+    enabled: !!employeeId,
+  });
+
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      await api.delete(`/api/v1/employees/${employeeId}/`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["team-members"] });
+      showSuccessNotification("Team member deleted successfully");
+      setTimeout(() => {
+        router.push("/provider/teams");
+      }, 1000);
+    },
+    onError: (error: any) => {
+      alert(`Failed to delete team member: ${error.message}`);
+    },
+  });
+
+  const showSuccessNotification = (message: string) => {
+    setSuccessMessage(message);
+    setShowSuccessMessage(true);
+    setTimeout(() => {
+      setShowSuccessMessage(false);
+    }, 3000);
   };
 
   const handleDelete = () => {
-    console.log("Deleting team member:", member.id);
+    deleteMutation.mutate();
     setShowDeleteModal(false);
-    router.push("/provider/team");
   };
 
   const handleEdit = () => {
-    router.push(`/provider/team/edit/${member.id}`);
+    router.push(`/provider/teams/${employeeId}/edit`);
   };
 
-  const getStatusBadgeColor = (status: TeamMember["status"]) => {
+  const getStatusBadgeColor = (status: string) => {
     const colors = {
-      Active: "bg-green-100 text-green-700 border-green-200",
-      Inactive: "bg-neutral-100 text-neutral-600 border-neutral-200",
-      "On Leave": "bg-yellow-100 text-yellow-700 border-yellow-200",
+      active: "bg-green-100 text-green-700 border-green-200",
+      inactive: "bg-neutral-100 text-neutral-600 border-neutral-200",
+      on_leave: "bg-yellow-100 text-yellow-700 border-yellow-200",
     };
-    return colors[status];
+    return colors[status as keyof typeof colors] || colors.inactive;
   };
 
   const getSkillColor = (skill: string) => {
@@ -111,8 +141,82 @@ export default function ViewTeamMemberPage() {
     );
   };
 
+  const formatStatusDisplay = (status: string) => {
+    const displays: { [key: string]: string } = {
+      active: "Active",
+      inactive: "Inactive",
+      on_leave: "On Leave",
+    };
+    return displays[status] || status;
+  };
+
+  const formatCurrency = (amount: string | number) => {
+    const numAmount = typeof amount === "string" ? parseFloat(amount) : amount;
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+    }).format(numAmount);
+  };
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center">
+          <FontAwesomeIcon
+            icon={faSpinner}
+            className="text-primary-600 text-4xl mb-4 animate-spin"
+          />
+          <p className="text-neutral-600">Loading team member details...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (isError || !member) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FontAwesomeIcon icon={faTimes} className="text-red-600 text-2xl" />
+          </div>
+          <h3 className="text-lg font-semibold text-red-900 mb-2">
+            Error Loading Team Member
+          </h3>
+          <p className="text-red-700 mb-4">
+            {error instanceof Error ? error.message : "Team member not found"}
+          </p>
+          <button onClick={() => router.back()} className="btn-primary">
+            Go Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-neutral-50">
+      {/* Success Toast */}
+      {showSuccessMessage && (
+        <div className="fixed top-8 right-8 z-[60] animate-slide-in-right">
+          <div className="bg-green-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 min-w-[300px]">
+            <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
+              <FontAwesomeIcon icon={faCheck} />
+            </div>
+            <div className="flex-1">
+              <p className="font-semibold">{successMessage}</p>
+            </div>
+            <button
+              onClick={() => setShowSuccessMessage(false)}
+              className="text-neutral-0 hover:text-neutral-200 transition-colors"
+            >
+              <FontAwesomeIcon icon={faTimes} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
         <div className="flex items-center justify-between mb-2">
@@ -128,7 +232,7 @@ export default function ViewTeamMemberPage() {
               />
             </button>
             <div>
-              <h1 className="heading-2 text-neutral-900">{member.name}</h1>
+              <h1 className="heading-2 text-neutral-900">{member.full_name}</h1>
               <p className="text-neutral-600 body-regular mt-1">
                 Team Member Details
               </p>
@@ -160,9 +264,7 @@ export default function ViewTeamMemberPage() {
             <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 sticky top-8">
               {/* Avatar */}
               <div className="flex justify-center mb-6">
-                <div
-                  className={`w-32 h-32 rounded-full ${member.color} text-neutral-0 flex items-center justify-center text-4xl font-bold`}
-                >
+                <div className="w-32 h-32 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center text-4xl font-bold">
                   {member.initials}
                 </div>
               </div>
@@ -170,7 +272,7 @@ export default function ViewTeamMemberPage() {
               {/* Name and Role */}
               <div className="text-center mb-6">
                 <h2 className="heading-3 text-neutral-900 mb-2">
-                  {member.name}
+                  {member.full_name}
                 </h2>
                 <p className="text-neutral-600 body-regular mb-1">
                   {member.role}
@@ -185,7 +287,7 @@ export default function ViewTeamMemberPage() {
                     member.status
                   )}`}
                 >
-                  {member.status}
+                  {formatStatusDisplay(member.status)}
                 </span>
               </div>
 
@@ -197,7 +299,7 @@ export default function ViewTeamMemberPage() {
                     className="text-primary-600 text-xl mb-2"
                   />
                   <p className="heading-4 text-neutral-900 mb-1">
-                    {member.projects}
+                    {member.projects_count}
                   </p>
                   <p className="text-neutral-600 text-sm">Projects</p>
                 </div>
@@ -207,8 +309,10 @@ export default function ViewTeamMemberPage() {
                     className="text-blue-600 text-xl mb-2"
                   />
                   <p className="heading-4 text-neutral-900 mb-1">
-                    {new Date().getFullYear() -
-                      new Date(member.joinDate).getFullYear()}
+                    {member.join_date
+                      ? new Date().getFullYear() -
+                        new Date(member.join_date).getFullYear()
+                      : 0}
                     y
                   </p>
                   <p className="text-neutral-600 text-sm">Tenure</p>
@@ -216,7 +320,7 @@ export default function ViewTeamMemberPage() {
               </div>
 
               {/* Skills */}
-              {member.skills.length > 0 && (
+              {member.skills && member.skills.length > 0 && (
                 <div className="mb-6">
                   <p className="text-neutral-600 font-semibold mb-3 text-sm">
                     Skills & Certifications
@@ -273,7 +377,7 @@ export default function ViewTeamMemberPage() {
                       href={`mailto:${member.email}`}
                       className="text-neutral-900 font-semibold hover:text-primary-600 transition-colors"
                     >
-                      {member.email}
+                      {member.email || "N/A"}
                     </a>
                   </div>
                 </div>
@@ -291,7 +395,7 @@ export default function ViewTeamMemberPage() {
                       href={`tel:${member.phone}`}
                       className="text-neutral-900 font-semibold hover:text-primary-600 transition-colors"
                     >
-                      {member.phone}
+                      {member.phone || "N/A"}
                     </a>
                   </div>
                 </div>
@@ -308,7 +412,7 @@ export default function ViewTeamMemberPage() {
                       Emergency Contact
                     </p>
                     <p className="text-neutral-900 font-semibold">
-                      {member.emergencyContact}
+                      {member.emergency_contact || "N/A"}
                     </p>
                   </div>
                 </div>
@@ -325,7 +429,7 @@ export default function ViewTeamMemberPage() {
                       Emergency Phone
                     </p>
                     <p className="text-neutral-900 font-semibold">
-                      {member.emergencyPhone}
+                      {member.emergency_phone || "N/A"}
                     </p>
                   </div>
                 </div>
@@ -355,7 +459,7 @@ export default function ViewTeamMemberPage() {
                       Employee ID
                     </p>
                     <p className="text-neutral-900 font-semibold">
-                      {member.employeeId}
+                      {member.employee_id || "N/A"}
                     </p>
                   </div>
                 </div>
@@ -372,7 +476,7 @@ export default function ViewTeamMemberPage() {
                       Department
                     </p>
                     <p className="text-neutral-900 font-semibold">
-                      {member.department}
+                      {member.department || "N/A"}
                     </p>
                   </div>
                 </div>
@@ -389,11 +493,16 @@ export default function ViewTeamMemberPage() {
                       Join Date
                     </p>
                     <p className="text-neutral-900 font-semibold">
-                      {new Date(member.joinDate).toLocaleDateString("en-US", {
-                        month: "long",
-                        day: "numeric",
-                        year: "numeric",
-                      })}
+                      {member.join_date
+                        ? new Date(member.join_date).toLocaleDateString(
+                            "en-US",
+                            {
+                              month: "long",
+                              day: "numeric",
+                              year: "numeric",
+                            }
+                          )
+                        : "N/A"}
                     </p>
                   </div>
                 </div>
@@ -408,7 +517,7 @@ export default function ViewTeamMemberPage() {
                   <div>
                     <p className="text-neutral-600 body-small mb-1">Salary</p>
                     <p className="text-neutral-900 font-semibold">
-                      {member.salary}
+                      {member.salary ? formatCurrency(member.salary) : "N/A"}
                     </p>
                   </div>
                 </div>
@@ -431,26 +540,26 @@ export default function ViewTeamMemberPage() {
                     Street Address
                   </p>
                   <p className="text-neutral-900 font-semibold">
-                    {member.address}
+                    {member.address || "N/A"}
                   </p>
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <p className="text-neutral-600 body-small mb-1">City</p>
                     <p className="text-neutral-900 font-semibold">
-                      {member.city}
+                      {member.city || "N/A"}
                     </p>
                   </div>
                   <div>
                     <p className="text-neutral-600 body-small mb-1">State</p>
                     <p className="text-neutral-900 font-semibold">
-                      {member.state}
+                      {member.state || "N/A"}
                     </p>
                   </div>
                   <div>
                     <p className="text-neutral-600 body-small mb-1">Zip Code</p>
                     <p className="text-neutral-900 font-semibold">
-                      {member.zipCode}
+                      {member.zip_code || "N/A"}
                     </p>
                   </div>
                 </div>
@@ -488,8 +597,30 @@ export default function ViewTeamMemberPage() {
                 <p className="text-neutral-600 body-small mb-1">
                   Active Projects
                 </p>
-                <p className="heading-3 text-neutral-900">{member.projects}</p>
+                <p className="heading-3 text-neutral-900">
+                  {member.projects_count}
+                </p>
               </div>
+              {member.current_projects &&
+                member.current_projects.length > 0 && (
+                  <div className="mb-4">
+                    <p className="text-neutral-600 body-small mb-2">
+                      Current Assignments:
+                    </p>
+                    <div className="space-y-2">
+                      {member.current_projects.map((project) => (
+                        <div
+                          key={project.id}
+                          className="bg-neutral-0 rounded-lg p-3 border border-neutral-200"
+                        >
+                          <p className="text-neutral-900 font-semibold">
+                            {project.name}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               <button className="w-full btn-primary flex items-center justify-center gap-2">
                 <FontAwesomeIcon icon={faFolder} />
                 View All Projects
@@ -514,31 +645,46 @@ export default function ViewTeamMemberPage() {
                 Delete Team Member?
               </h3>
               <p className="text-neutral-600 text-center mb-6">
-                Are you sure you want to delete "{member.name}"? This action
-                cannot be undone and will permanently remove all member data and
-                project assignments.
+                Are you sure you want to delete &quot;{member.full_name}&quot;?
+                This action cannot be undone and will permanently remove all
+                member data and project assignments.
               </p>
 
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
                 <p className="text-red-700 text-sm font-medium flex items-center gap-2">
                   <FontAwesomeIcon icon={faExclamationTriangle} />
-                  Warning: This will affect {member.projects} assigned projects
+                  Warning: This will affect {member.projects_count} assigned
+                  projects
                 </p>
               </div>
 
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setShowDeleteModal(false)}
-                  className="flex-1 px-5 py-3 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-50 transition-colors"
+                  disabled={deleteMutation.isPending}
+                  className="flex-1 px-5 py-3 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-50 transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleDelete}
-                  className="flex-1 px-5 py-3 bg-red-600 text-neutral-0 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+                  disabled={deleteMutation.isPending}
+                  className="flex-1 px-5 py-3 bg-red-600 text-neutral-0 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  <FontAwesomeIcon icon={faTrash} />
-                  Delete Member
+                  {deleteMutation.isPending ? (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faSpinner}
+                        className="animate-spin"
+                      />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon icon={faTrash} />
+                      Delete Member
+                    </>
+                  )}
                 </button>
               </div>
             </div>

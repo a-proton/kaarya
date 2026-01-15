@@ -7,96 +7,121 @@ import {
   faEnvelope,
   faPhone,
   faMapMarkerAlt,
-  faStar,
   faPlus,
-  faTimes,
   faCheckCircle,
-  faBriefcase,
-  faDollarSign,
   faLock,
   faEye,
   faEyeSlash,
   faKey,
+  faSpinner,
+  faFolderOpen,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
+import { clientService, ClientCreateData } from "@/lib/clientService";
+import { api } from "@/lib/api";
+
+// Add Project interface
+interface Project {
+  id: number;
+  name: string;
+  status: string;
+  project_name?: string; // in case API returns this instead
+}
+
+interface ProjectsResponse {
+  results: Project[];
+  count: number;
+  next: string | null;
+  previous: string | null;
+}
 
 export default function AddClientPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   const [clientName, setClientName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [location, setLocation] = useState("");
-
-  const [tags, setTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState("");
-  const [notes, setNotes] = useState("");
-  const [company, setCompany] = useState("");
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
-  const [zipCode, setZipCode] = useState("");
-  const [website, setWebsite] = useState("");
-  const [budget, setBudget] = useState("");
+  const [postalCode, setPostalCode] = useState("");
+  const [countryCode, setCountryCode] = useState("+977");
 
-  // Client Portal Credentials
+  // Project assignment
+  const [assignToProject, setAssignToProject] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(
+    null
+  );
+
+  // Portal Credentials
   const [createPortalAccount, setCreatePortalAccount] = useState(true);
-  const [clientEmail, setClientEmail] = useState("");
   const [clientPassword, setClientPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [sendWelcomeEmail, setSendWelcomeEmail] = useState(true);
 
-  const predefinedTags = [
-    "Repeat Client",
-    "High Value",
-    "Residential",
-    "Commercial",
-    "Active",
-    "VIP",
-  ];
+  // Fetch projects for dropdown - FIXED TO USE api.get() LIKE VIEW PROJECT PAGE
+  const { data: projectsData, isLoading: loadingProjects } =
+    useQuery<ProjectsResponse>({
+      queryKey: ["projects", "without-client"],
+      queryFn: async () => {
+        try {
+          const response = await api.get<ProjectsResponse>(
+            "/api/v1/projects/?without_client=true"
+          );
+          return response;
+        } catch (error: any) {
+          // Handle 401 Unauthorized - redirect to login
+          if (error.status === 401) {
+            router.push("/login");
+            throw new Error("Session expired. Please login again.");
+          }
+          throw error;
+        }
+      },
+      enabled: assignToProject,
+      retry: (failureCount, error: any) => {
+        // Don't retry on 401
+        if (error.status === 401) return false;
+        return failureCount < 3;
+      },
+    });
 
-  const addTag = (tag: string) => {
-    if (tag && !tags.includes(tag)) {
-      setTags([...tags, tag]);
-      setTagInput("");
-    }
-  };
+  // Create client mutation
+  const createMutation = useMutation({
+    mutationFn: (data: ClientCreateData) => clientService.createClient(data),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
 
-  const removeTag = (tagToRemove: string) => {
-    setTags(tags.filter((tag) => tag !== tagToRemove));
-  };
+      const successMessage =
+        selectedProjectId && assignToProject
+          ? `Client "${data.full_name}" created and assigned to project successfully!`
+          : `Client "${data.full_name}" created successfully!`;
 
-  const getTagColor = (tag: string) => {
-    switch (tag) {
-      case "Repeat Client":
-        return "bg-green-100 text-green-700 border-green-200";
-      case "High Value":
-        return "bg-primary-50 text-primary-700 border-primary-200";
-      case "Residential":
-        return "bg-neutral-100 text-neutral-700 border-neutral-200";
-      case "Commercial":
-        return "bg-neutral-100 text-neutral-700 border-neutral-200";
-      case "Active":
-        return "bg-blue-100 text-blue-700 border-blue-200";
-      case "VIP":
-        return "bg-purple-100 text-purple-700 border-purple-200";
-      default:
-        return "bg-neutral-100 text-neutral-600 border-neutral-200";
-    }
-  };
+      alert(successMessage);
+      router.push("/provider/clients");
+    },
+    onError: (error: any) => {
+      const errorMessage =
+        error.data?.detail || error.message || "Failed to create client";
+      alert(`Error: ${errorMessage}`);
+    },
+  });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate portal credentials if enabled
+    // Validation
+    if (!clientName || !email || !phone) {
+      alert("Please fill in all required fields");
+      return;
+    }
+
     if (createPortalAccount) {
-      if (!clientEmail) {
-        alert("Please provide an email for the client portal account");
-        return;
-      }
       if (!clientPassword || clientPassword.length < 8) {
         alert("Password must be at least 8 characters long");
         return;
@@ -107,32 +132,26 @@ export default function AddClientPage() {
       }
     }
 
-    const clientData = {
-      clientName,
+    if (assignToProject && !selectedProjectId) {
+      alert("Please select a project to assign the client to");
+      return;
+    }
+
+    // Build client data with project_id included
+    const clientData: ClientCreateData = {
+      full_name: clientName,
       email,
       phone,
-      location,
-
-      tags,
-      notes,
-      company,
-      address,
-      city,
-      state,
-      zipCode,
-      website,
-      budget,
-      portalAccount: createPortalAccount
-        ? {
-            email: clientEmail,
-            password: clientPassword,
-            sendWelcomeEmail,
-          }
-        : null,
+      password: createPortalAccount ? clientPassword : undefined,
+      city: city || undefined,
+      state: state || undefined,
+      address: address || undefined,
+      postal_code: postalCode || undefined,
+      country_code: countryCode,
+      project_id: assignToProject ? selectedProjectId || undefined : undefined,
     };
-    console.log("Client Data:", clientData);
-    alert("Client added successfully! Portal credentials have been created.");
-    router.push("/provider/clients");
+
+    createMutation.mutate(clientData);
   };
 
   const handleCancel = () => {
@@ -154,6 +173,8 @@ export default function AddClientPage() {
       .slice(0, 2);
   };
 
+  const isSubmitting = createMutation.isPending;
+
   return (
     <div className="min-h-screen bg-neutral-50">
       {/* Header */}
@@ -162,7 +183,7 @@ export default function AddClientPage() {
           <button
             onClick={() => router.back()}
             className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
-            aria-label="Go back"
+            disabled={isSubmitting}
           >
             <FontAwesomeIcon
               icon={faArrowLeft}
@@ -172,7 +193,7 @@ export default function AddClientPage() {
           <div>
             <h1 className="heading-2 text-neutral-900">Add New Client</h1>
             <p className="text-neutral-600 body-regular mt-1">
-              Create a new client profile
+              Create a new client profile and optionally assign to a project
             </p>
           </div>
         </div>
@@ -181,7 +202,7 @@ export default function AddClientPage() {
       {/* Form */}
       <form onSubmit={handleSubmit} className="p-8 max-w-6xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Form - Takes 2 columns */}
+          {/* Main Form */}
           <div className="lg:col-span-2 space-y-6">
             {/* Basic Information Card */}
             <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
@@ -206,29 +227,8 @@ export default function AddClientPage() {
                     onChange={(e) => setClientName(e.target.value)}
                     placeholder="e.g., John Smith"
                     required
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                </div>
-
-                {/* Company */}
-                <div>
-                  <label
-                    htmlFor="company"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    <FontAwesomeIcon
-                      icon={faBriefcase}
-                      className="text-primary-600 mr-2"
-                    />
-                    Company Name
-                  </label>
-                  <input
-                    type="text"
-                    id="company"
-                    value={company}
-                    onChange={(e) => setCompany(e.target.value)}
-                    placeholder="e.g., Smith Construction LLC"
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                    disabled={isSubmitting}
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50"
                   />
                 </div>
 
@@ -252,7 +252,8 @@ export default function AddClientPage() {
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="john@email.com"
                       required
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      disabled={isSubmitting}
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50"
                     />
                   </div>
                   <div>
@@ -271,29 +272,12 @@ export default function AddClientPage() {
                       id="phone"
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
-                      placeholder="(555) 123-4567"
+                      placeholder="+9779841234567"
                       required
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      disabled={isSubmitting}
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50"
                     />
                   </div>
-                </div>
-
-                {/* Website */}
-                <div>
-                  <label
-                    htmlFor="website"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    Website
-                  </label>
-                  <input
-                    type="url"
-                    id="website"
-                    value={website}
-                    onChange={(e) => setWebsite(e.target.value)}
-                    placeholder="https://www.example.com"
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
                 </div>
               </div>
             </div>
@@ -323,11 +307,12 @@ export default function AddClientPage() {
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
                     placeholder="123 Main Street"
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                    disabled={isSubmitting}
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50"
                   />
                 </div>
 
-                {/* City, State, Zip */}
+                {/* City, State, Postal Code */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label
@@ -341,8 +326,9 @@ export default function AddClientPage() {
                       id="city"
                       value={city}
                       onChange={(e) => setCity(e.target.value)}
-                      placeholder="New York"
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      placeholder="Pokhara"
+                      disabled={isSubmitting}
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50"
                     />
                   </div>
                   <div>
@@ -350,57 +336,144 @@ export default function AddClientPage() {
                       htmlFor="state"
                       className="block text-neutral-700 font-semibold mb-2 body-small"
                     >
-                      State
+                      State/Province
                     </label>
                     <input
                       type="text"
                       id="state"
                       value={state}
                       onChange={(e) => setState(e.target.value)}
-                      placeholder="NY"
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      placeholder="Gandaki"
+                      disabled={isSubmitting}
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50"
                     />
                   </div>
                   <div>
                     <label
-                      htmlFor="zipCode"
+                      htmlFor="postalCode"
                       className="block text-neutral-700 font-semibold mb-2 body-small"
                     >
-                      Zip Code
+                      Postal Code
                     </label>
                     <input
                       type="text"
-                      id="zipCode"
-                      value={zipCode}
-                      onChange={(e) => setZipCode(e.target.value)}
-                      placeholder="10001"
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      id="postalCode"
+                      value={postalCode}
+                      onChange={(e) => setPostalCode(e.target.value)}
+                      placeholder="33700"
+                      disabled={isSubmitting}
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50"
                     />
                   </div>
                 </div>
+              </div>
+            </div>
 
-                {/* Quick Location */}
-                <div>
-                  <label
-                    htmlFor="location"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    Quick Location <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    id="location"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    placeholder="e.g., Brooklyn, NY"
-                    required
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+            {/* Project Assignment Card */}
+            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="heading-4 text-neutral-900 flex items-center gap-3">
+                  <FontAwesomeIcon
+                    icon={faFolderOpen}
+                    className="text-primary-600"
                   />
+                  Project Assignment (Optional)
+                </h2>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={assignToProject}
+                    onChange={(e) => {
+                      setAssignToProject(e.target.checked);
+                      if (!e.target.checked) {
+                        setSelectedProjectId(null);
+                      }
+                    }}
+                    disabled={isSubmitting}
+                    className="sr-only peer"
+                  />
+                  <div className="w-14 h-7 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-neutral-0 after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-neutral-0 after:border-neutral-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary-600"></div>
+                </label>
+              </div>
+
+              {assignToProject ? (
+                <div className="space-y-5">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <p className="text-blue-700 text-sm">
+                      <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
+                      The client will be assigned to the selected project during
+                      creation.
+                    </p>
+                  </div>
+
+                  {/* Project Selection Dropdown */}
+                  <div>
+                    <label
+                      htmlFor="projectSelect"
+                      className="block text-neutral-700 font-semibold mb-2 body-small"
+                    >
+                      <FontAwesomeIcon
+                        icon={faFolderOpen}
+                        className="text-primary-600 mr-2"
+                      />
+                      Select Project <span className="text-red-500">*</span>
+                    </label>
+
+                    {loadingProjects ? (
+                      <div className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-lg flex items-center gap-2">
+                        <FontAwesomeIcon
+                          icon={faSpinner}
+                          className="animate-spin text-primary-600"
+                        />
+                        <span className="text-neutral-600">
+                          Loading projects...
+                        </span>
+                      </div>
+                    ) : projectsData?.results &&
+                      projectsData.results.length > 0 ? (
+                      <select
+                        id="projectSelect"
+                        value={selectedProjectId || ""}
+                        onChange={(e) =>
+                          setSelectedProjectId(Number(e.target.value))
+                        }
+                        disabled={isSubmitting}
+                        required={assignToProject}
+                        className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50"
+                      >
+                        <option value="">-- Select a project --</option>
+                        {projectsData.results.map((project) => (
+                          <option key={project.id} value={project.id}>
+                            {project.name || project.project_name} (
+                            {project.status})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="w-full px-4 py-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <p className="text-yellow-700 text-sm">
+                          No projects available without clients. Create a
+                          project first or assign this client later.
+                        </p>
+                      </div>
+                    )}
+
+                    <p className="text-neutral-500 text-sm mt-1">
+                      Only projects without assigned clients are shown
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-neutral-600">
+                    Project assignment is disabled. You can assign the client to
+                    a project later.
+                  </p>
                   <p className="text-neutral-500 text-sm mt-2">
-                    Short location for quick reference
+                    Enable the toggle above to assign to a project now
                   </p>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Client Portal Account Card */}
@@ -415,6 +488,7 @@ export default function AddClientPage() {
                     type="checkbox"
                     checked={createPortalAccount}
                     onChange={(e) => setCreatePortalAccount(e.target.checked)}
+                    disabled={isSubmitting}
                     className="sr-only peer"
                   />
                   <div className="w-14 h-7 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-neutral-0 after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-neutral-0 after:border-neutral-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary-600"></div>
@@ -426,35 +500,8 @@ export default function AddClientPage() {
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                     <p className="text-blue-700 text-sm">
                       <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                      Create login credentials for your client to access their
-                      dedicated portal where they can view project updates,
-                      messages, and documents.
-                    </p>
-                  </div>
-
-                  {/* Portal Email */}
-                  <div>
-                    <label
-                      htmlFor="clientEmail"
-                      className="block text-neutral-700 font-semibold mb-2 body-small"
-                    >
-                      <FontAwesomeIcon
-                        icon={faEnvelope}
-                        className="text-primary-600 mr-2"
-                      />
-                      Portal Email Address{" "}
-                      <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="email"
-                      id="clientEmail"
-                      value={clientEmail}
-                      onChange={(e) => setClientEmail(e.target.value)}
-                      placeholder="client@email.com"
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                    />
-                    <p className="text-neutral-500 text-sm mt-1">
-                      This email will be used for portal login
+                      Client portal credentials will be created. The password
+                      can be changed later.
                     </p>
                   </div>
 
@@ -476,12 +523,14 @@ export default function AddClientPage() {
                         id="clientPassword"
                         value={clientPassword}
                         onChange={(e) => setClientPassword(e.target.value)}
-                        placeholder="Create a secure password"
-                        className="w-full px-4 py-3 pr-12 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                        placeholder="Create a secure password (min 8 characters)"
+                        disabled={isSubmitting}
+                        className="w-full px-4 py-3 pr-12 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50"
                       />
                       <button
                         type="button"
                         onClick={() => setShowPassword(!showPassword)}
+                        disabled={isSubmitting}
                         className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
                       >
                         <FontAwesomeIcon
@@ -513,13 +562,15 @@ export default function AddClientPage() {
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         placeholder="Re-enter password"
-                        className="w-full px-4 py-3 pr-12 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                        disabled={isSubmitting}
+                        className="w-full px-4 py-3 pr-12 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50"
                       />
                       <button
                         type="button"
                         onClick={() =>
                           setShowConfirmPassword(!showConfirmPassword)
                         }
+                        disabled={isSubmitting}
                         className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
                       >
                         <FontAwesomeIcon
@@ -532,28 +583,6 @@ export default function AddClientPage() {
                         Passwords do not match
                       </p>
                     )}
-                  </div>
-
-                  {/* Send Welcome Email */}
-                  <div className="flex items-center gap-3 p-4 bg-neutral-50 rounded-lg">
-                    <input
-                      type="checkbox"
-                      id="sendWelcomeEmail"
-                      checked={sendWelcomeEmail}
-                      onChange={(e) => setSendWelcomeEmail(e.target.checked)}
-                      className="w-5 h-5 text-primary-600 border-neutral-300 rounded focus:ring-2 focus:ring-primary-500/20"
-                    />
-                    <label
-                      htmlFor="sendWelcomeEmail"
-                      className="flex-1 cursor-pointer"
-                    >
-                      <p className="text-neutral-900 font-semibold">
-                        Send Welcome Email
-                      </p>
-                      <p className="text-neutral-600 text-sm">
-                        Send login credentials and welcome message to the client
-                      </p>
-                    </label>
                   </div>
                 </div>
               ) : (
@@ -568,139 +597,9 @@ export default function AddClientPage() {
                 </div>
               )}
             </div>
-
-            {/* Additional Details Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                <FontAwesomeIcon
-                  icon={faCheckCircle}
-                  className="text-primary-600"
-                />
-                Additional Details
-              </h2>
-
-              <div className="space-y-5">
-                {/* Budget */}
-                <div>
-                  <label
-                    htmlFor="budget"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    <FontAwesomeIcon
-                      icon={faDollarSign}
-                      className="text-primary-600 mr-2"
-                    />
-                    Expected Budget
-                  </label>
-                  <input
-                    type="text"
-                    id="budget"
-                    value={budget}
-                    onChange={(e) => setBudget(e.target.value)}
-                    placeholder="e.g., $50,000"
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                </div>
-
-                {/* Tags */}
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-3 body-small">
-                    Tags
-                  </label>
-
-                  {/* Predefined Tags */}
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    {predefinedTags.map((tag) => (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() => addTag(tag)}
-                        disabled={tags.includes(tag)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                          tags.includes(tag)
-                            ? "bg-neutral-100 text-neutral-400 border-neutral-200 cursor-not-allowed"
-                            : "bg-neutral-0 text-neutral-700 border-neutral-200 hover:border-primary-500 hover:text-primary-600"
-                        }`}
-                      >
-                        {tags.includes(tag) ? "✓ " : "+ "}
-                        {tag}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Custom Tag Input */}
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={tagInput}
-                      onChange={(e) => setTagInput(e.target.value)}
-                      onKeyPress={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addTag(tagInput);
-                        }
-                      }}
-                      placeholder="Add custom tag..."
-                      className="flex-1 px-4 py-2 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-small"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => addTag(tagInput)}
-                      className="px-4 py-2 bg-primary-600 text-neutral-0 rounded-lg hover:bg-primary-700 transition-colors font-medium text-sm"
-                    >
-                      <FontAwesomeIcon icon={faPlus} />
-                    </button>
-                  </div>
-
-                  {/* Selected Tags */}
-                  {tags.length > 0 && (
-                    <div className="flex flex-wrap gap-2 mt-3">
-                      {tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className={`px-3 py-1.5 rounded-lg text-sm font-medium border flex items-center gap-2 ${getTagColor(
-                            tag
-                          )}`}
-                        >
-                          {tag}
-                          <button
-                            type="button"
-                            onClick={() => removeTag(tag)}
-                            className="hover:scale-110 transition-transform"
-                          >
-                            <FontAwesomeIcon
-                              icon={faTimes}
-                              className="text-xs"
-                            />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Notes */}
-                <div>
-                  <label
-                    htmlFor="notes"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    Notes
-                  </label>
-                  <textarea
-                    id="notes"
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Add any additional notes about this client..."
-                    rows={4}
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
-                  />
-                </div>
-              </div>
-            </div>
           </div>
 
-          {/* Sidebar - Takes 1 column */}
+          {/* Sidebar */}
           <div className="lg:col-span-1">
             <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 sticky top-8">
               <h3 className="heading-4 text-neutral-900 mb-6">
@@ -722,13 +621,6 @@ export default function AddClientPage() {
                   </p>
                 </div>
 
-                {company && (
-                  <div className="text-center pb-4 border-b border-neutral-100">
-                    <p className="text-neutral-600 body-small mb-1">Company</p>
-                    <p className="text-neutral-900 font-semibold">{company}</p>
-                  </div>
-                )}
-
                 <div className="text-center pb-4 border-b border-neutral-100">
                   <p className="text-neutral-600 body-small mb-1">Email</p>
                   <p className="text-neutral-900 font-semibold truncate">
@@ -746,27 +638,33 @@ export default function AddClientPage() {
                 <div className="text-center pb-4 border-b border-neutral-100">
                   <p className="text-neutral-600 body-small mb-1">Location</p>
                   <p className="text-neutral-900 font-semibold">
-                    {location || "Not specified"}
+                    {city && state ? `${city}, ${state}` : "Not specified"}
                   </p>
                 </div>
 
-                {tags.length > 0 && (
-                  <div className="text-center">
-                    <p className="text-neutral-600 body-small mb-2">Tags</p>
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className={`px-2 py-1 rounded text-xs font-medium border ${getTagColor(
-                            tag
-                          )}`}
-                        >
-                          {tag}
+                {assignToProject &&
+                  selectedProjectId &&
+                  projectsData?.results && (
+                    <div className="text-center pb-4 border-b border-neutral-100">
+                      <p className="text-neutral-600 body-small mb-2">
+                        Assigned Project
+                      </p>
+                      <div className="flex items-center justify-center gap-2">
+                        <FontAwesomeIcon
+                          icon={faFolderOpen}
+                          className="text-primary-600"
+                        />
+                        <span className="text-primary-700 font-semibold text-sm">
+                          {projectsData.results.find(
+                            (p) => p.id === selectedProjectId
+                          )?.name ||
+                            projectsData.results.find(
+                              (p) => p.id === selectedProjectId
+                            )?.project_name}
                         </span>
-                      ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {createPortalAccount && (
                   <div className="text-center">
@@ -789,15 +687,29 @@ export default function AddClientPage() {
               <div className="space-y-3">
                 <button
                   type="submit"
-                  className="w-full btn-primary flex items-center justify-center gap-2"
+                  disabled={isSubmitting}
+                  className="w-full btn-primary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <FontAwesomeIcon icon={faPlus} />
-                  Add Client
+                  {isSubmitting ? (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faSpinner}
+                        className="animate-spin"
+                      />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon icon={faPlus} />
+                      Add Client
+                    </>
+                  )}
                 </button>
                 <button
                   type="button"
                   onClick={handleCancel}
-                  className="w-full btn-secondary"
+                  disabled={isSubmitting}
+                  className="w-full btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
@@ -806,8 +718,7 @@ export default function AddClientPage() {
               <div className="mt-6 p-4 bg-primary-50 rounded-lg border border-primary-200">
                 <p className="text-primary-700 body-small">
                   <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                  <strong>Tip:</strong> Add relevant tags to easily filter and
-                  categorize your clients.
+                  <strong>Tip:</strong> All fields marked with * are required.
                 </p>
               </div>
             </div>

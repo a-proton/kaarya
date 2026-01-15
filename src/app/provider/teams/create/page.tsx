@@ -15,20 +15,48 @@ import {
   faFileAlt,
   faDollarSign,
   faTimes,
+  faSpinner,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+
+interface EmployeeCreateData {
+  full_name: string;
+  email?: string;
+  phone?: string;
+  role?: string;
+  department?: string;
+  employee_id?: string;
+  status?: string;
+  join_date?: string;
+  hourly_rate?: string;
+  salary?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
+  emergency_contact?: string;
+  emergency_phone?: string;
+  skills?: string[];
+  notes?: string;
+  photo?: string;
+  id_proof_url?: string;
+  is_active?: boolean;
+}
 
 export default function AddTeamMemberPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   const [memberName, setMemberName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [role, setRole] = useState("");
   const [department, setDepartment] = useState("");
-  const [status, setStatus] = useState<"Active" | "Inactive" | "On Leave">(
-    "Active"
+  const [status, setStatus] = useState<"active" | "inactive" | "on_leave">(
+    "active"
   );
   const [employeeId, setEmployeeId] = useState("");
   const [joinDate, setJoinDate] = useState(
@@ -55,6 +83,23 @@ export default function AddTeamMemberPage() {
     "Design",
     "Landscaping",
   ];
+
+  // Create mutation
+  const createMutation = useMutation({
+    mutationFn: async (data: EmployeeCreateData) => {
+      const response = await api.post("/api/v1/employees/", data);
+      return response;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["team-members"] });
+      router.push("/provider/teams");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to create team member: ${error.message || "Unknown error"}`
+      );
+    },
+  });
 
   const addSkill = (skill: string) => {
     if (skill && !skills.includes(skill)) {
@@ -85,37 +130,38 @@ export default function AddTeamMemberPage() {
 
   const getStatusBadgeColor = (status: string) => {
     const colors = {
-      Active: "bg-green-100 text-green-700 border-green-200",
-      Inactive: "bg-neutral-100 text-neutral-600 border-neutral-200",
-      "On Leave": "bg-yellow-100 text-yellow-700 border-yellow-200",
+      active: "bg-green-100 text-green-700 border-green-200",
+      inactive: "bg-neutral-100 text-neutral-600 border-neutral-200",
+      on_leave: "bg-yellow-100 text-yellow-700 border-yellow-200",
     };
     return colors[status as keyof typeof colors];
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const memberData = {
-      memberName,
-      email,
-      phone,
-      role,
-      department,
-      status,
-      employeeId,
-      joinDate,
-      address,
-      city,
-      state,
-      zipCode,
-      emergencyContact,
-      emergencyPhone,
-      salary,
-      skills,
-      notes,
+
+    const memberData: EmployeeCreateData = {
+      full_name: memberName,
+      email: email || undefined,
+      phone: phone || undefined,
+      role: role || undefined,
+      department: department || undefined,
+      employee_id: employeeId || undefined,
+      status: status,
+      join_date: joinDate || undefined,
+      salary: salary ? salary.replace(/[$,]/g, "") : undefined,
+      address: address || undefined,
+      city: city || undefined,
+      state: state || undefined,
+      zip_code: zipCode || undefined,
+      emergency_contact: emergencyContact || undefined,
+      emergency_phone: emergencyPhone || undefined,
+      skills: skills.length > 0 ? skills : undefined,
+      notes: notes || undefined,
+      is_active: status === "active",
     };
-    console.log("Team Member Data:", memberData);
-    alert("Team member added successfully!");
-    router.push("/provider/team");
+
+    createMutation.mutate(memberData);
   };
 
   const handleCancel = () => {
@@ -146,6 +192,7 @@ export default function AddTeamMemberPage() {
             onClick={() => router.back()}
             className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
             aria-label="Go back"
+            disabled={createMutation.isPending}
           >
             <FontAwesomeIcon
               icon={faArrowLeft}
@@ -204,7 +251,7 @@ export default function AddTeamMemberPage() {
                         icon={faEnvelope}
                         className="text-primary-600 mr-2"
                       />
-                      Email Address <span className="text-red-500">*</span>
+                      Email Address
                     </label>
                     <input
                       type="email"
@@ -212,7 +259,6 @@ export default function AddTeamMemberPage() {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="john.smith@company.com"
-                      required
                       className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                     />
                   </div>
@@ -225,7 +271,7 @@ export default function AddTeamMemberPage() {
                         icon={faPhone}
                         className="text-primary-600 mr-2"
                       />
-                      Phone Number <span className="text-red-500">*</span>
+                      Phone Number
                     </label>
                     <input
                       type="tel"
@@ -233,7 +279,6 @@ export default function AddTeamMemberPage() {
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
                       placeholder="+1 (555) 123-4567"
-                      required
                       className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                     />
                   </div>
@@ -295,13 +340,12 @@ export default function AddTeamMemberPage() {
                       htmlFor="role"
                       className="block text-neutral-700 font-semibold mb-2 body-small"
                     >
-                      Role <span className="text-red-500">*</span>
+                      Role
                     </label>
                     <select
                       id="role"
                       value={role}
                       onChange={(e) => setRole(e.target.value)}
-                      required
                       className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
                     >
                       <option value="">Select a role</option>
@@ -322,13 +366,12 @@ export default function AddTeamMemberPage() {
                       htmlFor="department"
                       className="block text-neutral-700 font-semibold mb-2 body-small"
                     >
-                      Department <span className="text-red-500">*</span>
+                      Department
                     </label>
                     <select
                       id="department"
                       value={department}
                       onChange={(e) => setDepartment(e.target.value)}
-                      required
                       className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
                     >
                       <option value="">Select a department</option>
@@ -374,15 +417,15 @@ export default function AddTeamMemberPage() {
                       value={status}
                       onChange={(e) =>
                         setStatus(
-                          e.target.value as "Active" | "Inactive" | "On Leave"
+                          e.target.value as "active" | "inactive" | "on_leave"
                         )
                       }
                       required
                       className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
                     >
-                      <option value="Active">Active</option>
-                      <option value="On Leave">On Leave</option>
-                      <option value="Inactive">Inactive</option>
+                      <option value="active">Active</option>
+                      <option value="on_leave">On Leave</option>
+                      <option value="inactive">Inactive</option>
                     </select>
                   </div>
                 </div>
@@ -398,14 +441,13 @@ export default function AddTeamMemberPage() {
                         icon={faCalendar}
                         className="text-primary-600 mr-2"
                       />
-                      Join Date <span className="text-red-500">*</span>
+                      Join Date
                     </label>
                     <input
                       type="date"
                       id="joinDate"
                       value={joinDate}
                       onChange={(e) => setJoinDate(e.target.value)}
-                      required
                       className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                     />
                   </div>
@@ -425,7 +467,7 @@ export default function AddTeamMemberPage() {
                       id="salary"
                       value={salary}
                       onChange={(e) => setSalary(e.target.value)}
-                      placeholder="e.g., $65,000"
+                      placeholder="e.g., 65000"
                       className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                     />
                   </div>
@@ -673,7 +715,9 @@ export default function AddTeamMemberPage() {
                       status
                     )}`}
                   >
-                    {status}
+                    {status === "on_leave"
+                      ? "On Leave"
+                      : status.charAt(0).toUpperCase() + status.slice(1)}
                   </span>
                 </div>
 
@@ -704,15 +748,29 @@ export default function AddTeamMemberPage() {
               <div className="space-y-3">
                 <button
                   type="submit"
-                  className="w-full btn-primary flex items-center justify-center gap-2"
+                  disabled={createMutation.isPending}
+                  className="w-full btn-primary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <FontAwesomeIcon icon={faPlus} />
-                  Add Team Member
+                  {createMutation.isPending ? (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faSpinner}
+                        className="animate-spin"
+                      />
+                      Adding...
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon icon={faPlus} />
+                      Add Team Member
+                    </>
+                  )}
                 </button>
                 <button
                   type="button"
                   onClick={handleCancel}
-                  className="w-full btn-secondary"
+                  disabled={createMutation.isPending}
+                  className="w-full btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
