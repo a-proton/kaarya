@@ -26,184 +26,1024 @@ import {
   faCheckCircle,
   faEdit,
   faPlus,
+  faSpinner,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+
+// ==================================================================================
+// TYPE DEFINITIONS
+// ==================================================================================
+
+interface User {
+  id: number;
+  email: string;
+  phone: string;
+  user_type: string;
+}
+
+interface Profile {
+  id: number;
+  user: User;
+  full_name: string;
+  business_name: string;
+  bio: string;
+  address: string;
+  city: string;
+  state: string;
+  postal_code: string;
+  profile_image: string;
+  cover_image: string;
+  hero_image: string;
+  years_of_experience: number;
+  license_number: string;
+  service_radius: number;
+  hourly_rate_min: number;
+  hourly_rate_max: number;
+  project_range_min: number;
+  project_range_max: number;
+  slug: string;
+  latitude: number;
+  longitude: number;
+}
+
+interface PortfolioItem {
+  id: number;
+  title: string;
+  category: string;
+  image_url: string;
+  description: string;
+  display_order: number;
+  created_at: string;
+}
+
+interface ExperienceItem {
+  id: number;
+  title: string;
+  client_name: string;
+  completion_date: string;
+  description: string;
+  display_order: number;
+  formatted_date: string;
+}
+
+interface License {
+  id: number;
+  icon: string;
+  title: string;
+  issuer: string;
+  license_number: string;
+  issue_date: string;
+  formatted_issue_date: string;
+  status: string;
+}
+
+interface Specialization {
+  id: number;
+  icon: string;
+  title: string;
+  description: string;
+  price: string;
+  display_order: number;
+  is_active: boolean;
+}
+
+interface VerificationDocument {
+  id: number;
+  document_type: string;
+  document_url: string;
+  document_number: string;
+  issue_date: string;
+  expiry_date: string;
+  verification_status: string;
+  upload_date: string;
+  verified_at: string;
+  rejection_reason: string;
+}
+
+interface NotificationPreferences {
+  id: number;
+  email_notifications: boolean;
+  sms_notifications: boolean;
+  project_updates: boolean;
+  payment_alerts: boolean;
+  message_notifications: boolean;
+  appointment_reminders: boolean;
+  system_announcements: boolean;
+}
+
+interface UserPreferences {
+  id: number;
+  language: string;
+  timezone: string;
+  date_format: string;
+  theme: string;
+}
+
+interface AccountInfo {
+  account_created: string;
+  account_status: string;
+  last_login: string;
+  email_verified: boolean;
+  phone_verified: boolean;
+}
+
+interface AllSettingsData {
+  profile: Profile;
+  portfolio: PortfolioItem[];
+  experience: ExperienceItem[];
+  licenses: License[];
+  specializations: Specialization[];
+  verification_documents: VerificationDocument[];
+  notification_preferences: NotificationPreferences;
+  user_preferences: UserPreferences;
+  account_info: AccountInfo;
+}
+
+// ==================================================================================
+// MAIN COMPONENT
+// ==================================================================================
 
 export default function SettingsPage() {
+  const queryClient = useQueryClient();
+
   const [activeTab, setActiveTab] = useState("profile");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showPortfolioModal, setShowPortfolioModal] = useState(false);
+  const [showExperienceModal, setShowExperienceModal] = useState(false);
+  const [showLicenseModal, setShowLicenseModal] = useState(false);
+  const [showSpecializationModal, setShowSpecializationModal] = useState(false);
+  const [showServiceModal, setShowServiceModal] = useState(false);
   const [showPasswordFields, setShowPasswordFields] = useState({
     current: false,
     new: false,
     confirm: false,
   });
 
-  // Profile state
-  const [fullName, setFullName] = useState("John Anderson");
-  const [email, setEmail] = useState("john.anderson@example.com");
-  const [phone, setPhone] = useState("+1 (555) 123-4567");
-  const [company, setCompany] = useState("Anderson Construction");
-  const [location, setLocation] = useState("Los Angeles, CA");
-  const [bio, setBio] = useState(
-    "Experienced contractor specializing in residential and commercial projects."
-  );
+  // Editing states
+  const [editingPortfolio, setEditingPortfolio] =
+    useState<PortfolioItem | null>(null);
+  const [editingExperience, setEditingExperience] =
+    useState<ExperienceItem | null>(null);
+  const [editingLicense, setEditingLicense] = useState<License | null>(null);
+  const [editingSpecialization, setEditingSpecialization] =
+    useState<Specialization | null>(null);
 
-  // Security state
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  // Form states
+  const [profileForm, setProfileForm] = useState({
+    full_name: "",
+    email: "",
+    phone: "",
+    address: "",
+    city: "",
+    state: "",
+    postal_code: "",
+    bio: "",
+    profile_image: "",
+  });
 
-  // Notification state
-  const [emailNotifications, setEmailNotifications] = useState(true);
-  const [smsNotifications, setSmsNotifications] = useState(false);
-  const [projectUpdates, setProjectUpdates] = useState(true);
-  const [paymentAlerts, setPaymentAlerts] = useState(true);
-  const [messageNotifications, setMessageNotifications] = useState(true);
+  const [publicProfileForm, setPublicProfileForm] = useState({
+    business_name: "",
+    slug: "",
+    about_paragraphs: [""],
+    hero_image: "",
+  });
 
-  // Preferences state
-  const [language, setLanguage] = useState("English");
-  const [timezone, setTimezone] = useState("America/Los_Angeles");
-  const [dateFormat, setDateFormat] = useState("MM/DD/YYYY");
+  const [businessForm, setBusinessForm] = useState({
+    business_name: "",
+    license_number: "",
+    years_of_experience: 0,
+    service_radius: 5,
+    hourly_rate_min: 0,
+    hourly_rate_max: 0,
+  });
 
-  // Business Info state
-  const [businessName, setBusinessName] = useState("Anderson Construction");
-  const [yearsExperience, setYearsExperience] = useState("15");
-  const [serviceRadius, setServiceRadius] = useState("50");
-  const [hourlyRateMin, setHourlyRateMin] = useState("75");
-  const [hourlyRateMax, setHourlyRateMax] = useState("150");
-  const [licenseNumber, setLicenseNumber] = useState("CA-123456");
+  const [portfolioForm, setPortfolioForm] = useState({
+    title: "",
+    category: "",
+    image_url: "",
+    description: "",
+  });
 
-  // Verification state
-  const [verificationDocs, setVerificationDocs] = useState([
-    {
-      id: "1",
-      type: "Business License",
-      status: "Verified",
-      uploadDate: "2024-01-15",
+  const [experienceForm, setExperienceForm] = useState({
+    title: "",
+    client_name: "",
+    completion_date: "",
+    description: "",
+  });
+
+  const [licenseForm, setLicenseForm] = useState({
+    title: "",
+    issuer: "",
+    license_number: "",
+    issue_date: "",
+    icon: "faCertificate",
+  });
+
+  const [specializationForm, setSpecializationForm] = useState({
+    icon: "faBolt",
+    title: "",
+    description: "",
+    price: "",
+  });
+
+  const [documentForm, setDocumentForm] = useState({
+    document_type: "license",
+    document_url: "",
+    document_number: "",
+    issue_date: "",
+    expiry_date: "",
+  });
+
+  const [passwordForm, setPasswordForm] = useState({
+    current_password: "",
+    new_password: "",
+    confirm_password: "",
+  });
+
+  const [notificationPrefs, setNotificationPrefs] =
+    useState<NotificationPreferences | null>(null);
+  const [userPrefs, setUserPrefs] = useState<UserPreferences | null>(null);
+
+  // ==================================================================================
+  // FETCH ALL SETTINGS DATA
+  // ==================================================================================
+
+  const {
+    data: settingsData,
+    isLoading: settingsLoading,
+    isError: settingsError,
+    error: settingsErrorData,
+  } = useQuery<AllSettingsData>({
+    queryKey: ["all-settings"],
+    queryFn: async () => {
+      const response = await api.get<AllSettingsData>("/api/v1/settings/all/");
+
+      // Initialize forms with fetched data
+      if (response.profile) {
+        setProfileForm({
+          full_name: response.profile.full_name || "",
+          email: response.profile.user.email || "",
+          phone: response.profile.user.phone || "",
+          address: response.profile.address || "",
+          city: response.profile.city || "",
+          state: response.profile.state || "",
+          postal_code: response.profile.postal_code || "",
+          bio: response.profile.bio || "",
+          profile_image: response.profile.profile_image || "",
+        });
+
+        setPublicProfileForm({
+          business_name: response.profile.business_name || "",
+          slug: response.profile.slug || "",
+          about_paragraphs: response.profile.bio
+            ? response.profile.bio.split("\n\n")
+            : [""],
+          hero_image: response.profile.hero_image || "",
+        });
+
+        setBusinessForm({
+          business_name: response.profile.business_name || "",
+          license_number: response.profile.license_number || "",
+          years_of_experience: response.profile.years_of_experience || 0,
+          service_radius: response.profile.service_radius || 5,
+          hourly_rate_min: response.profile.hourly_rate_min || 0,
+          hourly_rate_max: response.profile.hourly_rate_max || 0,
+        });
+      }
+
+      if (response.notification_preferences) {
+        setNotificationPrefs(response.notification_preferences);
+      }
+
+      if (response.user_preferences) {
+        setUserPrefs(response.user_preferences);
+      }
+
+      return response;
     },
-    {
-      id: "2",
-      type: "Insurance Certificate",
-      status: "Pending",
-      uploadDate: "2024-03-10",
-    },
-  ]);
-  const [showUploadModal, setShowUploadModal] = useState(false);
+  });
 
-  // Portfolio state
-  const [portfolioItems, setPortfolioItems] = useState([
-    {
-      id: "1",
-      title: "Modern Kitchen Remodel",
-      category: "Kitchen",
-      imageUrl: "",
-    },
-    {
-      id: "2",
-      title: "Bathroom Renovation",
-      category: "Bathroom",
-      imageUrl: "",
-    },
-  ]);
-  const [showPortfolioModal, setShowPortfolioModal] = useState(false);
+  // ==================================================================================
+  // MUTATIONS - PROFILE
+  // ==================================================================================
 
-  // Public Profile state
-  const [profileTitle, setProfileTitle] = useState(
-    "Licensed Master Electrician"
-  );
-  const [profileSlug, setProfileSlug] = useState("john-anderson-electrician");
-  const [aboutParagraphs, setAboutParagraphs] = useState([
-    "With over 15 years of experience in residential and commercial electrical work, I take pride in delivering safe, efficient, and high-quality electrical solutions.",
-  ]);
-  const [heroImageUrl, setHeroImageUrl] = useState("");
-  const [publicServices, setPublicServices] = useState([
-    "Panel Upgrades",
-    "Emergency Repairs",
-    "Smart Home",
-  ]);
-  const [showServiceModal, setShowServiceModal] = useState(false);
-  const [newService, setNewService] = useState("");
+  const updateBasicProfileMutation = useMutation({
+    mutationFn: async (data: typeof profileForm) => {
+      return api.put("/api/v1/settings/profile/basic/", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("Profile updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(`Failed to update profile: ${error.data?.detail || error.message}`);
+    },
+  });
+
+  const updatePublicProfileMutation = useMutation({
+    mutationFn: async (data: typeof publicProfileForm) => {
+      return api.put("/api/v1/settings/profile/public/", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("Public profile updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to update public profile: ${
+          error.data?.detail || error.message
+        }`
+      );
+    },
+  });
+
+  const updateBusinessInfoMutation = useMutation({
+    mutationFn: async (data: typeof businessForm) => {
+      return api.put("/api/v1/settings/business/", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("Business information updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to update business info: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+
+  // ==================================================================================
+  // MUTATIONS - PORTFOLIO
+  // ==================================================================================
+
+  const createPortfolioMutation = useMutation({
+    mutationFn: async (data: typeof portfolioForm) => {
+      return api.post<PortfolioItem>("/api/v1/settings/portfolio/", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowPortfolioModal(false);
+      resetPortfolioForm();
+      alert("Portfolio item added successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to add portfolio item: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+
+  const updatePortfolioMutation = useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: typeof portfolioForm;
+    }) => {
+      return api.put<PortfolioItem>(`/api/v1/settings/portfolio/${id}/`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowPortfolioModal(false);
+      setEditingPortfolio(null);
+      resetPortfolioForm();
+      alert("Portfolio item updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to update portfolio item: ${
+          error.data?.detail || error.message
+        }`
+      );
+    },
+  });
+
+  const deletePortfolioMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return api.delete(`/api/v1/settings/portfolio/${id}/`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("Portfolio item deleted successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to delete portfolio item: ${
+          error.data?.detail || error.message
+        }`
+      );
+    },
+  });
+
+  // ==================================================================================
+  // MUTATIONS - EXPERIENCE
+  // ==================================================================================
+
+  const createExperienceMutation = useMutation({
+    mutationFn: async (data: typeof experienceForm) => {
+      return api.post<ExperienceItem>("/api/v1/settings/experience/", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowExperienceModal(false);
+      resetExperienceForm();
+      alert("Experience entry added successfully!");
+    },
+    onError: (error: any) => {
+      alert(`Failed to add experience: ${error.data?.detail || error.message}`);
+    },
+  });
+
+  const updateExperienceMutation = useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: typeof experienceForm;
+    }) => {
+      return api.put<ExperienceItem>(
+        `/api/v1/settings/experience/${id}/`,
+        data
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowExperienceModal(false);
+      setEditingExperience(null);
+      resetExperienceForm();
+      alert("Experience entry updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to update experience: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+
+  const deleteExperienceMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return api.delete(`/api/v1/settings/experience/${id}/`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("Experience entry deleted successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to delete experience: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+
+  // ==================================================================================
+  // MUTATIONS - LICENSES
+  // ==================================================================================
+
+  const createLicenseMutation = useMutation({
+    mutationFn: async (data: typeof licenseForm) => {
+      return api.post<License>("/api/v1/settings/licenses/", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowLicenseModal(false);
+      resetLicenseForm();
+      alert("License added successfully!");
+    },
+    onError: (error: any) => {
+      alert(`Failed to add license: ${error.data?.detail || error.message}`);
+    },
+  });
+
+  const updateLicenseMutation = useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: typeof licenseForm;
+    }) => {
+      return api.put<License>(`/api/v1/settings/licenses/${id}/`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowLicenseModal(false);
+      setEditingLicense(null);
+      resetLicenseForm();
+      alert("License updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(`Failed to update license: ${error.data?.detail || error.message}`);
+    },
+  });
+
+  const deleteLicenseMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return api.delete(`/api/v1/settings/licenses/${id}/`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("License deleted successfully!");
+    },
+    onError: (error: any) => {
+      alert(`Failed to delete license: ${error.data?.detail || error.message}`);
+    },
+  });
+
+  // ==================================================================================
+  // MUTATIONS - SPECIALIZATIONS
+  // ==================================================================================
+
+  const createSpecializationMutation = useMutation({
+    mutationFn: async (data: typeof specializationForm) => {
+      return api.post<Specialization>(
+        "/api/v1/settings/specializations/",
+        data
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowSpecializationModal(false);
+      resetSpecializationForm();
+      alert("Specialization added successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to add specialization: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+
+  const updateSpecializationMutation = useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: typeof specializationForm;
+    }) => {
+      return api.put<Specialization>(
+        `/api/v1/settings/specializations/${id}/`,
+        data
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowSpecializationModal(false);
+      setEditingSpecialization(null);
+      resetSpecializationForm();
+      alert("Specialization updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to update specialization: ${
+          error.data?.detail || error.message
+        }`
+      );
+    },
+  });
+
+  const deleteSpecializationMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return api.delete(`/api/v1/settings/specializations/${id}/`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("Specialization deleted successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to delete specialization: ${
+          error.data?.detail || error.message
+        }`
+      );
+    },
+  });
+
+  // ==================================================================================
+  // MUTATIONS - VERIFICATION DOCUMENTS
+  // ==================================================================================
+
+  const uploadDocumentMutation = useMutation({
+    mutationFn: async (data: typeof documentForm) => {
+      return api.post<VerificationDocument>(
+        "/api/v1/settings/documents/",
+        data
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowUploadModal(false);
+      resetDocumentForm();
+      alert("Document uploaded successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to upload document: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+
+  // ==================================================================================
+  // MUTATIONS - NOTIFICATION PREFERENCES
+  // ==================================================================================
+
+  const updateNotificationPrefsMutation = useMutation({
+    mutationFn: async (data: NotificationPreferences) => {
+      return api.put<NotificationPreferences>(
+        "/api/v1/settings/notifications/",
+        data
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("Notification preferences updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to update preferences: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+
+  // ==================================================================================
+  // MUTATIONS - USER PREFERENCES
+  // ==================================================================================
+
+  const updateUserPrefsMutation = useMutation({
+    mutationFn: async (data: UserPreferences) => {
+      return api.put<UserPreferences>("/api/v1/settings/preferences/", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("Preferences updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to update preferences: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+
+  // ==================================================================================
+  // MUTATIONS - PASSWORD CHANGE
+  // ==================================================================================
+
+  const changePasswordMutation = useMutation({
+    mutationFn: async (data: typeof passwordForm) => {
+      return api.post("/api/v1/auth/password/change/", {
+        old_password: data.current_password,
+        new_password: data.new_password,
+      });
+    },
+    onSuccess: () => {
+      setPasswordForm({
+        current_password: "",
+        new_password: "",
+        confirm_password: "",
+      });
+      alert("Password changed successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to change password: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+
+  // ==================================================================================
+  // HELPER FUNCTIONS
+  // ==================================================================================
+
+  const resetPortfolioForm = () => {
+    setPortfolioForm({
+      title: "",
+      category: "",
+      image_url: "",
+      description: "",
+    });
+  };
+
+  const resetExperienceForm = () => {
+    setExperienceForm({
+      title: "",
+      client_name: "",
+      completion_date: "",
+      description: "",
+    });
+  };
+
+  const resetLicenseForm = () => {
+    setLicenseForm({
+      title: "",
+      issuer: "",
+      license_number: "",
+      issue_date: "",
+      icon: "faCertificate",
+    });
+  };
+
+  const resetSpecializationForm = () => {
+    setSpecializationForm({
+      icon: "faBolt",
+      title: "",
+      description: "",
+      price: "",
+    });
+  };
+
+  const resetDocumentForm = () => {
+    setDocumentForm({
+      document_type: "license",
+      document_url: "",
+      document_number: "",
+      issue_date: "",
+      expiry_date: "",
+    });
+  };
+
+  // ==================================================================================
+  // HANDLERS
+  // ==================================================================================
 
   const handleSaveProfile = () => {
-    console.log("Saving profile...", {
-      fullName,
-      email,
-      phone,
-      company,
-      location,
-      bio,
-    });
-    alert("Profile updated successfully!");
-  };
-
-  const handleChangePassword = () => {
-    if (!currentPassword || !newPassword || !confirmPassword) {
-      alert("Please fill in all password fields");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      alert("New passwords do not match");
-      return;
-    }
-    console.log("Changing password...");
-    alert("Password changed successfully!");
-    setCurrentPassword("");
-    setNewPassword("");
-    setConfirmPassword("");
-  };
-
-  const handleSaveNotifications = () => {
-    console.log("Saving notification preferences...");
-    alert("Notification preferences updated!");
-  };
-
-  const handleSavePreferences = () => {
-    console.log("Saving preferences...");
-    alert("Preferences updated!");
-  };
-
-  const handleDeleteAccount = () => {
-    console.log("Deleting account...");
-    alert(
-      "Account deletion request submitted. You will receive a confirmation email."
-    );
-    setShowDeleteModal(false);
-  };
-
-  const handleSaveBusinessInfo = () => {
-    console.log("Saving business info...");
-    alert("Business information updated successfully!");
-  };
-
-  const handleUploadVerification = () => {
-    console.log("Uploading verification document...");
-    alert("Document uploaded for verification!");
-    setShowUploadModal(false);
-  };
-
-  const handleAddPortfolio = () => {
-    console.log("Adding portfolio item...");
-    alert("Portfolio item added successfully!");
-    setShowPortfolioModal(false);
+    updateBasicProfileMutation.mutate(profileForm);
   };
 
   const handleSavePublicProfile = () => {
-    console.log("Saving public profile...");
-    alert("Public profile updated successfully!");
+    updatePublicProfileMutation.mutate(publicProfileForm);
   };
 
-  const handleAddService = () => {
-    if (newService.trim()) {
-      setPublicServices([...publicServices, newService.trim()]);
-      setNewService("");
-      setShowServiceModal(false);
+  const handleSaveBusinessInfo = () => {
+    updateBusinessInfoMutation.mutate(businessForm);
+  };
+
+  const handleAddPortfolio = () => {
+    if (!portfolioForm.title || !portfolioForm.category) {
+      alert("Please fill in required fields");
+      return;
+    }
+    if (editingPortfolio) {
+      updatePortfolioMutation.mutate({
+        id: editingPortfolio.id,
+        data: portfolioForm,
+      });
+    } else {
+      createPortfolioMutation.mutate(portfolioForm);
     }
   };
 
-  const handleRemoveService = (index: number) => {
-    setPublicServices(publicServices.filter((_, i) => i !== index));
+  const handleEditPortfolio = (item: PortfolioItem) => {
+    setEditingPortfolio(item);
+    setPortfolioForm({
+      title: item.title,
+      category: item.category,
+      image_url: item.image_url,
+      description: item.description,
+    });
+    setShowPortfolioModal(true);
   };
+
+  const handleDeletePortfolio = (id: number) => {
+    if (confirm("Are you sure you want to delete this portfolio item?")) {
+      deletePortfolioMutation.mutate(id);
+    }
+  };
+
+  const handleAddExperience = () => {
+    if (
+      !experienceForm.title ||
+      !experienceForm.client_name ||
+      !experienceForm.completion_date
+    ) {
+      alert("Please fill in required fields");
+      return;
+    }
+    if (editingExperience) {
+      updateExperienceMutation.mutate({
+        id: editingExperience.id,
+        data: experienceForm,
+      });
+    } else {
+      createExperienceMutation.mutate(experienceForm);
+    }
+  };
+
+  const handleEditExperience = (item: ExperienceItem) => {
+    setEditingExperience(item);
+    setExperienceForm({
+      title: item.title,
+      client_name: item.client_name,
+      completion_date: item.completion_date,
+      description: item.description,
+    });
+    setShowExperienceModal(true);
+  };
+
+  const handleDeleteExperience = (id: number) => {
+    if (confirm("Are you sure you want to delete this experience entry?")) {
+      deleteExperienceMutation.mutate(id);
+    }
+  };
+
+  const handleAddLicense = () => {
+    if (!licenseForm.title || !licenseForm.issuer) {
+      alert("Please fill in required fields");
+      return;
+    }
+    if (editingLicense) {
+      updateLicenseMutation.mutate({
+        id: editingLicense.id,
+        data: licenseForm,
+      });
+    } else {
+      createLicenseMutation.mutate(licenseForm);
+    }
+  };
+
+  const handleEditLicense = (item: License) => {
+    setEditingLicense(item);
+    setLicenseForm({
+      title: item.title,
+      issuer: item.issuer,
+      license_number: item.license_number,
+      issue_date: item.issue_date,
+      icon: item.icon,
+    });
+    setShowLicenseModal(true);
+  };
+
+  const handleDeleteLicense = (id: number) => {
+    if (confirm("Are you sure you want to delete this license?")) {
+      deleteLicenseMutation.mutate(id);
+    }
+  };
+
+  const handleAddSpecialization = () => {
+    if (!specializationForm.title || !specializationForm.description) {
+      alert("Please fill in required fields");
+      return;
+    }
+    if (editingSpecialization) {
+      updateSpecializationMutation.mutate({
+        id: editingSpecialization.id,
+        data: specializationForm,
+      });
+    } else {
+      createSpecializationMutation.mutate(specializationForm);
+    }
+  };
+
+  const handleEditSpecialization = (item: Specialization) => {
+    setEditingSpecialization(item);
+    setSpecializationForm({
+      icon: item.icon,
+      title: item.title,
+      description: item.description,
+      price: item.price,
+    });
+    setShowSpecializationModal(true);
+  };
+
+  const handleDeleteSpecialization = (id: number) => {
+    if (confirm("Are you sure you want to delete this specialization?")) {
+      deleteSpecializationMutation.mutate(id);
+    }
+  };
+
+  const handleUploadVerification = () => {
+    if (!documentForm.document_url) {
+      alert("Please upload a document");
+      return;
+    }
+    uploadDocumentMutation.mutate(documentForm);
+  };
+
+  const handleSaveNotifications = () => {
+    if (notificationPrefs) {
+      updateNotificationPrefsMutation.mutate(notificationPrefs);
+    }
+  };
+
+  const handleSavePreferences = () => {
+    if (userPrefs) {
+      updateUserPrefsMutation.mutate(userPrefs);
+    }
+  };
+
+  const handleChangePassword = () => {
+    if (
+      !passwordForm.current_password ||
+      !passwordForm.new_password ||
+      !passwordForm.confirm_password
+    ) {
+      alert("Please fill in all password fields");
+      return;
+    }
+    if (passwordForm.new_password !== passwordForm.confirm_password) {
+      alert("New passwords do not match");
+      return;
+    }
+    changePasswordMutation.mutate(passwordForm);
+  };
+
+  const handleDeleteAccount = async () => {
+    try {
+      const response = await api.delete("/api/v1/settings/account/delete/");
+
+      if (response.status === 204) {
+        // Clear local storage/tokens
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("refresh_token");
+
+        window.location.href = "/join-provider";
+      }
+    } catch (error: any) {
+      alert(`Failed to delete account: ${error.data?.detail || error.message}`);
+    }
+
+    setShowDeleteModal(false);
+  };
+
+  const handleAddAboutParagraph = () => {
+    setPublicProfileForm({
+      ...publicProfileForm,
+      about_paragraphs: [...publicProfileForm.about_paragraphs, ""],
+    });
+  };
+
+  const handleRemoveAboutParagraph = (index: number) => {
+    setPublicProfileForm({
+      ...publicProfileForm,
+      about_paragraphs: publicProfileForm.about_paragraphs.filter(
+        (_, i) => i !== index
+      ),
+    });
+  };
+
+  const handleUpdateAboutParagraph = (index: number, value: string) => {
+    const newParagraphs = [...publicProfileForm.about_paragraphs];
+    newParagraphs[index] = value;
+    setPublicProfileForm({
+      ...publicProfileForm,
+      about_paragraphs: newParagraphs,
+    });
+  };
+
+  // ==================================================================================
+  // LOADING & ERROR STATES
+  // ==================================================================================
+
+  const isLoading = settingsLoading;
+  const isError = settingsError;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center">
+          <FontAwesomeIcon
+            icon={faSpinner}
+            spin
+            className="text-4xl text-primary-600 mb-4"
+          />
+          <p className="text-neutral-600">Loading settings...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FontAwesomeIcon
+              icon={faExclamationTriangle}
+              className="text-red-600 text-2xl"
+            />
+          </div>
+          <h2 className="heading-3 text-neutral-900 mb-2">
+            Error Loading Settings
+          </h2>
+          <p className="text-neutral-600 mb-4">
+            {settingsErrorData instanceof Error
+              ? settingsErrorData.message
+              : "Failed to load settings data"}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="btn-primary"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const tabs = [
     { id: "profile", label: "Profile", icon: faUser },
@@ -216,6 +1056,10 @@ export default function SettingsPage() {
     { id: "preferences", label: "Preferences", icon: faGlobe },
     { id: "account", label: "Account", icon: faShield },
   ];
+
+  // ==================================================================================
+  // RENDER
+  // ==================================================================================
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -256,18 +1100,30 @@ export default function SettingsPage() {
           {/* Main Content */}
           <div className="lg:col-span-3">
             {/* Profile Tab */}
-            {activeTab === "profile" && (
+            {activeTab === "profile" && settingsData && (
               <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
                 <h2 className="heading-3 text-neutral-900 mb-6">
                   Profile Information
                 </h2>
 
-                {/* Profile Picture */}
                 <div className="flex items-center gap-6 mb-8 pb-8 border-b border-neutral-200">
                   <div className="relative">
-                    <div className="w-24 h-24 bg-primary-600 rounded-full flex items-center justify-center text-neutral-0 text-3xl font-semibold">
-                      JA
-                    </div>
+                    {profileForm.profile_image ? (
+                      <img
+                        src={profileForm.profile_image}
+                        alt="Profile"
+                        className="w-24 h-24 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-24 h-24 bg-primary-600 rounded-full flex items-center justify-center text-neutral-0 text-3xl font-semibold">
+                        {profileForm.full_name
+                          .split(" ")
+                          .map((n) => n[0])
+                          .join("")
+                          .toUpperCase()
+                          .slice(0, 2)}
+                      </div>
+                    )}
                     <button className="absolute bottom-0 right-0 w-8 h-8 bg-neutral-900 text-neutral-0 rounded-full flex items-center justify-center hover:bg-neutral-800 transition-colors">
                       <FontAwesomeIcon icon={faCamera} className="text-sm" />
                     </button>
@@ -285,7 +1141,6 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                {/* Form Fields */}
                 <div className="space-y-5">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                     <div>
@@ -299,8 +1154,13 @@ export default function SettingsPage() {
                         />
                         <input
                           type="text"
-                          value={fullName}
-                          onChange={(e) => setFullName(e.target.value)}
+                          value={profileForm.full_name}
+                          onChange={(e) =>
+                            setProfileForm({
+                              ...profileForm,
+                              full_name: e.target.value,
+                            })
+                          }
                           className="w-full pl-12 pr-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                         />
                       </div>
@@ -317,8 +1177,13 @@ export default function SettingsPage() {
                         />
                         <input
                           type="email"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
+                          value={profileForm.email}
+                          onChange={(e) =>
+                            setProfileForm({
+                              ...profileForm,
+                              email: e.target.value,
+                            })
+                          }
                           className="w-full pl-12 pr-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                         />
                       </div>
@@ -335,8 +1200,13 @@ export default function SettingsPage() {
                         />
                         <input
                           type="tel"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
+                          value={profileForm.phone}
+                          onChange={(e) =>
+                            setProfileForm({
+                              ...profileForm,
+                              phone: e.target.value,
+                            })
+                          }
                           className="w-full pl-12 pr-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                         />
                       </div>
@@ -344,26 +1214,25 @@ export default function SettingsPage() {
 
                     <div>
                       <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                        Company
+                        City
                       </label>
-                      <div className="relative">
-                        <FontAwesomeIcon
-                          icon={faBriefcase}
-                          className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
-                        />
-                        <input
-                          type="text"
-                          value={company}
-                          onChange={(e) => setCompany(e.target.value)}
-                          className="w-full pl-12 pr-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                        />
-                      </div>
+                      <input
+                        type="text"
+                        value={profileForm.city}
+                        onChange={(e) =>
+                          setProfileForm({
+                            ...profileForm,
+                            city: e.target.value,
+                          })
+                        }
+                        className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      />
                     </div>
                   </div>
 
                   <div>
                     <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                      Location
+                      Address
                     </label>
                     <div className="relative">
                       <FontAwesomeIcon
@@ -372,8 +1241,13 @@ export default function SettingsPage() {
                       />
                       <input
                         type="text"
-                        value={location}
-                        onChange={(e) => setLocation(e.target.value)}
+                        value={profileForm.address}
+                        onChange={(e) =>
+                          setProfileForm({
+                            ...profileForm,
+                            address: e.target.value,
+                          })
+                        }
                         className="w-full pl-12 pr-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                       />
                     </div>
@@ -384,8 +1258,10 @@ export default function SettingsPage() {
                       Bio
                     </label>
                     <textarea
-                      value={bio}
-                      onChange={(e) => setBio(e.target.value)}
+                      value={profileForm.bio}
+                      onChange={(e) =>
+                        setProfileForm({ ...profileForm, bio: e.target.value })
+                      }
                       rows={4}
                       className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
                     />
@@ -394,18 +1270,33 @@ export default function SettingsPage() {
 
                 <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-neutral-200">
                   <button className="btn-secondary">Cancel</button>
-                  <button onClick={handleSaveProfile} className="btn-primary">
-                    <FontAwesomeIcon icon={faSave} className="mr-2" />
-                    Save Changes
+                  <button
+                    onClick={handleSaveProfile}
+                    disabled={updateBasicProfileMutation.isPending}
+                    className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {updateBasicProfileMutation.isPending ? (
+                      <>
+                        <FontAwesomeIcon
+                          icon={faSpinner}
+                          className="animate-spin"
+                        />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <FontAwesomeIcon icon={faSave} />
+                        Save Changes
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
             )}
 
-            {/* My Public Profile Tab */}
-            {activeTab === "public-profile" && (
+            {/* Public Profile Tab */}
+            {activeTab === "public-profile" && settingsData && (
               <div className="space-y-6">
-                {/* Preview Card */}
                 <div className="bg-gradient-to-br from-primary-600 to-primary-700 rounded-xl p-6 text-neutral-0">
                   <div className="flex items-center justify-between mb-4">
                     <div>
@@ -420,11 +1311,10 @@ export default function SettingsPage() {
                     </button>
                   </div>
                   <div className="text-neutral-100 text-sm">
-                    Profile URL: karya.com/services/{profileSlug}
+                    Profile URL: karya.com/provider/{publicProfileForm.slug}
                   </div>
                 </div>
 
-                {/* Profile Title & Slug */}
                 <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
                   <h2 className="heading-3 text-neutral-900 mb-6">
                     Basic Information
@@ -432,14 +1322,18 @@ export default function SettingsPage() {
                   <div className="space-y-5">
                     <div>
                       <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                        Professional Title{" "}
-                        <span className="text-red-500">*</span>
+                        Business Name
                       </label>
                       <input
                         type="text"
-                        value={profileTitle}
-                        onChange={(e) => setProfileTitle(e.target.value)}
-                        placeholder="e.g., Licensed Master Electrician"
+                        value={publicProfileForm.business_name}
+                        onChange={(e) =>
+                          setPublicProfileForm({
+                            ...publicProfileForm,
+                            business_name: e.target.value,
+                          })
+                        }
+                        placeholder="e.g., Anderson Construction"
                         className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                       />
                     </div>
@@ -454,128 +1348,63 @@ export default function SettingsPage() {
                         </span>
                         <input
                           type="text"
-                          value={profileSlug}
+                          value={publicProfileForm.slug}
                           onChange={(e) =>
-                            setProfileSlug(
-                              e.target.value.toLowerCase().replace(/\s+/g, "-")
-                            )
+                            setPublicProfileForm({
+                              ...publicProfileForm,
+                              slug: e.target.value
+                                .toLowerCase()
+                                .replace(/\s+/g, "-"),
+                            })
                           }
                           placeholder="your-name-profession"
                           className="flex-1 px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                         />
                       </div>
-                      <p className="text-neutral-500 text-sm mt-1">
-                        Choose a unique URL for your profile (letters, numbers,
-                        and hyphens only)
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                        Hero Banner Image
-                      </label>
-                      <div className="space-y-3">
-                        {heroImageUrl ? (
-                          <div className="relative">
-                            <img
-                              src={heroImageUrl}
-                              alt="Hero banner preview"
-                              className="w-full h-48 object-cover rounded-lg border border-neutral-200"
-                            />
-                            <button
-                              onClick={() => setHeroImageUrl("")}
-                              className="absolute top-2 right-2 p-2 bg-red-600 text-neutral-0 rounded-lg hover:bg-red-700 transition-colors"
-                            >
-                              <FontAwesomeIcon icon={faTrash} />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="border-2 border-dashed border-neutral-300 rounded-lg p-8 text-center hover:border-primary-500 transition-colors cursor-pointer">
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  const reader = new FileReader();
-                                  reader.onloadend = () => {
-                                    setHeroImageUrl(reader.result as string);
-                                  };
-                                  reader.readAsDataURL(file);
-                                }
-                              }}
-                              className="hidden"
-                              id="hero-image-upload"
-                            />
-                            <label
-                              htmlFor="hero-image-upload"
-                              className="cursor-pointer"
-                            >
-                              <FontAwesomeIcon
-                                icon={faImage}
-                                className="text-4xl text-neutral-400 mb-3"
-                              />
-                              <p className="text-neutral-700 font-medium mb-1">
-                                Click to upload banner image
-                              </p>
-                              <p className="text-neutral-500 text-sm">
-                                PNG, JPG up to 10MB (1200x400px recommended)
-                              </p>
-                            </label>
-                          </div>
-                        )}
-                      </div>
-                      <p className="text-neutral-500 text-sm mt-2">
-                        This banner appears at the top of your public profile
-                        page
-                      </p>
                     </div>
                   </div>
                 </div>
 
-                {/* About Me Section */}
                 <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-                  <h2 className="heading-3 text-neutral-900 mb-6">About Me</h2>
+                  <h2 className="heading-3 text-neutral-900 mb-6">
+                    About Me *
+                  </h2>
                   <div className="space-y-4">
-                    {aboutParagraphs.map((paragraph, index) => (
-                      <div key={index}>
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="text-neutral-700 font-semibold body-small">
-                            Paragraph {index + 1}
-                          </label>
-                          {aboutParagraphs.length > 1 && (
-                            <button
-                              onClick={() =>
-                                setAboutParagraphs(
-                                  aboutParagraphs.filter((_, i) => i !== index)
-                                )
-                              }
-                              className="text-red-600 hover:text-red-700 text-sm font-medium"
-                            >
-                              <FontAwesomeIcon
-                                icon={faTrash}
-                                className="mr-1"
-                              />
-                              Remove
-                            </button>
-                          )}
+                    {publicProfileForm.about_paragraphs.map(
+                      (paragraph, index) => (
+                        <div key={index}>
+                          <div className="flex items-center justify-between mb-2">
+                            <label className="text-neutral-700 font-semibold body-small">
+                              Paragraph {index + 1}
+                            </label>
+                            {publicProfileForm.about_paragraphs.length > 1 && (
+                              <button
+                                onClick={() =>
+                                  handleRemoveAboutParagraph(index)
+                                }
+                                className="text-red-600 hover:text-red-700 text-sm font-medium"
+                              >
+                                <FontAwesomeIcon
+                                  icon={faTrash}
+                                  className="mr-1"
+                                />
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                          <textarea
+                            value={paragraph}
+                            onChange={(e) =>
+                              handleUpdateAboutParagraph(index, e.target.value)
+                            }
+                            rows={4}
+                            className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
+                          />
                         </div>
-                        <textarea
-                          value={paragraph}
-                          onChange={(e) => {
-                            const newParagraphs = [...aboutParagraphs];
-                            newParagraphs[index] = e.target.value;
-                            setAboutParagraphs(newParagraphs);
-                          }}
-                          rows={4}
-                          className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
-                        />
-                      </div>
-                    ))}
+                      )
+                    )}
                     <button
-                      onClick={() =>
-                        setAboutParagraphs([...aboutParagraphs, ""])
-                      }
+                      onClick={handleAddAboutParagraph}
                       className="w-full py-3 border-2 border-dashed border-neutral-300 rounded-lg text-neutral-600 hover:border-primary-500 hover:text-primary-600 transition-colors font-medium"
                     >
                       <FontAwesomeIcon icon={faPlus} className="mr-2" />
@@ -584,59 +1413,34 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                {/* Services Offered */}
-                <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-                  <div className="flex items-center justify-between mb-6">
-                    <h2 className="heading-3 text-neutral-900">
-                      Services Offered
-                    </h2>
-                    <button
-                      onClick={() => setShowServiceModal(true)}
-                      className="btn-primary flex items-center gap-2"
-                    >
-                      <FontAwesomeIcon icon={faPlus} />
-                      Add Service
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-3">
-                    {publicServices.map((service, index) => (
-                      <div
-                        key={index}
-                        className="px-4 py-2 bg-primary-50 border border-primary-200 text-primary-700 rounded-lg font-medium flex items-center gap-2"
-                      >
-                        <span>{service}</span>
-                        <button
-                          onClick={() => handleRemoveService(index)}
-                          className="hover:text-primary-900 transition-colors"
-                        >
-                          <FontAwesomeIcon icon={faTimes} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  {publicServices.length === 0 && (
-                    <p className="text-neutral-500 text-center py-8">
-                      No services added yet. Click "Add Service" to get started.
-                    </p>
-                  )}
-                </div>
-
-                {/* Save Button */}
                 <div className="flex justify-end gap-3">
                   <button className="btn-secondary">Cancel</button>
                   <button
                     onClick={handleSavePublicProfile}
-                    className="btn-primary"
+                    disabled={updatePublicProfileMutation.isPending}
+                    className="btn-primary flex items-center gap-2 disabled:opacity-50"
                   >
-                    <FontAwesomeIcon icon={faSave} className="mr-2" />
-                    Save Public Profile
+                    {updatePublicProfileMutation.isPending ? (
+                      <>
+                        <FontAwesomeIcon
+                          icon={faSpinner}
+                          className="animate-spin"
+                        />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <FontAwesomeIcon icon={faSave} />
+                        Save Public Profile
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
             )}
 
             {/* Business Info Tab */}
-            {activeTab === "business" && (
+            {activeTab === "business" && settingsData && (
               <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
                 <h2 className="heading-3 text-neutral-900 mb-6">
                   Business Information
@@ -650,8 +1454,13 @@ export default function SettingsPage() {
                       </label>
                       <input
                         type="text"
-                        value={businessName}
-                        onChange={(e) => setBusinessName(e.target.value)}
+                        value={businessForm.business_name}
+                        onChange={(e) =>
+                          setBusinessForm({
+                            ...businessForm,
+                            business_name: e.target.value,
+                          })
+                        }
                         className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                       />
                     </div>
@@ -662,8 +1471,13 @@ export default function SettingsPage() {
                       </label>
                       <input
                         type="text"
-                        value={licenseNumber}
-                        onChange={(e) => setLicenseNumber(e.target.value)}
+                        value={businessForm.license_number}
+                        onChange={(e) =>
+                          setBusinessForm({
+                            ...businessForm,
+                            license_number: e.target.value,
+                          })
+                        }
                         className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                       />
                     </div>
@@ -674,8 +1488,13 @@ export default function SettingsPage() {
                       </label>
                       <input
                         type="number"
-                        value={yearsExperience}
-                        onChange={(e) => setYearsExperience(e.target.value)}
+                        value={businessForm.years_of_experience}
+                        onChange={(e) =>
+                          setBusinessForm({
+                            ...businessForm,
+                            years_of_experience: parseInt(e.target.value) || 0,
+                          })
+                        }
                         className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                       />
                     </div>
@@ -686,37 +1505,47 @@ export default function SettingsPage() {
                       </label>
                       <input
                         type="number"
-                        value={serviceRadius}
-                        onChange={(e) => setServiceRadius(e.target.value)}
+                        value={businessForm.service_radius}
+                        onChange={(e) =>
+                          setBusinessForm({
+                            ...businessForm,
+                            service_radius: parseInt(e.target.value) || 0,
+                          })
+                        }
                         className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                       />
                     </div>
                   </div>
 
-                  {/* Hourly Rate Range */}
                   <div>
                     <label className="block text-neutral-700 font-semibold mb-2 body-small">
                       Hourly Rate Range ($)
                     </label>
                     <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <input
-                          type="number"
-                          value={hourlyRateMin}
-                          onChange={(e) => setHourlyRateMin(e.target.value)}
-                          placeholder="Min"
-                          className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                        />
-                      </div>
-                      <div>
-                        <input
-                          type="number"
-                          value={hourlyRateMax}
-                          onChange={(e) => setHourlyRateMax(e.target.value)}
-                          placeholder="Max"
-                          className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                        />
-                      </div>
+                      <input
+                        type="number"
+                        value={businessForm.hourly_rate_min}
+                        onChange={(e) =>
+                          setBusinessForm({
+                            ...businessForm,
+                            hourly_rate_min: parseFloat(e.target.value) || 0,
+                          })
+                        }
+                        placeholder="Min"
+                        className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      />
+                      <input
+                        type="number"
+                        value={businessForm.hourly_rate_max}
+                        onChange={(e) =>
+                          setBusinessForm({
+                            ...businessForm,
+                            hourly_rate_max: parseFloat(e.target.value) || 0,
+                          })
+                        }
+                        placeholder="Max"
+                        className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      />
                     </div>
                   </div>
                 </div>
@@ -725,19 +1554,96 @@ export default function SettingsPage() {
                   <button className="btn-secondary">Cancel</button>
                   <button
                     onClick={handleSaveBusinessInfo}
-                    className="btn-primary"
+                    disabled={updateBusinessInfoMutation.isPending}
+                    className="btn-primary flex items-center gap-2 disabled:opacity-50"
                   >
-                    <FontAwesomeIcon icon={faSave} className="mr-2" />
-                    Save Changes
+                    {updateBusinessInfoMutation.isPending ? (
+                      <>
+                        <FontAwesomeIcon
+                          icon={faSpinner}
+                          className="animate-spin"
+                        />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <FontAwesomeIcon icon={faSave} />
+                        Save Changes
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
             )}
 
+            {/* Portfolio Tab - Show remaining tabs message */}
+            {activeTab === "portfolio" && (
+              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="heading-3 text-neutral-900">Portfolio</h2>
+                  <button
+                    onClick={() => setShowPortfolioModal(true)}
+                    className="btn-primary flex items-center gap-2"
+                  >
+                    <FontAwesomeIcon icon={faPlus} />
+                    Add Item
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {settingsData?.portfolio.map((item) => (
+                    <div
+                      key={item.id}
+                      className="border border-neutral-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow"
+                    >
+                      <div className="h-48 bg-neutral-100 flex items-center justify-center">
+                        {item.image_url ? (
+                          <img
+                            src={item.image_url}
+                            alt={item.title}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <FontAwesomeIcon
+                            icon={faImage}
+                            className="text-neutral-400 text-5xl"
+                          />
+                        )}
+                      </div>
+                      <div className="p-4">
+                        <h3 className="font-semibold text-neutral-900 mb-1">
+                          {item.title}
+                        </h3>
+                        <p className="text-neutral-600 text-sm mb-3">
+                          {item.category}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleEditPortfolio(item)}
+                            className="flex-1 px-3 py-2 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors text-sm font-medium"
+                          >
+                            <FontAwesomeIcon icon={faEdit} className="mr-2" />
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeletePortfolio(item.id)}
+                            disabled={deletePortfolioMutation.isPending}
+                            className="flex-1 px-3 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium disabled:opacity-50"
+                          >
+                            <FontAwesomeIcon icon={faTrash} className="mr-2" />
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Verification Tab */}
-            {activeTab === "verification" && (
+            {activeTab === "verification" && settingsData && (
               <div className="space-y-6">
-                {/* Verification Status */}
                 <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="heading-3 text-neutral-900">
@@ -753,7 +1659,7 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="space-y-4">
-                    {verificationDocs.map((doc) => (
+                    {settingsData.verification_documents.map((doc) => (
                       <div
                         key={doc.id}
                         className="flex items-center justify-between p-4 bg-neutral-50 rounded-lg border border-neutral-200"
@@ -767,29 +1673,36 @@ export default function SettingsPage() {
                           </div>
                           <div>
                             <h3 className="font-semibold text-neutral-900">
-                              {doc.type}
+                              {doc.document_type}
                             </h3>
                             <p className="text-neutral-600 text-sm">
                               Uploaded:{" "}
-                              {new Date(doc.uploadDate).toLocaleDateString()}
+                              {new Date(doc.upload_date).toLocaleDateString()}
                             </p>
                           </div>
                         </div>
                         <span
                           className={`px-3 py-1 rounded-lg text-sm font-semibold border ${
-                            doc.status === "Verified"
+                            doc.verification_status === "verified"
                               ? "bg-green-100 text-green-700 border-green-200"
-                              : "bg-yellow-100 text-yellow-700 border-yellow-200"
+                              : doc.verification_status === "pending"
+                              ? "bg-yellow-100 text-yellow-700 border-yellow-200"
+                              : "bg-red-100 text-red-700 border-red-200"
                           }`}
                         >
-                          {doc.status}
+                          {doc.verification_status.charAt(0).toUpperCase() +
+                            doc.verification_status.slice(1)}
                         </span>
                       </div>
                     ))}
+                    {settingsData.verification_documents.length === 0 && (
+                      <p className="text-neutral-500 text-center py-8">
+                        No documents uploaded yet
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                {/* Verification Info */}
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
                   <h3 className="font-semibold text-neutral-900 mb-2 flex items-center gap-2">
                     <FontAwesomeIcon
@@ -808,60 +1721,9 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {/* Portfolio Tab */}
-            {activeTab === "portfolio" && (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="heading-3 text-neutral-900">Portfolio</h2>
-                  <button
-                    onClick={() => setShowPortfolioModal(true)}
-                    className="btn-primary flex items-center gap-2"
-                  >
-                    <FontAwesomeIcon icon={faPlus} />
-                    Add Item
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {portfolioItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className="border border-neutral-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow"
-                    >
-                      <div className="h-48 bg-neutral-100 flex items-center justify-center">
-                        <FontAwesomeIcon
-                          icon={faImage}
-                          className="text-neutral-400 text-5xl"
-                        />
-                      </div>
-                      <div className="p-4">
-                        <h3 className="font-semibold text-neutral-900 mb-1">
-                          {item.title}
-                        </h3>
-                        <p className="text-neutral-600 text-sm mb-3">
-                          {item.category}
-                        </p>
-                        <div className="flex items-center gap-2">
-                          <button className="flex-1 px-3 py-2 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors text-sm font-medium">
-                            <FontAwesomeIcon icon={faEdit} className="mr-2" />
-                            Edit
-                          </button>
-                          <button className="flex-1 px-3 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium">
-                            <FontAwesomeIcon icon={faTrash} className="mr-2" />
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Security Tab */}
             {activeTab === "security" && (
               <div className="space-y-6">
-                {/* Change Password */}
                 <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
                   <h2 className="heading-3 text-neutral-900 mb-6">
                     Change Password
@@ -880,8 +1742,13 @@ export default function SettingsPage() {
                           type={
                             showPasswordFields.current ? "text" : "password"
                           }
-                          value={currentPassword}
-                          onChange={(e) => setCurrentPassword(e.target.value)}
+                          value={passwordForm.current_password}
+                          onChange={(e) =>
+                            setPasswordForm({
+                              ...passwordForm,
+                              current_password: e.target.value,
+                            })
+                          }
                           className="w-full pl-12 pr-12 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                         />
                         <button
@@ -914,8 +1781,13 @@ export default function SettingsPage() {
                         />
                         <input
                           type={showPasswordFields.new ? "text" : "password"}
-                          value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
+                          value={passwordForm.new_password}
+                          onChange={(e) =>
+                            setPasswordForm({
+                              ...passwordForm,
+                              new_password: e.target.value,
+                            })
+                          }
                           className="w-full pl-12 pr-12 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                         />
                         <button
@@ -949,8 +1821,13 @@ export default function SettingsPage() {
                           type={
                             showPasswordFields.confirm ? "text" : "password"
                           }
-                          value={confirmPassword}
-                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          value={passwordForm.confirm_password}
+                          onChange={(e) =>
+                            setPasswordForm({
+                              ...passwordForm,
+                              confirm_password: e.target.value,
+                            })
+                          }
                           className="w-full pl-12 pr-12 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                         />
                         <button
@@ -977,63 +1854,36 @@ export default function SettingsPage() {
                     <button className="btn-secondary">Cancel</button>
                     <button
                       onClick={handleChangePassword}
-                      className="btn-primary"
+                      disabled={changePasswordMutation.isPending}
+                      className="btn-primary flex items-center gap-2 disabled:opacity-50"
                     >
-                      <FontAwesomeIcon icon={faLock} className="mr-2" />
-                      Update Password
+                      {changePasswordMutation.isPending ? (
+                        <>
+                          <FontAwesomeIcon
+                            icon={faSpinner}
+                            className="animate-spin"
+                          />
+                          Updating...
+                        </>
+                      ) : (
+                        <>
+                          <FontAwesomeIcon icon={faLock} />
+                          Update Password
+                        </>
+                      )}
                     </button>
-                  </div>
-                </div>
-
-                {/* Two-Factor Authentication */}
-                <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-                  <h2 className="heading-3 text-neutral-900 mb-2">
-                    Two-Factor Authentication
-                  </h2>
-                  <p className="text-neutral-600 body-regular mb-6">
-                    Add an extra layer of security to your account
-                  </p>
-                  <div className="flex items-center justify-between p-4 bg-neutral-50 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                        <FontAwesomeIcon
-                          icon={faShield}
-                          className="text-green-600 text-xl"
-                        />
-                      </div>
-                      <div>
-                        <p className="font-semibold text-neutral-900">
-                          {twoFactorEnabled ? "Enabled" : "Disabled"}
-                        </p>
-                        <p className="text-neutral-600 text-sm">
-                          {twoFactorEnabled
-                            ? "Your account is protected"
-                            : "Enable for better security"}
-                        </p>
-                      </div>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={twoFactorEnabled}
-                        onChange={(e) => setTwoFactorEnabled(e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-14 h-7 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-neutral-0 after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-neutral-0 after:border-neutral-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary-600"></div>
-                    </label>
                   </div>
                 </div>
               </div>
             )}
 
             {/* Notifications Tab */}
-            {activeTab === "notifications" && (
+            {activeTab === "notifications" && notificationPrefs && (
               <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
                 <h2 className="heading-3 text-neutral-900 mb-6">
                   Notification Preferences
                 </h2>
                 <div className="space-y-6">
-                  {/* Email Notifications */}
                   <div className="flex items-center justify-between pb-6 border-b border-neutral-200">
                     <div>
                       <h3 className="font-semibold text-neutral-900 mb-1">
@@ -1046,9 +1896,12 @@ export default function SettingsPage() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={emailNotifications}
+                        checked={notificationPrefs.email_notifications}
                         onChange={(e) =>
-                          setEmailNotifications(e.target.checked)
+                          setNotificationPrefs({
+                            ...notificationPrefs,
+                            email_notifications: e.target.checked,
+                          })
                         }
                         className="sr-only peer"
                       />
@@ -1056,7 +1909,6 @@ export default function SettingsPage() {
                     </label>
                   </div>
 
-                  {/* SMS Notifications */}
                   <div className="flex items-center justify-between pb-6 border-b border-neutral-200">
                     <div>
                       <h3 className="font-semibold text-neutral-900 mb-1">
@@ -1069,15 +1921,19 @@ export default function SettingsPage() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={smsNotifications}
-                        onChange={(e) => setSmsNotifications(e.target.checked)}
+                        checked={notificationPrefs.sms_notifications}
+                        onChange={(e) =>
+                          setNotificationPrefs({
+                            ...notificationPrefs,
+                            sms_notifications: e.target.checked,
+                          })
+                        }
                         className="sr-only peer"
                       />
                       <div className="w-14 h-7 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-neutral-0 after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-neutral-0 after:border-neutral-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary-600"></div>
                     </label>
                   </div>
 
-                  {/* Project Updates */}
                   <div className="flex items-center justify-between pb-6 border-b border-neutral-200">
                     <div>
                       <h3 className="font-semibold text-neutral-900 mb-1">
@@ -1090,15 +1946,19 @@ export default function SettingsPage() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={projectUpdates}
-                        onChange={(e) => setProjectUpdates(e.target.checked)}
+                        checked={notificationPrefs.project_updates}
+                        onChange={(e) =>
+                          setNotificationPrefs({
+                            ...notificationPrefs,
+                            project_updates: e.target.checked,
+                          })
+                        }
                         className="sr-only peer"
                       />
                       <div className="w-14 h-7 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-neutral-0 after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-neutral-0 after:border-neutral-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary-600"></div>
                     </label>
                   </div>
 
-                  {/* Payment Alerts */}
                   <div className="flex items-center justify-between pb-6 border-b border-neutral-200">
                     <div>
                       <h3 className="font-semibold text-neutral-900 mb-1">
@@ -1111,15 +1971,19 @@ export default function SettingsPage() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={paymentAlerts}
-                        onChange={(e) => setPaymentAlerts(e.target.checked)}
+                        checked={notificationPrefs.payment_alerts}
+                        onChange={(e) =>
+                          setNotificationPrefs({
+                            ...notificationPrefs,
+                            payment_alerts: e.target.checked,
+                          })
+                        }
                         className="sr-only peer"
                       />
                       <div className="w-14 h-7 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-neutral-0 after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-neutral-0 after:border-neutral-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary-600"></div>
                     </label>
                   </div>
 
-                  {/* Message Notifications */}
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="font-semibold text-neutral-900 mb-1">
@@ -1132,9 +1996,12 @@ export default function SettingsPage() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={messageNotifications}
+                        checked={notificationPrefs.message_notifications}
                         onChange={(e) =>
-                          setMessageNotifications(e.target.checked)
+                          setNotificationPrefs({
+                            ...notificationPrefs,
+                            message_notifications: e.target.checked,
+                          })
                         }
                         className="sr-only peer"
                       />
@@ -1147,17 +2014,30 @@ export default function SettingsPage() {
                   <button className="btn-secondary">Cancel</button>
                   <button
                     onClick={handleSaveNotifications}
-                    className="btn-primary"
+                    disabled={updateNotificationPrefsMutation.isPending}
+                    className="btn-primary flex items-center gap-2 disabled:opacity-50"
                   >
-                    <FontAwesomeIcon icon={faSave} className="mr-2" />
-                    Save Preferences
+                    {updateNotificationPrefsMutation.isPending ? (
+                      <>
+                        <FontAwesomeIcon
+                          icon={faSpinner}
+                          className="animate-spin"
+                        />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <FontAwesomeIcon icon={faSave} />
+                        Save Preferences
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
             )}
 
             {/* Preferences Tab */}
-            {activeTab === "preferences" && (
+            {activeTab === "preferences" && userPrefs && (
               <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
                 <h2 className="heading-3 text-neutral-900 mb-6">
                   General Preferences
@@ -1168,15 +2048,17 @@ export default function SettingsPage() {
                       Language
                     </label>
                     <select
-                      value={language}
-                      onChange={(e) => setLanguage(e.target.value)}
+                      value={userPrefs.language}
+                      onChange={(e) =>
+                        setUserPrefs({ ...userPrefs, language: e.target.value })
+                      }
                       className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
                     >
-                      <option>English</option>
-                      <option>Spanish</option>
-                      <option>French</option>
-                      <option>German</option>
-                      <option>Chinese</option>
+                      <option value="en">English</option>
+                      <option value="es">Spanish</option>
+                      <option value="fr">French</option>
+                      <option value="de">German</option>
+                      <option value="zh">Chinese</option>
                     </select>
                   </div>
 
@@ -1185,8 +2067,10 @@ export default function SettingsPage() {
                       Timezone
                     </label>
                     <select
-                      value={timezone}
-                      onChange={(e) => setTimezone(e.target.value)}
+                      value={userPrefs.timezone}
+                      onChange={(e) =>
+                        setUserPrefs({ ...userPrefs, timezone: e.target.value })
+                      }
                       className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
                     >
                       <option value="America/Los_Angeles">
@@ -1207,13 +2091,18 @@ export default function SettingsPage() {
                       Date Format
                     </label>
                     <select
-                      value={dateFormat}
-                      onChange={(e) => setDateFormat(e.target.value)}
+                      value={userPrefs.date_format}
+                      onChange={(e) =>
+                        setUserPrefs({
+                          ...userPrefs,
+                          date_format: e.target.value,
+                        })
+                      }
                       className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
                     >
-                      <option>MM/DD/YYYY</option>
-                      <option>DD/MM/YYYY</option>
-                      <option>YYYY-MM-DD</option>
+                      <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                      <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                      <option value="YYYY-MM-DD">YYYY-MM-DD</option>
                     </select>
                   </div>
                 </div>
@@ -1222,19 +2111,31 @@ export default function SettingsPage() {
                   <button className="btn-secondary">Cancel</button>
                   <button
                     onClick={handleSavePreferences}
-                    className="btn-primary"
+                    disabled={updateUserPrefsMutation.isPending}
+                    className="btn-primary flex items-center gap-2 disabled:opacity-50"
                   >
-                    <FontAwesomeIcon icon={faSave} className="mr-2" />
-                    Save Preferences
+                    {updateUserPrefsMutation.isPending ? (
+                      <>
+                        <FontAwesomeIcon
+                          icon={faSpinner}
+                          className="animate-spin"
+                        />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <FontAwesomeIcon icon={faSave} />
+                        Save Preferences
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
             )}
 
             {/* Account Tab */}
-            {activeTab === "account" && (
+            {activeTab === "account" && settingsData && (
               <div className="space-y-6">
-                {/* Account Information */}
                 <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
                   <h2 className="heading-3 text-neutral-900 mb-6">
                     Account Information
@@ -1246,7 +2147,9 @@ export default function SettingsPage() {
                           Account Created
                         </p>
                         <p className="font-semibold text-neutral-900">
-                          January 15, 2024
+                          {new Date(
+                            settingsData.account_info.account_created
+                          ).toLocaleDateString()}
                         </p>
                       </div>
                     </div>
@@ -1256,7 +2159,7 @@ export default function SettingsPage() {
                           Account Status
                         </p>
                         <span className="px-3 py-1 bg-green-100 text-green-700 rounded-lg text-sm font-semibold border border-green-200">
-                          Active
+                          {settingsData.account_info.account_status}
                         </span>
                       </div>
                     </div>
@@ -1266,14 +2169,17 @@ export default function SettingsPage() {
                           Last Login
                         </p>
                         <p className="font-semibold text-neutral-900">
-                          Today at 10:30 AM
+                          {settingsData.account_info.last_login
+                            ? new Date(
+                                settingsData.account_info.last_login
+                              ).toLocaleString()
+                            : "Never"}
                         </p>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Danger Zone */}
                 <div className="bg-neutral-0 rounded-xl border-2 border-red-200 p-6">
                   <h2 className="heading-3 text-red-600 mb-2">Danger Zone</h2>
                   <p className="text-neutral-600 body-regular mb-6">
@@ -1294,11 +2200,318 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* Portfolio Modal */}
+      {showPortfolioModal && (
+        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-lg w-full">
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-primary-50 to-secondary-50">
+              <h3 className="heading-4 text-neutral-900">
+                {editingPortfolio
+                  ? "Edit Portfolio Item"
+                  : "Add Portfolio Item"}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowPortfolioModal(false);
+                  setEditingPortfolio(null);
+                  resetPortfolioForm();
+                }}
+                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+              >
+                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                    Project Title <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={portfolioForm.title}
+                    onChange={(e) =>
+                      setPortfolioForm({
+                        ...portfolioForm,
+                        title: e.target.value,
+                      })
+                    }
+                    placeholder="e.g., Modern Kitchen Remodel"
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                    Category <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={portfolioForm.category}
+                    onChange={(e) =>
+                      setPortfolioForm({
+                        ...portfolioForm,
+                        category: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                  >
+                    <option value="">Select Category</option>
+                    <option>Kitchen</option>
+                    <option>Bathroom</option>
+                    <option>Living Room</option>
+                    <option>Bedroom</option>
+                    <option>Exterior</option>
+                    <option>Commercial</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                    Description
+                  </label>
+                  <textarea
+                    value={portfolioForm.description}
+                    onChange={(e) =>
+                      setPortfolioForm({
+                        ...portfolioForm,
+                        description: e.target.value,
+                      })
+                    }
+                    placeholder="Describe the project..."
+                    rows={3}
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                    Image URL <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={portfolioForm.image_url}
+                    onChange={(e) =>
+                      setPortfolioForm({
+                        ...portfolioForm,
+                        image_url: e.target.value,
+                      })
+                    }
+                    placeholder="https://..."
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowPortfolioModal(false);
+                  setEditingPortfolio(null);
+                  resetPortfolioForm();
+                }}
+                disabled={
+                  createPortfolioMutation.isPending ||
+                  updatePortfolioMutation.isPending
+                }
+                className="btn-secondary disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddPortfolio}
+                disabled={
+                  createPortfolioMutation.isPending ||
+                  updatePortfolioMutation.isPending
+                }
+                className="btn-primary flex items-center gap-2 disabled:opacity-50"
+              >
+                {createPortfolioMutation.isPending ||
+                updatePortfolioMutation.isPending ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faSpinner}
+                      className="animate-spin"
+                    />
+                    {editingPortfolio ? "Updating..." : "Adding..."}
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon
+                      icon={editingPortfolio ? faSave : faPlus}
+                    />
+                    {editingPortfolio ? "Update" : "Add to Portfolio"}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Document Modal */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-lg w-full">
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-primary-50 to-secondary-50">
+              <h3 className="heading-4 text-neutral-900">
+                Upload Verification Document
+              </h3>
+              <button
+                onClick={() => {
+                  setShowUploadModal(false);
+                  resetDocumentForm();
+                }}
+                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+              >
+                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                    Document Type <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={documentForm.document_type}
+                    onChange={(e) =>
+                      setDocumentForm({
+                        ...documentForm,
+                        document_type: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                  >
+                    <option value="license">Business License</option>
+                    <option value="insurance">Insurance Certificate</option>
+                    <option value="certification">
+                      Professional Certification
+                    </option>
+                    <option value="id">Tax ID Document</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                    Document Number
+                  </label>
+                  <input
+                    type="text"
+                    value={documentForm.document_number}
+                    onChange={(e) =>
+                      setDocumentForm({
+                        ...documentForm,
+                        document_number: e.target.value,
+                      })
+                    }
+                    placeholder="Enter document number..."
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                      Issue Date
+                    </label>
+                    <input
+                      type="date"
+                      value={documentForm.issue_date}
+                      onChange={(e) =>
+                        setDocumentForm({
+                          ...documentForm,
+                          issue_date: e.target.value,
+                        })
+                      }
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                      Expiry Date
+                    </label>
+                    <input
+                      type="date"
+                      value={documentForm.expiry_date}
+                      onChange={(e) =>
+                        setDocumentForm({
+                          ...documentForm,
+                          expiry_date: e.target.value,
+                        })
+                      }
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                    Document URL <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={documentForm.document_url}
+                    onChange={(e) =>
+                      setDocumentForm({
+                        ...documentForm,
+                        document_url: e.target.value,
+                      })
+                    }
+                    placeholder="https://..."
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                  />
+                  <p className="text-neutral-500 text-sm mt-2">
+                    Upload your document to a cloud service and paste the URL
+                    here
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowUploadModal(false);
+                  resetDocumentForm();
+                }}
+                disabled={uploadDocumentMutation.isPending}
+                className="btn-secondary disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUploadVerification}
+                disabled={uploadDocumentMutation.isPending}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50"
+              >
+                {uploadDocumentMutation.isPending ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faSpinner}
+                      className="animate-spin"
+                    />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon icon={faUpload} />
+                    Upload Document
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Delete Account Modal */}
       {showDeleteModal && (
         <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-md w-full">
-            {/* Modal Header */}
             <div className="px-6 py-4 border-b border-neutral-200">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
@@ -1316,7 +2529,6 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {/* Modal Content */}
             <div className="p-6">
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
                 <p className="text-red-700 text-sm">
@@ -1336,7 +2548,6 @@ export default function SettingsPage() {
               </p>
             </div>
 
-            {/* Modal Footer */}
             <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowDeleteModal(false)}
@@ -1350,267 +2561,6 @@ export default function SettingsPage() {
               >
                 <FontAwesomeIcon icon={faTrash} />
                 Yes, Delete My Account
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Upload Verification Document Modal */}
-      {showUploadModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-lg w-full">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-primary-50 to-secondary-50">
-              <h3 className="heading-4 text-neutral-900">
-                Upload Verification Document
-              </h3>
-              <button
-                onClick={() => setShowUploadModal(false)}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
-              >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
-              </button>
-            </div>
-
-            {/* Modal Content */}
-            <div className="p-6">
-              <div className="space-y-5">
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Document Type <span className="text-red-500">*</span>
-                  </label>
-                  <select className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer">
-                    <option>Business License</option>
-                    <option>Insurance Certificate</option>
-                    <option>Professional Certification</option>
-                    <option>Tax ID Document</option>
-                    <option>Other</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Document Number
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Enter document number..."
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                      Issue Date
-                    </label>
-                    <input
-                      type="date"
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                      Expiry Date
-                    </label>
-                    <input
-                      type="date"
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Upload Document <span className="text-red-500">*</span>
-                  </label>
-                  <div className="border-2 border-dashed border-neutral-300 rounded-lg p-8 text-center hover:border-primary-500 transition-colors cursor-pointer">
-                    <FontAwesomeIcon
-                      icon={faUpload}
-                      className="text-4xl text-neutral-400 mb-3"
-                    />
-                    <p className="text-neutral-700 font-medium mb-1">
-                      Click to upload or drag and drop
-                    </p>
-                    <p className="text-neutral-500 text-sm">
-                      PDF, PNG, JPG up to 10MB
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
-              <button
-                onClick={() => setShowUploadModal(false)}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleUploadVerification}
-                className="btn-primary flex items-center gap-2"
-              >
-                <FontAwesomeIcon icon={faUpload} />
-                Upload Document
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add Portfolio Item Modal */}
-      {showPortfolioModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-lg w-full">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-primary-50 to-secondary-50">
-              <h3 className="heading-4 text-neutral-900">Add Portfolio Item</h3>
-              <button
-                onClick={() => setShowPortfolioModal(false)}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
-              >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
-              </button>
-            </div>
-
-            {/* Modal Content */}
-            <div className="p-6">
-              <div className="space-y-5">
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Project Title <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., Modern Kitchen Remodel"
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Category <span className="text-red-500">*</span>
-                  </label>
-                  <select className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer">
-                    <option>Kitchen</option>
-                    <option>Bathroom</option>
-                    <option>Living Room</option>
-                    <option>Bedroom</option>
-                    <option>Exterior</option>
-                    <option>Commercial</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Description
-                  </label>
-                  <textarea
-                    placeholder="Describe the project..."
-                    rows={3}
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Upload Image <span className="text-red-500">*</span>
-                  </label>
-                  <div className="border-2 border-dashed border-neutral-300 rounded-lg p-8 text-center hover:border-primary-500 transition-colors cursor-pointer">
-                    <FontAwesomeIcon
-                      icon={faImage}
-                      className="text-4xl text-neutral-400 mb-3"
-                    />
-                    <p className="text-neutral-700 font-medium mb-1">
-                      Click to upload project image
-                    </p>
-                    <p className="text-neutral-500 text-sm">
-                      PNG, JPG up to 5MB
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
-              <button
-                onClick={() => setShowPortfolioModal(false)}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAddPortfolio}
-                className="btn-primary flex items-center gap-2"
-              >
-                <FontAwesomeIcon icon={faPlus} />
-                Add to Portfolio
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add Service Modal */}
-      {showServiceModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-md w-full">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-primary-50 to-secondary-50">
-              <h3 className="heading-4 text-neutral-900">Add Service</h3>
-              <button
-                onClick={() => {
-                  setShowServiceModal(false);
-                  setNewService("");
-                }}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
-              >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
-              </button>
-            </div>
-
-            {/* Modal Content */}
-            <div className="p-6">
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Service Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={newService}
-                  onChange={(e) => setNewService(e.target.value)}
-                  placeholder="e.g., Panel Upgrades, Emergency Repairs"
-                  className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  onKeyPress={(e) => {
-                    if (e.key === "Enter") {
-                      handleAddService();
-                    }
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
-              <button
-                onClick={() => {
-                  setShowServiceModal(false);
-                  setNewService("");
-                }}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAddService}
-                className="btn-primary flex items-center gap-2"
-              >
-                <FontAwesomeIcon icon={faPlus} />
-                Add Service
               </button>
             </div>
           </div>
