@@ -115,9 +115,134 @@ export default function EarningsViewPage() {
 
   const handleDownload = async () => {
     if (!project) return;
-    alert(
-      `Download functionality for payment report would be implemented here for ${project.project_name}`
-    );
+
+    try {
+      const { jsPDF } = await import("jspdf");
+      const doc = new jsPDF();
+
+      // Header with Project Name
+      doc.setFontSize(22);
+      doc.text("Payment Report", 105, 20, { align: "center" });
+
+      // Project Information Section
+      doc.setFontSize(14);
+      doc.text("Project Information", 20, 35);
+
+      doc.setFontSize(11);
+      doc.text(`Project Name: ${project.project_name}`, 25, 45);
+      doc.text(`Project ID: #${project.id}`, 25, 52);
+      doc.text(`Client: ${clientName}`, 25, 59);
+      doc.text(`Status: ${getStatusText(project.status)}`, 25, 66);
+      doc.text(
+        `Start Date: ${new Date(project.start_date).toLocaleDateString()}`,
+        25,
+        73
+      );
+      doc.text(
+        `Expected End: ${new Date(
+          project.expected_end_date
+        ).toLocaleDateString()}`,
+        25,
+        80
+      );
+
+      // Financial Summary
+      doc.setFontSize(14);
+      doc.text("Financial Summary", 20, 95);
+
+      doc.setFontSize(11);
+      doc.text(`Total Budget: ${totalBudget.toFixed(2)}`, 25, 105);
+      doc.text(`Total Paid: ${totalPaid.toFixed(2)}`, 25, 112);
+      doc.text(`Balance: ${remainingAmount.toFixed(2)}`, 25, 119);
+      doc.text(`Payment Progress: ${progressPercentage.toFixed(1)}%`, 25, 126);
+
+      // Payment History
+      doc.setFontSize(14);
+      doc.text("Payment History", 20, 140);
+
+      if (payments.length === 0) {
+        doc.setFontSize(10);
+        doc.text("No payments recorded yet", 25, 150);
+      } else {
+        let yPos = 150;
+
+        payments.forEach((payment, index) => {
+          // Check if we need a new page
+          if (yPos > 260) {
+            doc.addPage();
+            yPos = 20;
+          }
+
+          doc.setFontSize(10);
+          doc.setFont(undefined, "bold");
+          doc.text(`Payment #${index + 1}`, 25, yPos);
+
+          doc.setFont(undefined, "normal");
+          doc.text(
+            `Amount: ${parseFloat(payment.amount).toFixed(2)}`,
+            30,
+            yPos + 6
+          );
+          doc.text(
+            `Date: ${new Date(payment.payment_date).toLocaleDateString()}`,
+            30,
+            yPos + 12
+          );
+          doc.text(
+            `Type: ${getPaymentTypeText(payment.payment_type)}`,
+            30,
+            yPos + 18
+          );
+          doc.text(`Method: ${payment.payment_method}`, 30, yPos + 24);
+          doc.text(`Status: ${payment.payment_status}`, 30, yPos + 30);
+
+          if (payment.transaction_id) {
+            doc.text(
+              `Transaction ID: ${payment.transaction_id}`,
+              30,
+              yPos + 36
+            );
+            yPos += 42;
+          } else {
+            yPos += 36;
+          }
+
+          if (payment.notes) {
+            const notesLines = doc.splitTextToSize(
+              `Notes: ${payment.notes}`,
+              160
+            );
+            doc.text(notesLines, 30, yPos);
+            yPos += notesLines.length * 6 + 6;
+          } else {
+            yPos += 6;
+          }
+        });
+      }
+
+      // Footer on all pages
+      const pageCount = doc.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.text(
+          `Generated on ${new Date().toLocaleString()} - Page ${i} of ${pageCount}`,
+          105,
+          285,
+          { align: "center" }
+        );
+      }
+
+      // Save the PDF
+      const fileName = `${project.project_name.replace(
+        /\s+/g,
+        "_"
+      )}_payment_report_${new Date().toISOString().split("T")[0]}.pdf`;
+      doc.save(fileName);
+    } catch (err) {
+      console.error("PDF generation error:", err);
+      alert("Error generating PDF. Please try again.");
+    }
   };
 
   const handlePrint = () => {
