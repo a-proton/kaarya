@@ -14,6 +14,8 @@ import {
   faCheckCircle,
   faSignOut,
   faSpinner,
+  faIndustry,
+  faArchive,
 } from "@fortawesome/free-solid-svg-icons";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -29,6 +31,7 @@ const navigationItems = [
     label: "Daily Updates",
     href: "/provider/daily-updates",
   },
+  { icon: faArchive, label: "Inventory", href: "/provider/inventory" },
   { icon: faUsers, label: "Clients", href: "/provider/clients" },
   { icon: faUserGroup, label: "Team", href: "/provider/teams" },
   {
