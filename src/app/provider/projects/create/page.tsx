@@ -23,9 +23,17 @@ import {
   faClock,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useRouter } from "next/navigation";
+import { getAccessToken } from "@/lib/auth";
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+
+// ==================================================================================
+// TYPES & INTERFACES
+// ==================================================================================
 
 interface Milestone {
   id: string;
@@ -44,13 +52,14 @@ interface MilestoneFormData {
   status: "pending" | "in_progress" | "completed";
 }
 
-interface TeamMember {
-  id: string;
-  name: string;
+interface Employee {
+  id: number;
+  full_name: string;
   initials: string;
   role: string;
   department: string;
-  color: string;
+  photo: string | null;
+  is_active: boolean;
 }
 
 interface CreateProjectPayload {
@@ -68,82 +77,77 @@ interface CreateProjectPayload {
 interface CreateMilestonePayload {
   title: string;
   description: string;
-  due_date: string;
-  amount: string;
+  target_date: string;
   status: "pending" | "in_progress" | "completed";
 }
 
-// Mock team members data
-const availableTeamMembers: TeamMember[] = [
-  {
-    id: "1",
-    name: "Michael Rodriguez",
-    initials: "MR",
-    role: "Lead Electrician",
-    department: "Technical",
-    color: "bg-primary-600",
-  },
-  {
-    id: "2",
-    name: "Sarah Johnson",
-    initials: "SJ",
-    role: "Project Manager",
-    department: "Operations",
-    color: "bg-secondary-600",
-  },
-  {
-    id: "3",
-    name: "John Davis",
-    initials: "JD",
-    role: "Carpenter",
-    department: "Technical",
-    color: "bg-yellow-600",
-  },
-  {
-    id: "4",
-    name: "Emily Chen",
-    initials: "EC",
-    role: "Interior Designer",
-    department: "Design",
-    color: "bg-purple-600",
-  },
-  {
-    id: "5",
-    name: "Robert Miller",
-    initials: "RM",
-    role: "HVAC Specialist",
-    department: "Technical",
-    color: "bg-green-600",
-  },
-  {
-    id: "6",
-    name: "Amanda Wilson",
-    initials: "AW",
-    role: "Plumber",
-    department: "Technical",
-    color: "bg-blue-600",
-  },
-  {
-    id: "7",
-    name: "David Brown",
-    initials: "DB",
-    role: "Supervisor",
-    department: "Operations",
-    color: "bg-orange-600",
-  },
-  {
-    id: "8",
-    name: "Lisa Anderson",
-    initials: "LA",
-    role: "Landscaper",
-    department: "Outdoor Services",
-    color: "bg-teal-600",
-  },
-];
+interface AssignEmployeePayload {
+  employee_id: number;
+  assigned_date: string;
+}
+
+// ==================================================================================
+// API FUNCTIONS
+// ==================================================================================
+
+async function fetchEmployees(): Promise<{ results: Employee[] }> {
+  const token = getAccessToken();
+  if (!token) throw new Error("No authentication token found");
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/employees/`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+  });
+
+  if (!response.ok) throw new Error("Failed to fetch employees");
+
+  const data = await response.json();
+  return Array.isArray(data) ? { results: data } : data;
+}
+
+async function assignEmployeeToProject(
+  projectId: number,
+  payload: AssignEmployeePayload
+): Promise<any> {
+  const token = getAccessToken();
+  if (!token) throw new Error("No authentication token found");
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/projects/${projectId}/employees/assign/`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(
+      errorData.detail || errorData.error || "Failed to assign employee"
+    );
+  }
+
+  return response.json();
+}
+
+// ==================================================================================
+// MAIN COMPONENT
+// ==================================================================================
 
 export default function CreateProjectPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+
+  // Form State
   const [projectName, setProjectName] = useState("");
   const [location, setLocation] = useState("");
   const [clientName, setClientName] = useState("");
@@ -155,8 +159,10 @@ export default function CreateProjectPage() {
   const [status, setStatus] = useState("pending");
   const [initialPaymentTaken, setInitialPaymentTaken] = useState(false);
   const [initialPaymentAmount, setInitialPaymentAmount] = useState("");
-  const [selectedTeamMembers, setSelectedTeamMembers] = useState<string[]>([]);
+  const [selectedEmployees, setSelectedEmployees] = useState<number[]>([]);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
+
+  // Modal State
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState<Milestone | null>(
     null
@@ -171,33 +177,74 @@ export default function CreateProjectPage() {
   const [viewingMilestone, setViewingMilestone] = useState<Milestone | null>(
     null
   );
+
+  // UI State
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [createdProjectId, setCreatedProjectId] = useState<number | null>(null);
   const [isCreatingMilestones, setIsCreatingMilestones] = useState(false);
+  const [isAssigningEmployees, setIsAssigningEmployees] = useState(false);
+
+  // ==================================================================================
+  // QUERIES
+  // ==================================================================================
+
+  // Fetch all employees
+  const {
+    data: employeesData,
+    isLoading: employeesLoading,
+    isError: employeesError,
+  } = useQuery({
+    queryKey: ["employees"],
+    queryFn: fetchEmployees,
+  });
+
+  const employees = employeesData?.results || [];
+
+  // ==================================================================================
+  // MUTATIONS
+  // ==================================================================================
 
   // Create project mutation
   const createProjectMutation = useMutation({
     mutationFn: async (payload: CreateProjectPayload) => {
       try {
+        console.log("📤 Sending to API:", payload);
         const response = await api.post("/api/v1/projects/create/", payload);
+        console.log("✅ API Response:", response);
         return response;
       } catch (error: any) {
-        console.error("API Error:", error);
-        console.error("Error data:", error.data);
-        console.error("Error status:", error.status);
+        console.error("❌ API Error:", error);
+        console.error("❌ Error status:", error.status);
+        console.error("❌ Error data:", error.data);
+
+        // Log detailed error information
+        if (error.data) {
+          console.error(
+            "❌ Detailed error:",
+            JSON.stringify(error.data, null, 2)
+          );
+        }
+
         throw error;
       }
     },
     onSuccess: async (data: any) => {
-      console.log("Project created:", data);
+      console.log("✅ Project created successfully:", data);
       setCreatedProjectId(data.id);
 
-      // If there are milestones, create them
+      // Step 1: Assign employees if selected
+      if (selectedEmployees.length > 0 && data.id) {
+        await assignEmployeesToProject(data.id);
+      }
+
+      // Step 2: Create milestones if added
       if (milestones.length > 0 && data.id) {
         await createMilestonesForProject(data.id);
-      } else {
-        // No milestones, just show success and redirect
+      }
+
+      // If no employees or milestones, redirect immediately
+      if (selectedEmployees.length === 0 && milestones.length === 0) {
         showSuccessNotification("Project created successfully!");
         setTimeout(() => {
           router.push("/provider/projects");
@@ -205,29 +252,94 @@ export default function CreateProjectPage() {
       }
     },
     onError: (error: any) => {
-      console.error("Full error:", error);
-      const errorMessage =
-        error.data?.detail ||
-        error.data?.message ||
-        error.message ||
-        "Failed to create project. Check console for details.";
-      alert(`Error: ${errorMessage}`);
+      console.error("❌ Project creation error:", error);
+
+      // Extract detailed error message
+      let errorMessage = "Failed to create project";
+
+      if (error.data) {
+        if (typeof error.data === "object") {
+          // Handle field-specific errors
+          const fieldErrors: string[] = [];
+          Object.entries(error.data).forEach(([field, messages]) => {
+            const msgArray = Array.isArray(messages) ? messages : [messages];
+            fieldErrors.push(`${field}: ${msgArray.join(", ")}`);
+          });
+
+          if (fieldErrors.length > 0) {
+            errorMessage = fieldErrors.join("\n");
+          }
+        } else if (typeof error.data === "string") {
+          errorMessage = error.data;
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      alert(`Error creating project:\n\n${errorMessage}`);
     },
   });
 
-  // Function to create milestones after project is created
+  // ==================================================================================
+  // HELPER FUNCTIONS
+  // ==================================================================================
+
+  // Assign employees to project after creation
+  const assignEmployeesToProject = async (projectId: number) => {
+    setIsAssigningEmployees(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    const assignedDate = startDate || new Date().toISOString().split("T")[0];
+
+    console.log(
+      `📋 Assigning ${selectedEmployees.length} employees to project ${projectId}...`
+    );
+
+    for (const employeeId of selectedEmployees) {
+      try {
+        const payload: AssignEmployeePayload = {
+          employee_id: employeeId,
+          assigned_date: assignedDate,
+        };
+
+        await assignEmployeeToProject(projectId, payload);
+        successCount++;
+        console.log(`✅ Assigned employee ${employeeId} to project`);
+      } catch (error) {
+        console.error(`❌ Failed to assign employee ${employeeId}:`, error);
+        failCount++;
+      }
+    }
+
+    setIsAssigningEmployees(false);
+
+    console.log(
+      `📊 Employee assignment complete: ${successCount} success, ${failCount} failed`
+    );
+
+    // Continue to milestones if any, otherwise finish
+    if (milestones.length === 0) {
+      showFinalSuccessMessage(successCount, failCount, 0, 0);
+    }
+  };
+
+  // Create milestones for project
   const createMilestonesForProject = async (projectId: number) => {
     setIsCreatingMilestones(true);
     let successCount = 0;
     let failCount = 0;
+
+    console.log(
+      `📋 Creating ${milestones.length} milestones for project ${projectId}...`
+    );
 
     for (const milestone of milestones) {
       try {
         const payload: CreateMilestonePayload = {
           title: milestone.title,
           description: milestone.description,
-          due_date: milestone.dueDate,
-          amount: milestone.amount.toString(),
+          target_date: milestone.dueDate,
           status: milestone.status,
         };
 
@@ -236,8 +348,12 @@ export default function CreateProjectPage() {
           payload
         );
         successCount++;
+        console.log(`✅ Created milestone: ${milestone.title}`);
       } catch (error) {
-        console.error(`Failed to create milestone: ${milestone.title}`, error);
+        console.error(
+          `❌ Failed to create milestone: ${milestone.title}`,
+          error
+        );
         failCount++;
       }
     }
@@ -248,24 +364,51 @@ export default function CreateProjectPage() {
     queryClient.invalidateQueries({ queryKey: ["projects"] });
     queryClient.invalidateQueries({ queryKey: ["all-milestones"] });
 
-    if (failCount === 0) {
-      showSuccessNotification(
-        `Project and ${successCount} milestone${
-          successCount !== 1 ? "s" : ""
-        } created successfully!`
-      );
-    } else {
-      showSuccessNotification(
-        `Project created! ${successCount} milestone${
-          successCount !== 1 ? "s" : ""
-        } created, ${failCount} failed.`
-      );
+    showFinalSuccessMessage(
+      selectedEmployees.length,
+      0,
+      successCount,
+      failCount
+    );
+  };
+
+  // Show final success message with all counts
+  const showFinalSuccessMessage = (
+    employeesAssigned: number,
+    employeesFailed: number,
+    milestonesCreated: number,
+    milestonesFailed: number
+  ) => {
+    let message = "Project created successfully!";
+
+    if (employeesAssigned > 0) {
+      message += ` ${employeesAssigned} employee${
+        employeesAssigned !== 1 ? "s" : ""
+      } assigned.`;
     }
+
+    if (milestonesCreated > 0) {
+      message += ` ${milestonesCreated} milestone${
+        milestonesCreated !== 1 ? "s" : ""
+      } created.`;
+    }
+
+    if (employeesFailed > 0 || milestonesFailed > 0) {
+      message += ` (${employeesFailed + milestonesFailed} item${
+        employeesFailed + milestonesFailed !== 1 ? "s" : ""
+      } failed)`;
+    }
+
+    showSuccessNotification(message);
 
     setTimeout(() => {
       router.push("/provider/projects");
     }, 2000);
   };
+
+  // ==================================================================================
+  // MILESTONE HANDLERS
+  // ==================================================================================
 
   const openMilestoneModal = (milestone?: Milestone) => {
     if (milestone) {
@@ -300,14 +443,6 @@ export default function CreateProjectPage() {
       amount: "",
       status: "pending",
     });
-  };
-
-  const showSuccessNotification = (message: string) => {
-    setSuccessMessage(message);
-    setShowSuccessMessage(true);
-    setTimeout(() => {
-      setShowSuccessMessage(false);
-    }, 3000);
   };
 
   const saveMilestone = () => {
@@ -363,6 +498,87 @@ export default function CreateProjectPage() {
     setViewingMilestone(null);
   };
 
+  // ==================================================================================
+  // FORM HANDLERS
+  // ==================================================================================
+
+  const showSuccessNotification = (message: string) => {
+    setSuccessMessage(message);
+    setShowSuccessMessage(true);
+    setTimeout(() => {
+      setShowSuccessMessage(false);
+    }, 3000);
+  };
+
+  const toggleEmployee = (employeeId: number) => {
+    if (selectedEmployees.includes(employeeId)) {
+      setSelectedEmployees(selectedEmployees.filter((id) => id !== employeeId));
+    } else {
+      setSelectedEmployees([...selectedEmployees, employeeId]);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Validation
+    if (!projectName || !location || !startDate || !endDate || !projectBudget) {
+      alert("Please fill in all required fields");
+      return;
+    }
+
+    // Parse project budget to number
+    const budgetValue = parseFloat(projectBudget.replace(/[^0-9.-]+/g, ""));
+    if (isNaN(budgetValue) || budgetValue <= 0) {
+      alert("Please enter a valid project budget");
+      return;
+    }
+
+    // Calculate balance payment
+    const advancePayment = initialPaymentTaken
+      ? parseFloat(initialPaymentAmount) || 0
+      : 0;
+    const balancePayment = budgetValue - advancePayment;
+
+    // Prepare payload matching the API structure
+    const payload: CreateProjectPayload = {
+      project_name: projectName,
+      description: description || `${category} project at ${location}`,
+      site_address: location,
+      status: status,
+      start_date: startDate,
+      expected_end_date: endDate,
+      total_cost: budgetValue.toFixed(2),
+      advance_payment: advancePayment.toFixed(2),
+      balance_payment: balancePayment.toFixed(2),
+    };
+
+    console.log("📤 Submitting project:", payload);
+    console.log(
+      `📊 Will assign ${selectedEmployees.length} employees after creation`
+    );
+    console.log(
+      `📊 Will create ${milestones.length} milestones after creation`
+    );
+
+    // Submit to API
+    createProjectMutation.mutate(payload);
+  };
+
+  const handleCancel = () => {
+    if (
+      confirm(
+        "Are you sure you want to cancel? All unsaved changes will be lost."
+      )
+    ) {
+      router.push("/provider/projects");
+    }
+  };
+
+  // ==================================================================================
+  // HELPER FUNCTIONS FOR UI
+  // ==================================================================================
+
   const getStatusBadgeColor = (status: Milestone["status"]) => {
     const colors = {
       pending: "bg-yellow-100 text-yellow-700 border-yellow-200",
@@ -399,68 +615,50 @@ export default function CreateProjectPage() {
 
   const totalMilestoneAmount = milestones.reduce((sum, m) => sum + m.amount, 0);
   const initialPayment = parseFloat(initialPaymentAmount) || 0;
-  const totalProjectValue = totalMilestoneAmount + initialPayment;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const isSubmitting =
+    createProjectMutation.isPending ||
+    isCreatingMilestones ||
+    isAssigningEmployees;
 
-    // Validation
-    if (!projectName || !location || !startDate || !endDate || !projectBudget) {
-      alert("Please fill in all required fields");
-      return;
-    }
-
-    // Parse project budget to number
-    const budgetValue = parseFloat(projectBudget.replace(/[^0-9.-]+/g, ""));
-    if (isNaN(budgetValue) || budgetValue <= 0) {
-      alert("Please enter a valid project budget");
-      return;
-    }
-
-    // Calculate balance payment
-    const advancePayment = initialPaymentTaken ? initialPayment : 0;
-    const balancePayment = budgetValue - advancePayment;
-
-    // Prepare payload matching the API structure
-    const payload: CreateProjectPayload = {
-      project_name: projectName,
-      description: description || `${category} project at ${location}`,
-      site_address: location,
-      status: status,
-      start_date: startDate,
-      expected_end_date: endDate,
-      total_cost: budgetValue.toFixed(2),
-      advance_payment: advancePayment.toFixed(2),
-      balance_payment: balancePayment.toFixed(2),
-    };
-
-    console.log("Submitting payload:", payload);
-
-    // Submit to API
-    createProjectMutation.mutate(payload);
+  // Get color for employee avatar (deterministic based on ID)
+  const getEmployeeColor = (id: number) => {
+    const colors = [
+      "bg-primary-600",
+      "bg-secondary-600",
+      "bg-yellow-600",
+      "bg-purple-600",
+      "bg-green-600",
+      "bg-blue-600",
+      "bg-orange-600",
+      "bg-teal-600",
+      "bg-pink-600",
+      "bg-indigo-600",
+    ];
+    return colors[id % colors.length];
   };
 
-  const handleCancel = () => {
-    if (
-      confirm(
-        "Are you sure you want to cancel? All unsaved changes will be lost."
-      )
-    ) {
-      router.push("/provider/projects");
-    }
-  };
+  // ==================================================================================
+  // LOADING STATE
+  // ==================================================================================
 
-  const toggleTeamMember = (memberId: string) => {
-    if (selectedTeamMembers.includes(memberId)) {
-      setSelectedTeamMembers(
-        selectedTeamMembers.filter((id) => id !== memberId)
-      );
-    } else {
-      setSelectedTeamMembers([...selectedTeamMembers, memberId]);
-    }
-  };
+  if (employeesLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center">
+          <FontAwesomeIcon
+            icon={faSpinner}
+            className="text-primary-600 text-4xl mb-4 animate-spin"
+          />
+          <p className="text-neutral-600">Loading employees...</p>
+        </div>
+      </div>
+    );
+  }
 
-  const isSubmitting = createProjectMutation.isPending || isCreatingMilestones;
+  // ==================================================================================
+  // RENDER
+  // ==================================================================================
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -589,9 +787,6 @@ export default function CreateProjectPage() {
                     <option value="completed">Completed</option>
                     <option value="cancelled">Cancelled</option>
                   </select>
-                  <p className="text-neutral-500 text-xs mt-1">
-                    Select the current status of the project
-                  </p>
                 </div>
 
                 {/* Location */}
@@ -615,31 +810,6 @@ export default function CreateProjectPage() {
                     required
                     className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                   />
-                </div>
-
-                {/* Client Name */}
-                <div>
-                  <label
-                    htmlFor="clientName"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    <FontAwesomeIcon
-                      icon={faUser}
-                      className="text-primary-600 mr-2"
-                    />
-                    Client Name
-                  </label>
-                  <input
-                    type="text"
-                    id="clientName"
-                    value={clientName}
-                    onChange={(e) => setClientName(e.target.value)}
-                    placeholder="e.g., John Smith (Optional - can be assigned later)"
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                  <p className="text-neutral-500 text-xs mt-1">
-                    Client can be assigned later if not available now
-                  </p>
                 </div>
 
                 {/* Project Budget */}
@@ -808,23 +978,21 @@ export default function CreateProjectPage() {
                         className="w-full pl-10 pr-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                       />
                     </div>
-                    {initialPayment > 0 && (
+                    {initialPayment > 0 && projectBudget && (
                       <div className="mt-3 space-y-2">
                         <p className="text-green-600 text-sm font-medium flex items-center gap-2">
                           <FontAwesomeIcon icon={faCheckCircle} />
                           Advance payment: {formatCurrency(initialPayment)}
                         </p>
-                        {projectBudget && (
-                          <p className="text-blue-600 text-sm font-medium flex items-center gap-2">
-                            <FontAwesomeIcon icon={faMoneyBill} />
-                            Balance payment:{" "}
-                            {formatCurrency(
-                              parseFloat(
-                                projectBudget.replace(/[^0-9.-]+/g, "")
-                              ) - initialPayment
-                            )}
-                          </p>
-                        )}
+                        <p className="text-blue-600 text-sm font-medium flex items-center gap-2">
+                          <FontAwesomeIcon icon={faMoneyBill} />
+                          Balance payment:{" "}
+                          {formatCurrency(
+                            parseFloat(
+                              projectBudget.replace(/[^0-9.-]+/g, "")
+                            ) - initialPayment
+                          )}
+                        </p>
                       </div>
                     )}
                   </div>
@@ -842,58 +1010,92 @@ export default function CreateProjectPage() {
                 </span>
               </h2>
               <p className="text-neutral-600 text-sm mb-4">
-                Select team members to assign to this project. You can also add
-                them later.
+                Select employees to assign to this project. They will be
+                automatically assigned after the project is created.
               </p>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {availableTeamMembers.map((member) => (
-                  <div
-                    key={member.id}
-                    onClick={() => toggleTeamMember(member.id)}
-                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                      selectedTeamMembers.includes(member.id)
-                        ? "border-primary-500 bg-primary-50"
-                        : "border-neutral-200 hover:border-neutral-300 bg-neutral-0"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-10 h-10 rounded-full ${member.color} text-neutral-0 flex items-center justify-center font-semibold flex-shrink-0`}
-                      >
-                        {member.initials}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-neutral-900 truncate">
-                          {member.name}
-                        </p>
-                        <p className="text-sm text-neutral-600 truncate">
-                          {member.role}
-                        </p>
-                      </div>
-                      {selectedTeamMembers.includes(member.id) && (
-                        <FontAwesomeIcon
-                          icon={faCheck}
-                          className="text-primary-600 flex-shrink-0"
-                        />
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {selectedTeamMembers.length > 0 && (
-                <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                  <p className="text-green-700 text-sm font-medium">
-                    <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                    {selectedTeamMembers.length} team member
-                    {selectedTeamMembers.length !== 1 ? "s" : ""} selected
+              {employeesError ? (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                  <FontAwesomeIcon
+                    icon={faExclamationTriangle}
+                    className="mr-2"
+                  />
+                  Failed to load employees. You can assign them after creating
+                  the project.
+                </div>
+              ) : employees.length === 0 ? (
+                <div className="p-8 text-center bg-neutral-50 rounded-lg border-2 border-dashed border-neutral-200">
+                  <FontAwesomeIcon
+                    icon={faUsers}
+                    className="text-neutral-300 text-4xl mb-3"
+                  />
+                  <p className="text-neutral-600 mb-2">
+                    No employees available
+                  </p>
+                  <p className="text-neutral-500 text-sm">
+                    Add employees to your team first before assigning them to
+                    projects
                   </p>
                 </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {employees.map((employee) => (
+                      <div
+                        key={employee.id}
+                        onClick={() => toggleEmployee(employee.id)}
+                        className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                          selectedEmployees.includes(employee.id)
+                            ? "border-primary-500 bg-primary-50"
+                            : "border-neutral-200 hover:border-neutral-300 bg-neutral-0"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`w-10 h-10 rounded-full ${getEmployeeColor(
+                              employee.id
+                            )} text-neutral-0 flex items-center justify-center font-semibold flex-shrink-0`}
+                          >
+                            {employee.initials}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-neutral-900 truncate">
+                              {employee.full_name}
+                            </p>
+                            <p className="text-sm text-neutral-600 truncate">
+                              {employee.role || "No role"} •{" "}
+                              {employee.department || "No department"}
+                            </p>
+                          </div>
+                          {selectedEmployees.includes(employee.id) && (
+                            <FontAwesomeIcon
+                              icon={faCheck}
+                              className="text-primary-600 flex-shrink-0"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {selectedEmployees.length > 0 && (
+                    <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                      <p className="text-green-700 text-sm font-medium">
+                        <FontAwesomeIcon
+                          icon={faCheckCircle}
+                          className="mr-2"
+                        />
+                        {selectedEmployees.length} employee
+                        {selectedEmployees.length !== 1 ? "s" : ""} selected (
+                        will be assigned automatically)
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
-            {/* Milestones Card */}
+            {/* Milestones Card - keeping your existing milestone code */}
             <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="heading-4 text-neutral-900 flex items-center gap-3">
@@ -1034,7 +1236,7 @@ export default function CreateProjectPage() {
             </div>
           </div>
 
-          {/* Sidebar - Takes 1 column */}
+          {/* Sidebar - Summary */}
           <div className="lg:col-span-1">
             <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 sticky top-8">
               <h3 className="heading-4 text-neutral-900 mb-4">
@@ -1059,19 +1261,6 @@ export default function CreateProjectPage() {
 
                 <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
                   <FontAwesomeIcon
-                    icon={faUser}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">Client</p>
-                    <p className="text-neutral-900 font-semibold truncate">
-                      {clientName || "To be assigned"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
                     icon={faMapMarkerAlt}
                     className="text-primary-600 mt-1"
                   />
@@ -1080,41 +1269,6 @@ export default function CreateProjectPage() {
                     <p className="text-neutral-900 font-semibold truncate">
                       {location || "Not specified"}
                     </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
-                    icon={faCheckCircle}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">Status</p>
-                    <span
-                      className={`inline-flex px-2 py-1 rounded-lg text-xs font-semibold border ${
-                        status === "pending"
-                          ? "bg-yellow-100 text-yellow-700 border-yellow-200"
-                          : status === "not_started"
-                          ? "bg-yellow-100 text-yellow-700 border-yellow-200"
-                          : status === "in_progress"
-                          ? "bg-blue-100 text-blue-700 border-blue-200"
-                          : status === "completed"
-                          ? "bg-green-100 text-green-700 border-green-200"
-                          : status === "on_hold"
-                          ? "bg-orange-100 text-orange-700 border-orange-200"
-                          : status === "cancelled"
-                          ? "bg-red-100 text-red-700 border-red-200"
-                          : "bg-neutral-100 text-neutral-600 border-neutral-200"
-                      }`}
-                    >
-                      {status === "not_started"
-                        ? "Not Started"
-                        : status === "in_progress"
-                        ? "In Progress"
-                        : status === "on_hold"
-                        ? "On Hold"
-                        : status.charAt(0).toUpperCase() + status.slice(1)}
-                    </span>
                   </div>
                 </div>
 
@@ -1147,10 +1301,10 @@ export default function CreateProjectPage() {
                       Team Members
                     </p>
                     <p className="text-neutral-900 font-semibold">
-                      {selectedTeamMembers.length === 0
+                      {selectedEmployees.length === 0
                         ? "None assigned"
-                        : `${selectedTeamMembers.length} member${
-                            selectedTeamMembers.length !== 1 ? "s" : ""
+                        : `${selectedEmployees.length} employee${
+                            selectedEmployees.length !== 1 ? "s" : ""
                           }`}
                     </p>
                   </div>
@@ -1241,19 +1395,6 @@ export default function CreateProjectPage() {
                         </div>
                       </>
                     )}
-                    {milestones.length > 0 && (
-                      <>
-                        <div className="border-t border-primary-200 my-2"></div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-neutral-600">
-                            Milestone Total:
-                          </span>
-                          <span className="font-semibold text-blue-600">
-                            {formatCurrency(totalMilestoneAmount)}
-                          </span>
-                        </div>
-                      </>
-                    )}
                   </div>
                 </div>
               )}
@@ -1272,6 +1413,8 @@ export default function CreateProjectPage() {
                       />
                       {isCreatingMilestones
                         ? "Creating Milestones..."
+                        : isAssigningEmployees
+                        ? "Assigning Employees..."
                         : "Creating Project..."}
                     </>
                   ) : (
@@ -1294,12 +1437,11 @@ export default function CreateProjectPage() {
               <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
                 <p className="text-blue-700 body-small">
                   <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                  <strong>Note:</strong>{" "}
-                  {milestones.length > 0
-                    ? `Project will be created with ${
-                        milestones.length
-                      } milestone${milestones.length !== 1 ? "s" : ""}.`
-                    : "You can add milestones now or after creating the project."}
+                  <strong>Note:</strong> Project will be created with{" "}
+                  {selectedEmployees.length} employee
+                  {selectedEmployees.length !== 1 ? "s" : ""} and{" "}
+                  {milestones.length} milestone
+                  {milestones.length !== 1 ? "s" : ""}.
                 </p>
               </div>
             </div>
@@ -1307,7 +1449,7 @@ export default function CreateProjectPage() {
         </div>
       </form>
 
-      {/* Create/Edit Milestone Modal */}
+      {/* Milestone Modals - keeping your existing code */}
       {showMilestoneModal && (
         <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -1472,7 +1614,7 @@ export default function CreateProjectPage() {
         </div>
       )}
 
-      {/* View Milestone Modal */}
+      {/* View Milestone Modal - keeping your existing code */}
       {viewingMilestone && (
         <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">

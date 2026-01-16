@@ -10,12 +10,9 @@ import {
   faArrowLeft,
   faCheck,
   faTimes,
-  faCircleHalfStroke,
-  faBed,
   faSpinner,
   faSave,
   faDownload,
-  faFilter,
   faSearch,
   faChevronLeft,
   faChevronRight,
@@ -25,42 +22,222 @@ import {
   faHouse,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { getAccessToken } from "@/lib/auth";
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+
+// ==================================================================================
+// TYPES & INTERFACES
+// ==================================================================================
 
 interface Project {
-  id: string;
-  name: string;
-  client: string;
-  category: string;
-  teamMembers: string[];
+  id: number;
+  project_name: string;
+  client: {
+    id: number;
+    full_name: string;
+  } | null;
+  status: string;
 }
 
-interface TeamMember {
-  id: string;
-  name: string;
+interface Employee {
+  id: number;
+  full_name: string;
   initials: string;
   role: string;
   department: string;
-  color: string;
+  photo: string | null;
+  is_active: boolean;
 }
 
 interface AttendanceRecord {
-  memberId: string;
-  status: "present" | "absent" | "half-day" | "on-leave";
-  checkInTime?: string;
-  checkOutTime?: string;
+  employee_id: number;
+  status: "present" | "absent" | "half_day" | "leave";
+  check_in_time?: string;
+  check_out_time?: string;
   notes?: string;
 }
 
-interface DailyAttendance {
-  id: string;
-  projectId: string;
-  date: string;
+interface BulkAttendancePayload {
+  attendance_date: string;
   records: AttendanceRecord[];
-  submittedBy: string;
-  submittedAt: Date;
 }
 
+interface BulkAttendanceResponse {
+  batch_id: string;
+  records_created: number;
+  records_updated: number;
+  attendance_date: string;
+  project_id: number;
+  submitted_by: string;
+  submitted_at: string;
+  details: Array<{
+    employee_id: number;
+    employee_name: string;
+    action: "created" | "updated" | "failed";
+    attendance_id?: number;
+    error?: string;
+  }>;
+}
+
+interface AttendanceHistoryRecord {
+  id: number;
+  project: number;
+  project_name: string;
+  employee: number;
+  employee_name: string;
+  employee_role: string;
+  employee_department: string;
+  attendance_date: string;
+  check_in_time: string | null;
+  check_out_time: string | null;
+  hours_worked: string | null;
+  status: "present" | "absent" | "half_day" | "leave";
+  notes: string;
+  created_at: string;
+}
+
+// ==================================================================================
+// API FUNCTIONS
+// ==================================================================================
+
+async function fetchProjects(): Promise<{ results: Project[] }> {
+  const token = getAccessToken();
+  if (!token) throw new Error("No authentication token found");
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/projects/`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+  });
+
+  if (!response.ok) throw new Error("Failed to fetch projects");
+  return response.json();
+}
+
+async function fetchProjectEmployees(
+  projectId: number
+): Promise<{ results: Employee[] }> {
+  const token = getAccessToken();
+  if (!token) throw new Error("No authentication token found");
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/projects/${projectId}/employees/`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+    }
+  );
+
+  if (!response.ok) throw new Error("Failed to fetch project employees");
+
+  const data = await response.json();
+  // Handle both array and object with results
+  return Array.isArray(data) ? { results: data } : data;
+}
+
+async function submitBulkAttendance(
+  projectId: number,
+  payload: BulkAttendancePayload
+): Promise<BulkAttendanceResponse> {
+  const token = getAccessToken();
+  if (!token) throw new Error("No authentication token found");
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/projects/${projectId}/attendance/bulk/`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (!response.ok) {
+    let errorData;
+    try {
+      errorData = await response.json();
+    } catch {
+      errorData = { detail: `HTTP ${response.status} Error` };
+    }
+
+    let errorMessage = "Failed to submit attendance";
+    if (errorData.detail) {
+      errorMessage = errorData.detail;
+    } else if (errorData.error) {
+      errorMessage = errorData.error;
+    } else if (typeof errorData === "object") {
+      const fieldErrors = Object.entries(errorData)
+        .map(([field, messages]) => {
+          const msgArray = Array.isArray(messages) ? messages : [messages];
+          return `${field}: ${msgArray.join(", ")}`;
+        })
+        .join("\n");
+      if (fieldErrors) errorMessage = fieldErrors;
+    }
+
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+}
+
+async function fetchProjectAttendance(
+  projectId: number,
+  params?: {
+    start_date?: string;
+    end_date?: string;
+    employee_id?: number;
+    status?: string;
+  }
+): Promise<{ results: AttendanceHistoryRecord[] }> {
+  const token = getAccessToken();
+  if (!token) throw new Error("No authentication token found");
+
+  const queryParams = new URLSearchParams();
+  if (params?.start_date) queryParams.append("start_date", params.start_date);
+  if (params?.end_date) queryParams.append("end_date", params.end_date);
+  if (params?.employee_id)
+    queryParams.append("employee_id", params.employee_id.toString());
+  if (params?.status) queryParams.append("status", params.status);
+
+  const url = `${API_BASE_URL}/api/v1/projects/${projectId}/attendance/?${queryParams}`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+  });
+
+  if (!response.ok) throw new Error("Failed to fetch attendance history");
+
+  const data = await response.json();
+  return Array.isArray(data) ? { results: data } : data;
+}
+
+// ==================================================================================
+// MAIN COMPONENT
+// ==================================================================================
+
 export default function AttendancePage() {
+  const queryClient = useQueryClient();
+
+  // State
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [attendanceDate, setAttendanceDate] = useState<string>(
     new Date().toISOString().split("T")[0]
@@ -68,158 +245,105 @@ export default function AttendancePage() {
   const [attendanceRecords, setAttendanceRecords] = useState<
     AttendanceRecord[]
   >([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [savedAttendance, setSavedAttendance] = useState<DailyAttendance[]>([]);
-  const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [viewMode, setViewMode] = useState<"mark" | "history">("mark");
 
-  // Sample projects
-  const projects: Project[] = [
-    {
-      id: "1",
-      name: "Kitchen Renovation",
-      client: "Sarah Johnson",
-      category: "Renovation",
-      teamMembers: ["1", "2", "3", "6"],
-    },
-    {
-      id: "2",
-      name: "Bathroom Upgrade",
-      client: "David Martinez",
-      category: "Plumbing",
-      teamMembers: ["3", "5", "7"],
-    },
-    {
-      id: "3",
-      name: "Electrical Panel Upgrade",
-      client: "Jennifer White",
-      category: "Electrical",
-      teamMembers: ["2", "5", "6"],
-    },
-    {
-      id: "4",
-      name: "HVAC System Installation",
-      client: "Michael Brown",
-      category: "HVAC",
-      teamMembers: ["4", "5", "7"],
-    },
-    {
-      id: "5",
-      name: "Garden & Landscape Design",
-      client: "Robert Anderson",
-      category: "Landscaping",
-      teamMembers: ["7", "1"],
-    },
-  ];
+  // ==================================================================================
+  // QUERIES
+  // ==================================================================================
 
-  // All team members
-  const allTeamMembers: TeamMember[] = [
-    {
-      id: "1",
-      name: "Sarah Johnson",
-      initials: "SJ",
-      role: "Project Manager",
-      department: "Operations",
-      color: "bg-primary-600",
-    },
-    {
-      id: "2",
-      name: "Michael Rodriguez",
-      initials: "MR",
-      role: "Electrician",
-      department: "Technical",
-      color: "bg-secondary-600",
-    },
-    {
-      id: "3",
-      name: "Jennifer Davis",
-      initials: "JD",
-      role: "Plumber",
-      department: "Technical",
-      color: "bg-yellow-600",
-    },
-    {
-      id: "4",
-      name: "David Martinez",
-      initials: "DM",
-      role: "HVAC Specialist",
-      department: "Technical",
-      color: "bg-purple-600",
-    },
-    {
-      id: "5",
-      name: "Jennifer White",
-      initials: "JW",
-      role: "Supervisor",
-      department: "Operations",
-      color: "bg-blue-600",
-    },
-    {
-      id: "6",
-      name: "Thomas Kim",
-      initials: "TK",
-      role: "Carpenter",
-      department: "Technical",
-      color: "bg-green-600",
-    },
-    {
-      id: "7",
-      name: "Robert Anderson",
-      initials: "RA",
-      role: "Landscaper",
-      department: "Outdoor Services",
-      color: "bg-teal-600",
-    },
-  ];
+  // Fetch projects
+  const { data: projectsData, isLoading: projectsLoading } = useQuery({
+    queryKey: ["projects"],
+    queryFn: fetchProjects,
+  });
 
-  // Get team members for selected project
-  const selectedProjectData = projects.find((p) => p.id === selectedProject);
-  const projectTeamMembers = selectedProjectData
-    ? allTeamMembers.filter((member) =>
-        selectedProjectData.teamMembers.includes(member.id)
-      )
-    : [];
+  // Fetch employees for selected project
+  const {
+    data: employeesData,
+    isLoading: employeesLoading,
+    isError: employeesError,
+  } = useQuery({
+    queryKey: ["project-employees", selectedProject],
+    queryFn: () => fetchProjectEmployees(Number(selectedProject)),
+    enabled: !!selectedProject,
+  });
 
-  // Initialize attendance records when project is selected
+  // Fetch attendance history for selected project
+  const { data: attendanceHistoryData, isLoading: historyLoading } = useQuery({
+    queryKey: ["project-attendance", selectedProject],
+    queryFn: () => fetchProjectAttendance(Number(selectedProject)),
+    enabled: !!selectedProject && viewMode === "history",
+  });
+
+  // ==================================================================================
+  // MUTATIONS
+  // ==================================================================================
+
+  const submitAttendanceMutation = useMutation({
+    mutationFn: async (data: BulkAttendancePayload & { projectId: number }) => {
+      return submitBulkAttendance(data.projectId, {
+        attendance_date: data.attendance_date,
+        records: data.records,
+      });
+    },
+    onSuccess: (response) => {
+      // Invalidate queries to refresh data
+      queryClient.invalidateQueries({
+        queryKey: ["project-attendance", selectedProject],
+      });
+
+      // Show success notification
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+
+      // Log details
+      console.log("✅ Attendance submitted successfully:", response);
+      console.log(
+        `📊 Created: ${response.records_created}, Updated: ${response.records_updated}`
+      );
+
+      // Reset form
+      resetForm();
+    },
+    onError: (error: Error) => {
+      console.error("❌ Attendance submission error:", error);
+      alert(error.message || "Failed to submit attendance");
+    },
+  });
+
+  // ==================================================================================
+  // HANDLERS
+  // ==================================================================================
+
   const handleProjectChange = (projectId: string) => {
     setSelectedProject(projectId);
-    const project = projects.find((p) => p.id === projectId);
-    if (project) {
-      const initialRecords: AttendanceRecord[] = project.teamMembers.map(
-        (memberId) => ({
-          memberId,
-          status: "present",
-          checkInTime: "09:00",
-          checkOutTime: "17:00",
-          notes: "",
-        })
-      );
-      setAttendanceRecords(initialRecords);
-    }
+    setAttendanceRecords([]);
   };
 
   const updateAttendanceStatus = (
-    memberId: string,
+    employeeId: number,
     status: AttendanceRecord["status"]
   ) => {
     setAttendanceRecords((prev) =>
       prev.map((record) =>
-        record.memberId === memberId ? { ...record, status } : record
+        record.employee_id === employeeId ? { ...record, status } : record
       )
     );
   };
 
   const updateAttendanceField = (
-    memberId: string,
+    employeeId: number,
     field: keyof AttendanceRecord,
     value: string
   ) => {
     setAttendanceRecords((prev) =>
       prev.map((record) =>
-        record.memberId === memberId ? { ...record, [field]: value } : record
+        record.employee_id === employeeId
+          ? { ...record, [field]: value }
+          : record
       )
     );
   };
@@ -232,82 +356,56 @@ export default function AttendancePage() {
       return;
     }
 
-    setIsSubmitting(true);
-
-    // Simulate API call
-    setTimeout(() => {
-      const newAttendance: DailyAttendance = {
-        id: Date.now().toString(),
-        projectId: selectedProject,
-        date: attendanceDate,
-        records: attendanceRecords,
-        submittedBy: "Current User",
-        submittedAt: new Date(),
-      };
-
-      setSavedAttendance((prev) => [newAttendance, ...prev]);
-      console.log("Attendance Submitted:", newAttendance);
-
-      // Show success message
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
-
-      // Reset form
-      setIsSubmitting(false);
-    }, 1500);
-  };
-
-  const getStatusIcon = (status: AttendanceRecord["status"]) => {
-    switch (status) {
-      case "present":
-        return faUserCheck;
-      case "absent":
-        return faUserXmark;
-      case "half-day":
-        return faUserClock;
-      case "on-leave":
-        return faHouse;
+    if (attendanceRecords.length === 0) {
+      alert("No team members to mark attendance for");
+      return;
     }
+
+    // Submit attendance
+    await submitAttendanceMutation.mutateAsync({
+      projectId: Number(selectedProject),
+      attendance_date: attendanceDate,
+      records: attendanceRecords,
+    });
   };
 
-  const getStatusColor = (status: AttendanceRecord["status"]) => {
-    switch (status) {
-      case "present":
-        return "bg-green-100 text-green-700 border-green-300 hover:bg-green-200";
-      case "absent":
-        return "bg-red-100 text-red-700 border-red-300 hover:bg-red-200";
-      case "half-day":
-        return "bg-yellow-100 text-yellow-700 border-yellow-300 hover:bg-yellow-200";
-      case "on-leave":
-        return "bg-blue-100 text-blue-700 border-blue-300 hover:bg-blue-200";
-    }
+  const resetForm = () => {
+    setAttendanceRecords([]);
+    // Don't reset project/date, user might want to submit another batch
   };
 
-  const getStatusBadgeColor = (status: AttendanceRecord["status"]) => {
-    switch (status) {
-      case "present":
-        return "bg-green-50 text-green-700 border-green-200";
-      case "absent":
-        return "bg-red-50 text-red-700 border-red-200";
-      case "half-day":
-        return "bg-yellow-50 text-yellow-700 border-yellow-200";
-      case "on-leave":
-        return "bg-blue-50 text-blue-700 border-blue-200";
-    }
+  const exportAttendance = () => {
+    alert("Exporting attendance data to CSV...");
+    // TODO: Implement CSV export
   };
 
-  const getStatusLabel = (status: AttendanceRecord["status"]) => {
-    switch (status) {
-      case "present":
-        return "Present";
-      case "absent":
-        return "Absent";
-      case "half-day":
-        return "Half Day";
-      case "on-leave":
-        return "On Leave";
-    }
-  };
+  // ==================================================================================
+  // DERIVED STATE
+  // ==================================================================================
+
+  const projects = projectsData?.results || [];
+  const employees = employeesData?.results || [];
+  const attendanceHistory = attendanceHistoryData?.results || [];
+
+  const selectedProjectData = projects.find(
+    (p) => p.id.toString() === selectedProject
+  );
+
+  // Initialize attendance records when employees load
+  if (
+    selectedProject &&
+    employees.length > 0 &&
+    attendanceRecords.length === 0
+  ) {
+    const initialRecords: AttendanceRecord[] = employees.map((employee) => ({
+      employee_id: employee.id,
+      status: "present",
+      check_in_time: "09:00",
+      check_out_time: "17:00",
+      notes: "",
+    }));
+    setAttendanceRecords(initialRecords);
+  }
 
   // Calculate statistics
   const calculateStats = () => {
@@ -315,7 +413,7 @@ export default function AttendancePage() {
       present: 0,
       absent: 0,
       halfDay: 0,
-      onLeave: 0,
+      leave: 0,
       total: attendanceRecords.length,
     };
 
@@ -327,11 +425,11 @@ export default function AttendancePage() {
         case "absent":
           stats.absent++;
           break;
-        case "half-day":
+        case "half_day":
           stats.halfDay++;
           break;
-        case "on-leave":
-          stats.onLeave++;
+        case "leave":
+          stats.leave++;
           break;
       }
     });
@@ -341,25 +439,110 @@ export default function AttendancePage() {
 
   const stats = calculateStats();
 
-  // Filter history
-  const filteredHistory = savedAttendance.filter((attendance) => {
-    const project = projects.find((p) => p.id === attendance.projectId);
-    if (searchQuery && project) {
-      return project.name.toLowerCase().includes(searchQuery.toLowerCase());
+  // Group attendance history by date
+  const groupedHistory = attendanceHistory.reduce((acc, record) => {
+    const date = record.attendance_date;
+    if (!acc[date]) {
+      acc[date] = [];
     }
-    return true;
-  });
+    acc[date].push(record);
+    return acc;
+  }, {} as Record<string, AttendanceHistoryRecord[]>);
 
-  const totalPages = Math.ceil(filteredHistory.length / 5);
-  const paginatedHistory = filteredHistory.slice(
+  const historyDates = Object.keys(groupedHistory).sort().reverse();
+
+  // Filter history
+  const filteredDates = searchQuery
+    ? historyDates.filter((date) => {
+        const records = groupedHistory[date];
+        return records.some(
+          (r) =>
+            r.employee_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            r.project_name.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+      })
+    : historyDates;
+
+  const totalPages = Math.ceil(filteredDates.length / 5);
+  const paginatedDates = filteredDates.slice(
     (currentPage - 1) * 5,
     currentPage * 5
   );
 
-  const exportAttendance = () => {
-    alert("Exporting attendance data to CSV...");
-    // Implementation for CSV export would go here
+  // Helper functions
+  const getStatusIcon = (status: AttendanceRecord["status"]) => {
+    switch (status) {
+      case "present":
+        return faUserCheck;
+      case "absent":
+        return faUserXmark;
+      case "half_day":
+        return faUserClock;
+      case "leave":
+        return faHouse;
+    }
   };
+
+  const getStatusColor = (status: AttendanceRecord["status"]) => {
+    switch (status) {
+      case "present":
+        return "bg-green-100 text-green-700 border-green-300 hover:bg-green-200";
+      case "absent":
+        return "bg-red-100 text-red-700 border-red-300 hover:bg-red-200";
+      case "half_day":
+        return "bg-yellow-100 text-yellow-700 border-yellow-300 hover:bg-yellow-200";
+      case "leave":
+        return "bg-blue-100 text-blue-700 border-blue-300 hover:bg-blue-200";
+    }
+  };
+
+  const getStatusBadgeColor = (status: AttendanceRecord["status"]) => {
+    switch (status) {
+      case "present":
+        return "bg-green-50 text-green-700 border-green-200";
+      case "absent":
+        return "bg-red-50 text-red-700 border-red-200";
+      case "half_day":
+        return "bg-yellow-50 text-yellow-700 border-yellow-200";
+      case "leave":
+        return "bg-blue-50 text-blue-700 border-blue-200";
+    }
+  };
+
+  const getStatusLabel = (status: AttendanceRecord["status"]) => {
+    switch (status) {
+      case "present":
+        return "Present";
+      case "absent":
+        return "Absent";
+      case "half_day":
+        return "Half Day";
+      case "leave":
+        return "On Leave";
+    }
+  };
+
+  // ==================================================================================
+  // LOADING STATE
+  // ==================================================================================
+
+  if (projectsLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center">
+          <FontAwesomeIcon
+            icon={faSpinner}
+            className="text-primary-600 text-4xl mb-4 animate-spin"
+          />
+          <p className="text-neutral-600">Loading projects...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ==================================================================================
+  // RENDER
+  // ==================================================================================
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -413,9 +596,9 @@ export default function AttendancePage() {
           >
             <FontAwesomeIcon icon={faCalendar} className="mr-2" />
             Attendance History
-            {savedAttendance.length > 0 && (
+            {attendanceHistory.length > 0 && (
               <span className="ml-2 px-2 py-0.5 bg-primary-500 text-neutral-0 rounded-full text-xs">
-                {savedAttendance.length}
+                {historyDates.length}
               </span>
             )}
           </button>
@@ -469,7 +652,8 @@ export default function AttendancePage() {
                       <option value="">Choose a project...</option>
                       {projects.map((project) => (
                         <option key={project.id} value={project.id}>
-                          {project.name} - {project.client}
+                          {project.project_name} -{" "}
+                          {project.client?.full_name || "No client"}
                         </option>
                       ))}
                     </select>
@@ -481,12 +665,12 @@ export default function AttendancePage() {
                   {selectedProjectData && (
                     <div className="mt-3 p-3 bg-primary-50 rounded-lg border border-primary-200">
                       <p className="text-primary-700 text-sm">
-                        <span className="font-semibold">Category:</span>{" "}
-                        {selectedProjectData.category}
+                        <span className="font-semibold">Client:</span>{" "}
+                        {selectedProjectData.client?.full_name || "Unassigned"}
                       </p>
                       <p className="text-primary-700 text-sm">
                         <span className="font-semibold">Team Size:</span>{" "}
-                        {selectedProjectData.teamMembers.length} members
+                        {employees.length} members
                       </p>
                     </div>
                   )}
@@ -564,15 +748,44 @@ export default function AttendancePage() {
                   <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
                     <p className="text-blue-700 text-sm mb-1">On Leave</p>
                     <p className="text-2xl font-bold text-blue-700">
-                      {stats.onLeave}
+                      {stats.leave}
                     </p>
                   </div>
                 </div>
               </div>
             )}
 
+            {/* Loading Employees */}
+            {selectedProject && employeesLoading && (
+              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
+                <FontAwesomeIcon
+                  icon={faSpinner}
+                  className="text-primary-600 text-4xl mb-4 animate-spin"
+                />
+                <p className="text-neutral-600 font-medium">
+                  Loading team members...
+                </p>
+              </div>
+            )}
+
+            {/* Error Loading Employees */}
+            {selectedProject && employeesError && (
+              <div className="bg-red-50 rounded-xl border border-red-200 p-12 text-center">
+                <FontAwesomeIcon
+                  icon={faTimes}
+                  className="text-red-600 text-4xl mb-4"
+                />
+                <p className="text-red-600 font-medium">
+                  Failed to load team members
+                </p>
+              </div>
+            )}
+
             {/* Team Members Attendance */}
-            {selectedProject && projectTeamMembers.length > 0 ? (
+            {selectedProject &&
+            !employeesLoading &&
+            !employeesError &&
+            employees.length > 0 ? (
               <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
                 <div className="px-6 py-4 bg-neutral-50 border-b border-neutral-200">
                   <h3 className="font-semibold text-neutral-900 flex items-center gap-2">
@@ -580,35 +793,33 @@ export default function AttendancePage() {
                       icon={faUsers}
                       className="text-primary-600"
                     />
-                    Team Members ({projectTeamMembers.length})
+                    Team Members ({employees.length})
                   </h3>
                 </div>
 
                 <div className="divide-y divide-neutral-100">
-                  {projectTeamMembers.map((member) => {
+                  {employees.map((employee) => {
                     const record = attendanceRecords.find(
-                      (r) => r.memberId === member.id
+                      (r) => r.employee_id === employee.id
                     );
                     if (!record) return null;
 
                     return (
                       <div
-                        key={member.id}
+                        key={employee.id}
                         className="p-6 hover:bg-neutral-50 transition-colors"
                       >
                         {/* Member Info */}
                         <div className="flex items-start gap-4 mb-4">
-                          <div
-                            className={`w-14 h-14 rounded-full ${member.color} text-neutral-0 flex items-center justify-center font-semibold text-lg flex-shrink-0`}
-                          >
-                            {member.initials}
+                          <div className="w-14 h-14 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-semibold text-lg flex-shrink-0">
+                            {employee.initials}
                           </div>
                           <div className="flex-1">
                             <h4 className="font-semibold text-neutral-900 text-lg">
-                              {member.name}
+                              {employee.full_name}
                             </h4>
                             <p className="text-neutral-600 text-sm">
-                              {member.role} • {member.department}
+                              {employee.role} • {employee.department}
                             </p>
                           </div>
                         </div>
@@ -622,7 +833,7 @@ export default function AttendancePage() {
                             <button
                               type="button"
                               onClick={() =>
-                                updateAttendanceStatus(member.id, "present")
+                                updateAttendanceStatus(employee.id, "present")
                               }
                               className={`px-4 py-3 rounded-lg border-2 font-medium text-sm transition-all flex items-center justify-center gap-2 ${
                                 record.status === "present"
@@ -636,7 +847,7 @@ export default function AttendancePage() {
                             <button
                               type="button"
                               onClick={() =>
-                                updateAttendanceStatus(member.id, "absent")
+                                updateAttendanceStatus(employee.id, "absent")
                               }
                               className={`px-4 py-3 rounded-lg border-2 font-medium text-sm transition-all flex items-center justify-center gap-2 ${
                                 record.status === "absent"
@@ -650,12 +861,12 @@ export default function AttendancePage() {
                             <button
                               type="button"
                               onClick={() =>
-                                updateAttendanceStatus(member.id, "half-day")
+                                updateAttendanceStatus(employee.id, "half_day")
                               }
                               className={`px-4 py-3 rounded-lg border-2 font-medium text-sm transition-all flex items-center justify-center gap-2 ${
-                                record.status === "half-day"
+                                record.status === "half_day"
                                   ? "bg-yellow-600 text-neutral-0 border-yellow-600 shadow-md"
-                                  : getStatusColor("half-day")
+                                  : getStatusColor("half_day")
                               }`}
                             >
                               <FontAwesomeIcon icon={faUserClock} />
@@ -664,12 +875,12 @@ export default function AttendancePage() {
                             <button
                               type="button"
                               onClick={() =>
-                                updateAttendanceStatus(member.id, "on-leave")
+                                updateAttendanceStatus(employee.id, "leave")
                               }
                               className={`px-4 py-3 rounded-lg border-2 font-medium text-sm transition-all flex items-center justify-center gap-2 ${
-                                record.status === "on-leave"
+                                record.status === "leave"
                                   ? "bg-blue-600 text-neutral-0 border-blue-600 shadow-md"
-                                  : getStatusColor("on-leave")
+                                  : getStatusColor("leave")
                               }`}
                             >
                               <FontAwesomeIcon icon={faHouse} />
@@ -678,9 +889,9 @@ export default function AttendancePage() {
                           </div>
                         </div>
 
-                        {/* Time Fields (only for present or half-day) */}
+                        {/* Time Fields (only for present or half_day) */}
                         {(record.status === "present" ||
-                          record.status === "half-day") && (
+                          record.status === "half_day") && (
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                             <div>
                               <label className="block text-neutral-700 font-medium mb-2 text-sm">
@@ -688,11 +899,11 @@ export default function AttendancePage() {
                               </label>
                               <input
                                 type="time"
-                                value={record.checkInTime || ""}
+                                value={record.check_in_time || ""}
                                 onChange={(e) =>
                                   updateAttendanceField(
-                                    member.id,
-                                    "checkInTime",
+                                    employee.id,
+                                    "check_in_time",
                                     e.target.value
                                   )
                                 }
@@ -705,11 +916,11 @@ export default function AttendancePage() {
                               </label>
                               <input
                                 type="time"
-                                value={record.checkOutTime || ""}
+                                value={record.check_out_time || ""}
                                 onChange={(e) =>
                                   updateAttendanceField(
-                                    member.id,
-                                    "checkOutTime",
+                                    employee.id,
+                                    "check_out_time",
                                     e.target.value
                                   )
                                 }
@@ -728,7 +939,7 @@ export default function AttendancePage() {
                             value={record.notes || ""}
                             onChange={(e) =>
                               updateAttendanceField(
-                                member.id,
+                                employee.id,
                                 "notes",
                                 e.target.value
                               )
@@ -744,7 +955,10 @@ export default function AttendancePage() {
                 </div>
               </div>
             ) : (
-              selectedProject && (
+              selectedProject &&
+              !employeesLoading &&
+              !employeesError &&
+              employees.length === 0 && (
                 <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
                   <FontAwesomeIcon
                     icon={faUsers}
@@ -753,12 +967,15 @@ export default function AttendancePage() {
                   <p className="text-neutral-600 font-medium">
                     No team members assigned to this project
                   </p>
+                  <p className="text-neutral-500 text-sm mt-2">
+                    Please assign employees to this project first
+                  </p>
                 </div>
               )
             )}
 
             {/* Submit Button */}
-            {selectedProject && projectTeamMembers.length > 0 && (
+            {selectedProject && employees.length > 0 && (
               <div className="flex items-center justify-end gap-4">
                 <button
                   type="button"
@@ -778,10 +995,10 @@ export default function AttendancePage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={submitAttendanceMutation.isPending}
                   className="btn-primary-lg flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed min-w-[200px] justify-center"
                 >
-                  {isSubmitting ? (
+                  {submitAttendanceMutation.isPending ? (
                     <>
                       <FontAwesomeIcon
                         icon={faSpinner}
@@ -850,7 +1067,7 @@ export default function AttendancePage() {
                   />
                   <input
                     type="text"
-                    placeholder="Search by project name..."
+                    placeholder="Search by employee or project name..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full pl-10 pr-4 py-2.5 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
@@ -866,23 +1083,34 @@ export default function AttendancePage() {
               </div>
             </div>
 
+            {/* Loading History */}
+            {historyLoading && (
+              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
+                <FontAwesomeIcon
+                  icon={faSpinner}
+                  className="text-primary-600 text-4xl mb-4 animate-spin"
+                />
+                <p className="text-neutral-600 font-medium">
+                  Loading attendance history...
+                </p>
+              </div>
+            )}
+
             {/* History List */}
-            {paginatedHistory.length > 0 ? (
+            {!historyLoading && paginatedDates.length > 0 ? (
               <div className="space-y-4">
-                {paginatedHistory.map((attendance) => {
-                  const project = projects.find(
-                    (p) => p.id === attendance.projectId
-                  );
-                  const presentCount = attendance.records.filter(
+                {paginatedDates.map((date) => {
+                  const records = groupedHistory[date];
+                  const presentCount = records.filter(
                     (r) => r.status === "present"
                   ).length;
-                  const absentCount = attendance.records.filter(
+                  const absentCount = records.filter(
                     (r) => r.status === "absent"
                   ).length;
 
                   return (
                     <div
-                      key={attendance.id}
+                      key={date}
                       className="bg-neutral-0 rounded-xl border border-neutral-200 hover:border-primary-500 transition-all overflow-hidden"
                     >
                       <div className="p-6">
@@ -891,14 +1119,15 @@ export default function AttendancePage() {
                           <div className="flex-1">
                             <div className="flex items-center gap-3 mb-2">
                               <div className="w-10 h-10 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-semibold text-sm">
-                                {project?.name.charAt(0)}
+                                {selectedProjectData?.project_name.charAt(0)}
                               </div>
                               <div>
                                 <h3 className="font-semibold text-neutral-900">
-                                  {project?.name}
+                                  {selectedProjectData?.project_name}
                                 </h3>
                                 <p className="text-neutral-500 text-sm">
-                                  {project?.client}
+                                  {selectedProjectData?.client?.full_name ||
+                                    "No client"}
                                 </p>
                               </div>
                             </div>
@@ -910,19 +1139,13 @@ export default function AttendancePage() {
                                 className="text-xs"
                               />
                               <span>
-                                {new Date(attendance.date).toLocaleDateString(
-                                  "en-US",
-                                  {
-                                    month: "short",
-                                    day: "numeric",
-                                    year: "numeric",
-                                  }
-                                )}
+                                {new Date(date).toLocaleDateString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                })}
                               </span>
                             </div>
-                            <p className="text-neutral-500 text-xs">
-                              Submitted by {attendance.submittedBy}
-                            </p>
                           </div>
                         </div>
 
@@ -933,7 +1156,7 @@ export default function AttendancePage() {
                               Total
                             </p>
                             <p className="text-lg font-bold text-neutral-900">
-                              {attendance.records.length}
+                              {records.length}
                             </p>
                           </div>
                           <div className="bg-green-50 rounded-lg p-3 border border-green-200">
@@ -953,9 +1176,7 @@ export default function AttendancePage() {
                           <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
                             <p className="text-blue-700 text-xs mb-1">Others</p>
                             <p className="text-lg font-bold text-blue-700">
-                              {attendance.records.length -
-                                presentCount -
-                                absentCount}
+                              {records.length - presentCount - absentCount}
                             </p>
                           </div>
                         </div>
@@ -966,38 +1187,39 @@ export default function AttendancePage() {
                             Team Members
                           </h4>
                           <div className="space-y-2">
-                            {attendance.records.map((record) => {
-                              const member = allTeamMembers.find(
-                                (m) => m.id === record.memberId
+                            {records.map((record) => {
+                              const employee = employees.find(
+                                (e) => e.id === record.employee
                               );
-                              if (!member) return null;
 
                               return (
                                 <div
-                                  key={record.memberId}
+                                  key={record.id}
                                   className="flex items-center justify-between p-3 bg-neutral-50 rounded-lg border border-neutral-200"
                                 >
                                   <div className="flex items-center gap-3">
-                                    <div
-                                      className={`w-8 h-8 rounded-full ${member.color} text-neutral-0 flex items-center justify-center font-semibold text-xs`}
-                                    >
-                                      {member.initials}
+                                    <div className="w-8 h-8 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-semibold text-xs">
+                                      {employee?.initials ||
+                                        record.employee_name
+                                          .split(" ")
+                                          .map((n) => n[0])
+                                          .join("")}
                                     </div>
                                     <div>
                                       <p className="font-medium text-neutral-900 text-sm">
-                                        {member.name}
+                                        {record.employee_name}
                                       </p>
                                       <p className="text-neutral-500 text-xs">
-                                        {member.role}
+                                        {record.employee_role}
                                       </p>
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-3">
-                                    {record.checkInTime &&
-                                      record.checkOutTime && (
+                                    {record.check_in_time &&
+                                      record.check_out_time && (
                                         <span className="text-neutral-600 text-xs">
-                                          {record.checkInTime} -{" "}
-                                          {record.checkOutTime}
+                                          {record.check_in_time} -{" "}
+                                          {record.check_out_time}
                                         </span>
                                       )}
                                     <span
@@ -1027,8 +1249,8 @@ export default function AttendancePage() {
                   <div className="flex items-center justify-between bg-neutral-0 rounded-xl border border-neutral-200 px-6 py-4">
                     <p className="text-neutral-600 text-sm">
                       Showing {(currentPage - 1) * 5 + 1}-
-                      {Math.min(currentPage * 5, filteredHistory.length)} of{" "}
-                      {filteredHistory.length} records
+                      {Math.min(currentPage * 5, filteredDates.length)} of{" "}
+                      {filteredDates.length} records
                     </p>
                     <div className="flex items-center gap-2">
                       <button
@@ -1075,18 +1297,22 @@ export default function AttendancePage() {
                 )}
               </div>
             ) : (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
-                <FontAwesomeIcon
-                  icon={faClipboardCheck}
-                  className="text-5xl text-neutral-300 mb-4"
-                />
-                <p className="text-neutral-600 font-medium">
-                  No attendance records found
-                </p>
-                <p className="text-neutral-500 text-sm mt-2">
-                  Start marking attendance to see records here
-                </p>
-              </div>
+              !historyLoading && (
+                <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
+                  <FontAwesomeIcon
+                    icon={faClipboardCheck}
+                    className="text-5xl text-neutral-300 mb-4"
+                  />
+                  <p className="text-neutral-600 font-medium">
+                    No attendance records found
+                  </p>
+                  <p className="text-neutral-500 text-sm mt-2">
+                    {selectedProject
+                      ? "Start marking attendance to see records here"
+                      : "Select a project to view attendance history"}
+                  </p>
+                </div>
+              )
             )}
           </div>
         )}
