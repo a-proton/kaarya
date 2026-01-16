@@ -1,5 +1,4 @@
 "use client";
-
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faUser,
@@ -18,7 +17,7 @@ import {
   faMapMarkerAlt,
   faExclamationTriangle,
   faTimes,
-  faCheck,
+  faBolt,
   faImage,
   faUpload,
   faCertificate,
@@ -41,14 +40,12 @@ import {
 // ==================================================================================
 // TYPE DEFINITIONS
 // ============================================================================================
-
 interface User {
   id: number;
   email: string;
   phone: string;
   user_type: string;
 }
-
 interface Profile {
   id: number;
   user: User;
@@ -73,7 +70,6 @@ interface Profile {
   latitude: number;
   longitude: number;
 }
-
 interface PortfolioItem {
   id: number;
   title: string;
@@ -83,7 +79,6 @@ interface PortfolioItem {
   display_order: number;
   created_at: string;
 }
-
 interface ExperienceItem {
   id: number;
   title: string;
@@ -93,7 +88,6 @@ interface ExperienceItem {
   display_order: number;
   formatted_date: string;
 }
-
 interface License {
   id: number;
   icon: string;
@@ -104,7 +98,6 @@ interface License {
   formatted_issue_date: string;
   status: string;
 }
-
 interface Specialization {
   id: number;
   icon: string;
@@ -114,7 +107,6 @@ interface Specialization {
   display_order: number;
   is_active: boolean;
 }
-
 interface VerificationDocument {
   id: number;
   document_type: string;
@@ -127,7 +119,6 @@ interface VerificationDocument {
   verified_at: string;
   rejection_reason: string;
 }
-
 interface NotificationPreferences {
   id: number;
   email_notifications: boolean;
@@ -138,7 +129,6 @@ interface NotificationPreferences {
   appointment_reminders: boolean;
   system_announcements: boolean;
 }
-
 interface UserPreferences {
   id: number;
   language: string;
@@ -146,7 +136,6 @@ interface UserPreferences {
   date_format: string;
   theme: string;
 }
-
 interface AccountInfo {
   account_created: string;
   account_status: string;
@@ -154,7 +143,6 @@ interface AccountInfo {
   email_verified: boolean;
   phone_verified: boolean;
 }
-
 interface AllSettingsData {
   profile: Profile;
   portfolio: PortfolioItem[];
@@ -170,7 +158,6 @@ interface AllSettingsData {
 // ==================================================================================
 // MAIN COMPONENT
 // ==================================================================================
-
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const profileImageRef = useRef<HTMLInputElement>(null);
@@ -182,6 +169,9 @@ export default function SettingsPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showPortfolioModal, setShowPortfolioModal] = useState(false);
+  const [showExperienceModal, setShowExperienceModal] = useState(false);
+  const [showLicenseModal, setShowLicenseModal] = useState(false);
+  const [showSpecializationModal, setShowSpecializationModal] = useState(false);
   const [showPasswordFields, setShowPasswordFields] = useState({
     current: false,
     new: false,
@@ -194,13 +184,15 @@ export default function SettingsPage() {
   const [isUploadingPortfolioImage, setIsUploadingPortfolioImage] =
     useState(false);
   const [isUploadingDocuments, setIsUploadingDocuments] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{
-    [key: string]: number;
-  }>({});
 
   // Editing states
   const [editingPortfolio, setEditingPortfolio] =
     useState<PortfolioItem | null>(null);
+  const [editingExperience, setEditingExperience] =
+    useState<ExperienceItem | null>(null);
+  const [editingLicense, setEditingLicense] = useState<License | null>(null);
+  const [editingSpecialization, setEditingSpecialization] =
+    useState<Specialization | null>(null);
 
   // Preview states
   const [profileImagePreview, setProfileImagePreview] = useState<string | null>(
@@ -226,14 +218,12 @@ export default function SettingsPage() {
     bio: "",
     profile_image: "",
   });
-
   const [publicProfileForm, setPublicProfileForm] = useState({
     business_name: "",
     slug: "",
     about_paragraphs: [""],
     hero_image: "",
   });
-
   const [businessForm, setBusinessForm] = useState({
     business_name: "",
     license_number: "",
@@ -242,14 +232,31 @@ export default function SettingsPage() {
     hourly_rate_min: 0,
     hourly_rate_max: 0,
   });
-
   const [portfolioForm, setPortfolioForm] = useState({
     title: "",
     category: "",
     image_url: "",
     description: "",
   });
-
+  const [experienceForm, setExperienceForm] = useState({
+    title: "",
+    client_name: "",
+    completion_date: "",
+    description: "",
+  });
+  const [licenseForm, setLicenseForm] = useState({
+    title: "",
+    issuer: "",
+    license_number: "",
+    issue_date: "",
+    icon: "faCertificate",
+  });
+  const [specializationForm, setSpecializationForm] = useState({
+    icon: "faBolt",
+    title: "",
+    description: "",
+    price: "",
+  });
   const [documentForm, setDocumentForm] = useState({
     document_type: "license",
     document_urls: [] as string[],
@@ -257,13 +264,11 @@ export default function SettingsPage() {
     issue_date: "",
     expiry_date: "",
   });
-
   const [passwordForm, setPasswordForm] = useState({
     current_password: "",
     new_password: "",
     confirm_password: "",
   });
-
   const [notificationPrefs, setNotificationPrefs] =
     useState<NotificationPreferences | null>(null);
   const [userPrefs, setUserPrefs] = useState<UserPreferences | null>(null);
@@ -271,7 +276,6 @@ export default function SettingsPage() {
   // ==================================================================================
   // FETCH ALL SETTINGS DATA
   // ==================================================================================
-
   const {
     data: settingsData,
     isLoading: settingsLoading,
@@ -281,8 +285,6 @@ export default function SettingsPage() {
     queryKey: ["all-settings"],
     queryFn: async () => {
       const response = await api.get<AllSettingsData>("/api/v1/settings/all/");
-
-      // Initialize forms with fetched data
       if (response.profile) {
         setProfileForm({
           full_name: response.profile.full_name || "",
@@ -295,16 +297,14 @@ export default function SettingsPage() {
           bio: response.profile.bio || "",
           profile_image: response.profile.profile_image || "",
         });
-
         setPublicProfileForm({
           business_name: response.profile.business_name || "",
           slug: response.profile.slug || "",
           about_paragraphs: response.profile.bio
-            ? response.profile.bio.split("\n\n")
+            ? response.profile.bio.split("\n")
             : [""],
           hero_image: response.profile.hero_image || "",
         });
-
         setBusinessForm({
           business_name: response.profile.business_name || "",
           license_number: response.profile.license_number || "",
@@ -314,15 +314,12 @@ export default function SettingsPage() {
           hourly_rate_max: response.profile.hourly_rate_max || 0,
         });
       }
-
       if (response.notification_preferences) {
         setNotificationPrefs(response.notification_preferences);
       }
-
       if (response.user_preferences) {
         setUserPrefs(response.user_preferences);
       }
-
       return response;
     },
   });
@@ -330,7 +327,6 @@ export default function SettingsPage() {
   // ==================================================================================
   // MUTATIONS - PROFILE
   // ==================================================================================
-
   const updateBasicProfileMutation = useMutation({
     mutationFn: async (data: typeof profileForm) => {
       return api.put("/api/v1/settings/profile/basic/", data);
@@ -343,7 +339,6 @@ export default function SettingsPage() {
       alert(`Failed to update profile: ${error.data?.detail || error.message}`);
     },
   });
-
   const updatePublicProfileMutation = useMutation({
     mutationFn: async (data: typeof publicProfileForm) => {
       return api.put("/api/v1/settings/profile/public/", data);
@@ -360,7 +355,6 @@ export default function SettingsPage() {
       );
     },
   });
-
   const updateBusinessInfoMutation = useMutation({
     mutationFn: async (data: typeof businessForm) => {
       return api.put("/api/v1/settings/business/", data);
@@ -379,7 +373,6 @@ export default function SettingsPage() {
   // ==================================================================================
   // MUTATIONS - PORTFOLIO
   // ==================================================================================
-
   const createPortfolioMutation = useMutation({
     mutationFn: async (data: typeof portfolioForm) => {
       return api.post<PortfolioItem>("/api/v1/settings/portfolio/", data);
@@ -396,7 +389,6 @@ export default function SettingsPage() {
       );
     },
   });
-
   const updatePortfolioMutation = useMutation({
     mutationFn: async ({
       id,
@@ -422,7 +414,6 @@ export default function SettingsPage() {
       );
     },
   });
-
   const deletePortfolioMutation = useMutation({
     mutationFn: async (id: number) => {
       return api.delete(`/api/v1/settings/portfolio/${id}/`);
@@ -441,9 +432,184 @@ export default function SettingsPage() {
   });
 
   // ==================================================================================
+  // MUTATIONS - EXPERIENCE
+  // ==================================================================================
+  const createExperienceMutation = useMutation({
+    mutationFn: async (data: typeof experienceForm) => {
+      return api.post<ExperienceItem>("/api/v1/settings/experience/", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowExperienceModal(false);
+      resetExperienceForm();
+      alert("Experience entry added successfully!");
+    },
+    onError: (error: any) => {
+      alert(`Failed to add experience: ${error.data?.detail || error.message}`);
+    },
+  });
+  const updateExperienceMutation = useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: typeof experienceForm;
+    }) => {
+      return api.put<ExperienceItem>(
+        `/api/v1/settings/experience/${id}/`,
+        data
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowExperienceModal(false);
+      setEditingExperience(null);
+      resetExperienceForm();
+      alert("Experience entry updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to update experience: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+  const deleteExperienceMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return api.delete(`/api/v1/settings/experience/${id}/`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("Experience entry deleted successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to delete experience: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+
+  // ==================================================================================
+  // MUTATIONS - LICENSES
+  // ==================================================================================
+  const createLicenseMutation = useMutation({
+    mutationFn: async (data: typeof licenseForm) => {
+      return api.post<License>("/api/v1/settings/licenses/", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowLicenseModal(false);
+      resetLicenseForm();
+      alert("License added successfully!");
+    },
+    onError: (error: any) => {
+      alert(`Failed to add license: ${error.data?.detail || error.message}`);
+    },
+  });
+  const updateLicenseMutation = useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: typeof licenseForm;
+    }) => {
+      return api.put<License>(`/api/v1/settings/licenses/${id}/`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowLicenseModal(false);
+      setEditingLicense(null);
+      resetLicenseForm();
+      alert("License updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(`Failed to update license: ${error.data?.detail || error.message}`);
+    },
+  });
+  const deleteLicenseMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return api.delete(`/api/v1/settings/licenses/${id}/`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("License deleted successfully!");
+    },
+    onError: (error: any) => {
+      alert(`Failed to delete license: ${error.data?.detail || error.message}`);
+    },
+  });
+
+  // ==================================================================================
+  // MUTATIONS - SPECIALIZATIONS
+  // ==================================================================================
+  const createSpecializationMutation = useMutation({
+    mutationFn: async (data: typeof specializationForm) => {
+      return api.post<Specialization>(
+        "/api/v1/settings/specializations/",
+        data
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowSpecializationModal(false);
+      resetSpecializationForm();
+      alert("Specialization added successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to add specialization: ${error.data?.detail || error.message}`
+      );
+    },
+  });
+  const updateSpecializationMutation = useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: typeof specializationForm;
+    }) => {
+      return api.put<Specialization>(
+        `/api/v1/settings/specializations/${id}/`,
+        data
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      setShowSpecializationModal(false);
+      setEditingSpecialization(null);
+      resetSpecializationForm();
+      alert("Specialization updated successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to update specialization: ${
+          error.data?.detail || error.message
+        }`
+      );
+    },
+  });
+  const deleteSpecializationMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return api.delete(`/api/v1/settings/specializations/${id}/`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["all-settings"] });
+      alert("Specialization deleted successfully!");
+    },
+    onError: (error: any) => {
+      alert(
+        `Failed to delete specialization: ${
+          error.data?.detail || error.message
+        }`
+      );
+    },
+  });
+
+  // ==================================================================================
   // MUTATIONS - VERIFICATION DOCUMENTS
   // ==================================================================================
-
   const uploadDocumentMutation = useMutation({
     mutationFn: async (data: typeof documentForm) => {
       return api.post<VerificationDocument>(
@@ -468,7 +634,6 @@ export default function SettingsPage() {
   // ==================================================================================
   // MUTATIONS - NOTIFICATION & USER PREFERENCES
   // ==================================================================================
-
   const updateNotificationPrefsMutation = useMutation({
     mutationFn: async (data: NotificationPreferences) => {
       return api.put<NotificationPreferences>(
@@ -486,7 +651,6 @@ export default function SettingsPage() {
       );
     },
   });
-
   const updateUserPrefsMutation = useMutation({
     mutationFn: async (data: UserPreferences) => {
       return api.put<UserPreferences>("/api/v1/settings/preferences/", data);
@@ -505,7 +669,6 @@ export default function SettingsPage() {
   // ==================================================================================
   // MUTATIONS - PASSWORD CHANGE
   // ==================================================================================
-
   const changePasswordMutation = useMutation({
     mutationFn: async (data: typeof passwordForm) => {
       return api.post("/api/v1/auth/password/change/", {
@@ -531,33 +694,24 @@ export default function SettingsPage() {
   // ==================================================================================
   // IMAGE UPLOAD HANDLERS
   // ==================================================================================
-
   const handleProfileImageSelect = async (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // Validate
     if (!file.type.startsWith("image/")) {
       alert("Please select an image file");
       return;
     }
-
     if (file.size > 5 * 1024 * 1024) {
       alert("Image must be less than 5MB");
       return;
     }
-
-    // Show preview
     const preview = URL.createObjectURL(file);
     setProfileImagePreview(preview);
-
-    // Upload to Supabase
     setIsUploadingProfileImage(true);
     try {
       const result = await uploadImage(file, { folder: "profiles" });
-
       if (result.success && result.publicUrl) {
         setProfileForm({ ...profileForm, profile_image: result.publicUrl });
         alert("Profile image uploaded! Don't forget to save changes.");
@@ -581,24 +735,19 @@ export default function SettingsPage() {
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (!file.type.startsWith("image/")) {
       alert("Please select an image file");
       return;
     }
-
     if (file.size > 5 * 1024 * 1024) {
       alert("Image must be less than 5MB");
       return;
     }
-
     const preview = URL.createObjectURL(file);
     setHeroImagePreview(preview);
-
     setIsUploadingHeroImage(true);
     try {
       const result = await uploadImage(file, { folder: "hero_images" });
-
       if (result.success && result.publicUrl) {
         setPublicProfileForm({
           ...publicProfileForm,
@@ -625,24 +774,19 @@ export default function SettingsPage() {
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (!file.type.startsWith("image/")) {
       alert("Please select an image file");
       return;
     }
-
     if (file.size > 5 * 1024 * 1024) {
       alert("Image must be less than 5MB");
       return;
     }
-
     const preview = URL.createObjectURL(file);
     setPortfolioImagePreview(preview);
-
     setIsUploadingPortfolioImage(true);
     try {
       const result = await uploadImage(file, { folder: "portfolio" });
-
       if (result.success && result.publicUrl) {
         setPortfolioForm({ ...portfolioForm, image_url: result.publicUrl });
       } else {
@@ -665,41 +809,29 @@ export default function SettingsPage() {
   ) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-
     const fileArray = Array.from(files);
-
-    // Validate all files
     for (const file of fileArray) {
       if (file.size > 10 * 1024 * 1024) {
         alert(`${file.name} is too large. Maximum size is 10MB`);
         return;
       }
     }
-
-    // Show previews
     const previews = fileArray.map((file) => ({
       file,
       preview: URL.createObjectURL(file),
       name: file.name,
     }));
     setDocumentPreviews(previews);
-
-    // Upload all to Supabase
     setIsUploadingDocuments(true);
     try {
       const results = await uploadMultipleFiles(fileArray, {
         folder: "verification_documents",
       });
-
       const successfulUploads = results
         .filter((r) => r.success && r.publicUrl)
         .map((r) => r.publicUrl!);
-
       if (successfulUploads.length > 0) {
-        setDocumentForm({
-          ...documentForm,
-          document_urls: successfulUploads,
-        });
+        setDocumentForm({ ...documentForm, document_urls: successfulUploads });
         alert(`${successfulUploads.length} document(s) uploaded successfully!`);
       } else {
         alert("No documents were uploaded successfully");
@@ -719,7 +851,6 @@ export default function SettingsPage() {
     URL.revokeObjectURL(newPreviews[index].preview);
     newPreviews.splice(index, 1);
     setDocumentPreviews(newPreviews);
-
     const newUrls = [...documentForm.document_urls];
     newUrls.splice(index, 1);
     setDocumentForm({ ...documentForm, document_urls: newUrls });
@@ -728,7 +859,6 @@ export default function SettingsPage() {
   // ==================================================================================
   // HELPER FUNCTIONS
   // ==================================================================================
-
   const resetPortfolioForm = () => {
     setPortfolioForm({
       title: "",
@@ -738,7 +868,31 @@ export default function SettingsPage() {
     });
     setPortfolioImagePreview(null);
   };
-
+  const resetExperienceForm = () => {
+    setExperienceForm({
+      title: "",
+      client_name: "",
+      completion_date: "",
+      description: "",
+    });
+  };
+  const resetLicenseForm = () => {
+    setLicenseForm({
+      title: "",
+      issuer: "",
+      license_number: "",
+      issue_date: "",
+      icon: "faCertificate",
+    });
+  };
+  const resetSpecializationForm = () => {
+    setSpecializationForm({
+      icon: "faBolt",
+      title: "",
+      description: "",
+      price: "",
+    });
+  };
   const resetDocumentForm = () => {
     setDocumentForm({
       document_type: "license",
@@ -752,26 +906,20 @@ export default function SettingsPage() {
   // ==================================================================================
   // HANDLERS
   // ==================================================================================
-
-  const handleSaveProfile = () => {
+  const handleSaveProfile = () =>
     updateBasicProfileMutation.mutate(profileForm);
-  };
-
-  const handleSavePublicProfile = () => {
+  const handleSavePublicProfile = () =>
     updatePublicProfileMutation.mutate(publicProfileForm);
-  };
-
-  const handleSaveBusinessInfo = () => {
+  const handleSaveBusinessInfo = () =>
     updateBusinessInfoMutation.mutate(businessForm);
-  };
 
   const handleAddPortfolio = () => {
-    if (!portfolioForm.title || !portfolioForm.category) {
-      alert("Please fill in required fields");
-      return;
-    }
-    if (!portfolioForm.image_url) {
-      alert("Please upload an image");
+    if (
+      !portfolioForm.title ||
+      !portfolioForm.category ||
+      !portfolioForm.image_url
+    ) {
+      alert("Please fill in required fields and upload an image");
       return;
     }
     if (editingPortfolio) {
@@ -783,7 +931,6 @@ export default function SettingsPage() {
       createPortfolioMutation.mutate(portfolioForm);
     }
   };
-
   const handleEditPortfolio = (item: PortfolioItem) => {
     setEditingPortfolio(item);
     setPortfolioForm({
@@ -795,10 +942,104 @@ export default function SettingsPage() {
     setPortfolioImagePreview(item.image_url);
     setShowPortfolioModal(true);
   };
-
   const handleDeletePortfolio = (id: number) => {
     if (confirm("Are you sure you want to delete this portfolio item?")) {
       deletePortfolioMutation.mutate(id);
+    }
+  };
+
+  const handleAddExperience = () => {
+    if (
+      !experienceForm.title ||
+      !experienceForm.client_name ||
+      !experienceForm.completion_date
+    ) {
+      alert("Please fill in required fields");
+      return;
+    }
+    if (editingExperience) {
+      updateExperienceMutation.mutate({
+        id: editingExperience.id,
+        data: experienceForm,
+      });
+    } else {
+      createExperienceMutation.mutate(experienceForm);
+    }
+  };
+  const handleEditExperience = (item: ExperienceItem) => {
+    setEditingExperience(item);
+    setExperienceForm({
+      title: item.title,
+      client_name: item.client_name,
+      completion_date: item.completion_date,
+      description: item.description,
+    });
+    setShowExperienceModal(true);
+  };
+  const handleDeleteExperience = (id: number) => {
+    if (confirm("Are you sure you want to delete this experience entry?")) {
+      deleteExperienceMutation.mutate(id);
+    }
+  };
+
+  const handleAddLicense = () => {
+    if (!licenseForm.title || !licenseForm.issuer) {
+      alert("Please fill in required fields");
+      return;
+    }
+    if (editingLicense) {
+      updateLicenseMutation.mutate({
+        id: editingLicense.id,
+        data: licenseForm,
+      });
+    } else {
+      createLicenseMutation.mutate(licenseForm);
+    }
+  };
+  const handleEditLicense = (item: License) => {
+    setEditingLicense(item);
+    setLicenseForm({
+      title: item.title,
+      issuer: item.issuer,
+      license_number: item.license_number,
+      issue_date: item.issue_date,
+      icon: item.icon,
+    });
+    setShowLicenseModal(true);
+  };
+  const handleDeleteLicense = (id: number) => {
+    if (confirm("Are you sure you want to delete this license?")) {
+      deleteLicenseMutation.mutate(id);
+    }
+  };
+
+  const handleAddSpecialization = () => {
+    if (!specializationForm.title || !specializationForm.description) {
+      alert("Please fill in required fields");
+      return;
+    }
+    if (editingSpecialization) {
+      updateSpecializationMutation.mutate({
+        id: editingSpecialization.id,
+        data: specializationForm,
+      });
+    } else {
+      createSpecializationMutation.mutate(specializationForm);
+    }
+  };
+  const handleEditSpecialization = (item: Specialization) => {
+    setEditingSpecialization(item);
+    setSpecializationForm({
+      icon: item.icon,
+      title: item.title,
+      description: item.description,
+      price: item.price,
+    });
+    setShowSpecializationModal(true);
+  };
+  const handleDeleteSpecialization = (id: number) => {
+    if (confirm("Are you sure you want to delete this specialization?")) {
+      deleteSpecializationMutation.mutate(id);
     }
   };
 
@@ -811,15 +1052,11 @@ export default function SettingsPage() {
   };
 
   const handleSaveNotifications = () => {
-    if (notificationPrefs) {
+    if (notificationPrefs)
       updateNotificationPrefsMutation.mutate(notificationPrefs);
-    }
   };
-
   const handleSavePreferences = () => {
-    if (userPrefs) {
-      updateUserPrefsMutation.mutate(userPrefs);
-    }
+    if (userPrefs) updateUserPrefsMutation.mutate(userPrefs);
   };
 
   const handleChangePassword = () => {
@@ -841,7 +1078,6 @@ export default function SettingsPage() {
   const handleDeleteAccount = async () => {
     try {
       const response = await api.delete("/api/v1/settings/account/delete/");
-
       if (response.status === 204) {
         localStorage.removeItem("access_token");
         localStorage.removeItem("refresh_token");
@@ -850,7 +1086,6 @@ export default function SettingsPage() {
     } catch (error: any) {
       alert(`Failed to delete account: ${error.data?.detail || error.message}`);
     }
-
     setShowDeleteModal(false);
   };
 
@@ -860,7 +1095,6 @@ export default function SettingsPage() {
       about_paragraphs: [...publicProfileForm.about_paragraphs, ""],
     });
   };
-
   const handleRemoveAboutParagraph = (index: number) => {
     setPublicProfileForm({
       ...publicProfileForm,
@@ -869,7 +1103,6 @@ export default function SettingsPage() {
       ),
     });
   };
-
   const handleUpdateAboutParagraph = (index: number, value: string) => {
     const newParagraphs = [...publicProfileForm.about_paragraphs];
     newParagraphs[index] = value;
@@ -882,11 +1115,7 @@ export default function SettingsPage() {
   // ==================================================================================
   // LOADING & ERROR STATES
   // ==================================================================================
-
-  const isLoading = settingsLoading;
-  const isError = settingsError;
-
-  if (isLoading) {
+  if (settingsLoading) {
     return (
       <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
         <div className="text-center">
@@ -900,8 +1129,7 @@ export default function SettingsPage() {
       </div>
     );
   }
-
-  if (isError) {
+  if (settingsError) {
     return (
       <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
         <div className="text-center max-w-md">
@@ -936,6 +1164,9 @@ export default function SettingsPage() {
     { id: "business", label: "Business Info", icon: faBriefcase },
     { id: "verification", label: "Verification", icon: faShield },
     { id: "portfolio", label: "Portfolio", icon: faImage },
+    { id: "experience", label: "Experience", icon: faBriefcase },
+    { id: "licenses", label: "Licenses", icon: faCertificate },
+    { id: "specializations", label: "Specializations", icon: faBolt },
     { id: "security", label: "Security", icon: faLock },
     { id: "notifications", label: "Notifications", icon: faBell },
     { id: "preferences", label: "Preferences", icon: faGlobe },
@@ -945,7 +1176,6 @@ export default function SettingsPage() {
   // ==================================================================================
   // RENDER
   // ==================================================================================
-
   return (
     <div className="min-h-screen bg-neutral-50">
       {/* Header */}
@@ -1011,7 +1241,6 @@ export default function SettingsPage() {
                 <h2 className="heading-3 text-neutral-900 mb-6">
                   Profile Information
                 </h2>
-
                 <div className="flex items-center gap-6 mb-8 pb-8 border-b border-neutral-200">
                   <div className="relative">
                     {profileImagePreview || profileForm.profile_image ? (
@@ -1071,7 +1300,6 @@ export default function SettingsPage() {
                     </button>
                   </div>
                 </div>
-
                 <div className="space-y-5">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                     <div>
@@ -1096,7 +1324,6 @@ export default function SettingsPage() {
                         />
                       </div>
                     </div>
-
                     <div>
                       <label className="block text-neutral-700 font-semibold mb-2 body-small">
                         Email Address <span className="text-red-500">*</span>
@@ -1119,7 +1346,6 @@ export default function SettingsPage() {
                         />
                       </div>
                     </div>
-
                     <div>
                       <label className="block text-neutral-700 font-semibold mb-2 body-small">
                         Phone Number
@@ -1142,7 +1368,6 @@ export default function SettingsPage() {
                         />
                       </div>
                     </div>
-
                     <div>
                       <label className="block text-neutral-700 font-semibold mb-2 body-small">
                         City
@@ -1160,7 +1385,6 @@ export default function SettingsPage() {
                       />
                     </div>
                   </div>
-
                   <div>
                     <label className="block text-neutral-700 font-semibold mb-2 body-small">
                       Address
@@ -1183,7 +1407,6 @@ export default function SettingsPage() {
                       />
                     </div>
                   </div>
-
                   <div>
                     <label className="block text-neutral-700 font-semibold mb-2 body-small">
                       Bio
@@ -1198,7 +1421,6 @@ export default function SettingsPage() {
                     />
                   </div>
                 </div>
-
                 <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-neutral-200">
                   <button className="btn-secondary">Cancel</button>
                   <button
@@ -1245,12 +1467,10 @@ export default function SettingsPage() {
                     Profile URL: karya.com/provider/{publicProfileForm.slug}
                   </div>
                 </div>
-
                 <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
                   <h2 className="heading-3 text-neutral-900 mb-6">
                     Hero Image
                   </h2>
-
                   <div className="mb-6">
                     {heroImagePreview || publicProfileForm.hero_image ? (
                       <div className="relative group">
@@ -1312,7 +1532,6 @@ export default function SettingsPage() {
                       className="hidden"
                     />
                   </div>
-
                   <div className="space-y-5">
                     <div>
                       <label className="block text-neutral-700 font-semibold mb-2 body-small">
@@ -1331,7 +1550,6 @@ export default function SettingsPage() {
                         className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                       />
                     </div>
-
                     <div>
                       <label className="block text-neutral-700 font-semibold mb-2 body-small">
                         Profile URL Slug <span className="text-red-500">*</span>
@@ -1358,7 +1576,6 @@ export default function SettingsPage() {
                     </div>
                   </div>
                 </div>
-
                 <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
                   <h2 className="heading-3 text-neutral-900 mb-6">
                     About Me *
@@ -1406,7 +1623,6 @@ export default function SettingsPage() {
                     </button>
                   </div>
                 </div>
-
                 <div className="flex justify-end gap-3">
                   <button className="btn-secondary">Cancel</button>
                   <button
@@ -1433,13 +1649,12 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {/* Business Info Tab - Keep existing code... */}
+            {/* Business Info Tab */}
             {activeTab === "business" && settingsData && (
               <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
                 <h2 className="heading-3 text-neutral-900 mb-6">
                   Business Information
                 </h2>
-
                 <div className="space-y-5">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                     <div>
@@ -1458,7 +1673,6 @@ export default function SettingsPage() {
                         className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                       />
                     </div>
-
                     <div>
                       <label className="block text-neutral-700 font-semibold mb-2 body-small">
                         License Number
@@ -1475,7 +1689,6 @@ export default function SettingsPage() {
                         className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                       />
                     </div>
-
                     <div>
                       <label className="block text-neutral-700 font-semibold mb-2 body-small">
                         Years of Experience
@@ -1492,7 +1705,6 @@ export default function SettingsPage() {
                         className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                       />
                     </div>
-
                     <div>
                       <label className="block text-neutral-700 font-semibold mb-2 body-small">
                         Service Radius (km)
@@ -1510,7 +1722,6 @@ export default function SettingsPage() {
                       />
                     </div>
                   </div>
-
                   <div>
                     <label className="block text-neutral-700 font-semibold mb-2 body-small">
                       Hourly Rate Range ($)
@@ -1543,7 +1754,6 @@ export default function SettingsPage() {
                     </div>
                   </div>
                 </div>
-
                 <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-neutral-200">
                   <button className="btn-secondary">Cancel</button>
                   <button
@@ -1583,7 +1793,6 @@ export default function SettingsPage() {
                     Add Item
                   </button>
                 </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {settingsData?.portfolio.map((item) => (
                     <div
@@ -1632,7 +1841,6 @@ export default function SettingsPage() {
                     </div>
                   ))}
                 </div>
-
                 {settingsData?.portfolio.length === 0 && (
                   <div className="text-center py-12">
                     <FontAwesomeIcon
@@ -1647,6 +1855,189 @@ export default function SettingsPage() {
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Experience Tab */}
+            {activeTab === "experience" && (
+              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="heading-3 text-neutral-900">Experience</h2>
+                  <button
+                    onClick={() => setShowExperienceModal(true)}
+                    className="btn-primary flex items-center gap-2"
+                  >
+                    <FontAwesomeIcon icon={faPlus} />
+                    Add Entry
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  {settingsData?.experience.map((item) => (
+                    <div
+                      key={item.id}
+                      className="p-4 border border-neutral-200 rounded-lg"
+                    >
+                      <div className="flex justify-between">
+                        <div>
+                          <h3 className="font-semibold text-neutral-900">
+                            {item.title}
+                          </h3>
+                          <p className="text-neutral-600 text-sm">
+                            Client: {item.client_name}
+                          </p>
+                          <p className="text-neutral-600 text-sm">
+                            Completed: {item.formatted_date}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleEditExperience(item)}
+                            className="px-3 py-1 border border-neutral-200 rounded text-sm"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteExperience(item.id)}
+                            className="px-3 py-1 bg-red-50 text-red-600 border border-red-200 rounded text-sm"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-neutral-700">
+                        {item.description}
+                      </p>
+                    </div>
+                  ))}
+                  {settingsData?.experience.length === 0 && (
+                    <p className="text-neutral-500 text-center py-8">
+                      No experience entries yet
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Licenses Tab */}
+            {activeTab === "licenses" && (
+              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="heading-3 text-neutral-900">
+                    Licenses & Certifications
+                  </h2>
+                  <button
+                    onClick={() => setShowLicenseModal(true)}
+                    className="btn-primary flex items-center gap-2"
+                  >
+                    <FontAwesomeIcon icon={faPlus} />
+                    Add License
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  {settingsData?.licenses.map((item) => (
+                    <div
+                      key={item.id}
+                      className="p-4 border border-neutral-200 rounded-lg"
+                    >
+                      <div className="flex justify-between">
+                        <div>
+                          <h3 className="font-semibold text-neutral-900">
+                            {item.title}
+                          </h3>
+                          <p className="text-neutral-600 text-sm">
+                            Issuer: {item.issuer}
+                          </p>
+                          <p className="text-neutral-600 text-sm">
+                            Number: {item.license_number}
+                          </p>
+                          <p className="text-neutral-600 text-sm">
+                            Issued: {item.formatted_issue_date}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleEditLicense(item)}
+                            className="px-3 py-1 border border-neutral-200 rounded text-sm"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteLicense(item.id)}
+                            className="px-3 py-1 bg-red-50 text-red-600 border border-red-200 rounded text-sm"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {settingsData?.licenses.length === 0 && (
+                    <p className="text-neutral-500 text-center py-8">
+                      No licenses added yet
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Specializations Tab */}
+            {activeTab === "specializations" && (
+              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="heading-3 text-neutral-900">
+                    Specializations
+                  </h2>
+                  <button
+                    onClick={() => setShowSpecializationModal(true)}
+                    className="btn-primary flex items-center gap-2"
+                  >
+                    <FontAwesomeIcon icon={faPlus} />
+                    Add Specialization
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  {settingsData?.specializations.map((item) => (
+                    <div
+                      key={item.id}
+                      className="p-4 border border-neutral-200 rounded-lg"
+                    >
+                      <div className="flex justify-between">
+                        <div>
+                          <h3 className="font-semibold text-neutral-900">
+                            {item.title}
+                          </h3>
+                          <p className="text-neutral-600 text-sm">
+                            {item.description}
+                          </p>
+                          {item.price && (
+                            <p className="text-neutral-700 mt-1">
+                              Price: {item.price}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleEditSpecialization(item)}
+                            className="px-3 py-1 border border-neutral-200 rounded text-sm"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteSpecialization(item.id)}
+                            className="px-3 py-1 bg-red-50 text-red-600 border border-red-200 rounded text-sm"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {settingsData?.specializations.length === 0 && (
+                    <p className="text-neutral-500 text-center py-8">
+                      No specializations added yet
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 
@@ -1666,7 +2057,6 @@ export default function SettingsPage() {
                       Upload Documents
                     </button>
                   </div>
-
                   <div className="space-y-4">
                     {settingsData.verification_documents.map((doc) => (
                       <div
@@ -1711,7 +2101,6 @@ export default function SettingsPage() {
                     )}
                   </div>
                 </div>
-
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
                   <h3 className="font-semibold text-neutral-900 mb-2 flex items-center gap-2">
                     <FontAwesomeIcon
@@ -1730,8 +2119,417 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {/* Security, Notifications, Preferences, Account tabs remain the same as original... */}
-            {/* I'll skip these for brevity but they would follow the same pattern */}
+            {/* Security Tab */}
+            {activeTab === "security" && (
+              <div className="space-y-6">
+                <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+                  <h2 className="heading-3 text-neutral-900 mb-6">
+                    Change Password
+                  </h2>
+                  <div className="space-y-5">
+                    <div>
+                      <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                        Current Password <span className="text-red-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <FontAwesomeIcon
+                          icon={faLock}
+                          className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
+                        />
+                        <input
+                          type={
+                            showPasswordFields.current ? "text" : "password"
+                          }
+                          value={passwordForm.current_password}
+                          onChange={(e) =>
+                            setPasswordForm({
+                              ...passwordForm,
+                              current_password: e.target.value,
+                            })
+                          }
+                          className="w-full pl-12 pr-12 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowPasswordFields({
+                              ...showPasswordFields,
+                              current: !showPasswordFields.current,
+                            })
+                          }
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                        >
+                          <FontAwesomeIcon
+                            icon={
+                              showPasswordFields.current ? faEyeSlash : faEye
+                            }
+                          />
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                        New Password <span className="text-red-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <FontAwesomeIcon
+                          icon={faLock}
+                          className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
+                        />
+                        <input
+                          type={showPasswordFields.new ? "text" : "password"}
+                          value={passwordForm.new_password}
+                          onChange={(e) =>
+                            setPasswordForm({
+                              ...passwordForm,
+                              new_password: e.target.value,
+                            })
+                          }
+                          className="w-full pl-12 pr-12 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowPasswordFields({
+                              ...showPasswordFields,
+                              new: !showPasswordFields.new,
+                            })
+                          }
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                        >
+                          <FontAwesomeIcon
+                            icon={showPasswordFields.new ? faEyeSlash : faEye}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                        Confirm New Password{" "}
+                        <span className="text-red-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <FontAwesomeIcon
+                          icon={faLock}
+                          className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
+                        />
+                        <input
+                          type={
+                            showPasswordFields.confirm ? "text" : "password"
+                          }
+                          value={passwordForm.confirm_password}
+                          onChange={(e) =>
+                            setPasswordForm({
+                              ...passwordForm,
+                              confirm_password: e.target.value,
+                            })
+                          }
+                          className="w-full pl-12 pr-12 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowPasswordFields({
+                              ...showPasswordFields,
+                              confirm: !showPasswordFields.confirm,
+                            })
+                          }
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                        >
+                          <FontAwesomeIcon
+                            icon={
+                              showPasswordFields.confirm ? faEyeSlash : faEye
+                            }
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-neutral-200">
+                    <button className="btn-secondary">Cancel</button>
+                    <button
+                      onClick={handleChangePassword}
+                      disabled={changePasswordMutation.isPending}
+                      className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {changePasswordMutation.isPending ? (
+                        <>
+                          <FontAwesomeIcon
+                            icon={faSpinner}
+                            className="animate-spin"
+                          />
+                          Updating...
+                        </>
+                      ) : (
+                        <>
+                          <FontAwesomeIcon icon={faLock} />
+                          Update Password
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Notifications Tab */}
+            {activeTab === "notifications" && notificationPrefs && (
+              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+                <h2 className="heading-3 text-neutral-900 mb-6">
+                  Notification Preferences
+                </h2>
+                <div className="space-y-6">
+                  {[
+                    {
+                      key: "email_notifications",
+                      label: "Email Notifications",
+                      desc: "Receive notifications via email",
+                    },
+                    {
+                      key: "sms_notifications",
+                      label: "SMS Notifications",
+                      desc: "Receive notifications via text message",
+                    },
+                    {
+                      key: "project_updates",
+                      label: "Project Updates",
+                      desc: "Get notified about project status changes",
+                    },
+                    {
+                      key: "payment_alerts",
+                      label: "Payment Alerts",
+                      desc: "Receive alerts for new payments and invoices",
+                    },
+                    {
+                      key: "message_notifications",
+                      label: "Message Notifications",
+                      desc: "Get notified about new messages",
+                    },
+                    {
+                      key: "appointment_reminders",
+                      label: "Appointment Reminders",
+                      desc: "Get reminders for scheduled appointments",
+                    },
+                    {
+                      key: "system_announcements",
+                      label: "System Announcements",
+                      desc: "Receive important platform updates",
+                    },
+                  ].map(({ key, label, desc }) => (
+                    <div
+                      key={key}
+                      className="flex items-center justify-between pb-6 border-b border-neutral-200"
+                    >
+                      <div>
+                        <h3 className="font-semibold text-neutral-900 mb-1">
+                          {label}
+                        </h3>
+                        <p className="text-neutral-600 text-sm">{desc}</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={
+                            notificationPrefs[
+                              key as keyof NotificationPreferences
+                            ]
+                          }
+                          onChange={(e) =>
+                            setNotificationPrefs({
+                              ...notificationPrefs,
+                              [key]: e.target.checked,
+                            } as NotificationPreferences)
+                          }
+                          className="sr-only peer"
+                        />
+                        <div className="w-14 h-7 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-neutral-0 after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-neutral-0 after:border-neutral-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary-600"></div>
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-neutral-200">
+                  <button className="btn-secondary">Cancel</button>
+                  <button
+                    onClick={handleSaveNotifications}
+                    disabled={updateNotificationPrefsMutation.isPending}
+                    className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {updateNotificationPrefsMutation.isPending ? (
+                      <>
+                        <FontAwesomeIcon
+                          icon={faSpinner}
+                          className="animate-spin"
+                        />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <FontAwesomeIcon icon={faSave} />
+                        Save Preferences
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Preferences Tab */}
+            {activeTab === "preferences" && userPrefs && (
+              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+                <h2 className="heading-3 text-neutral-900 mb-6">
+                  General Preferences
+                </h2>
+                <div className="space-y-5">
+                  <div>
+                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                      Language
+                    </label>
+                    <select
+                      value={userPrefs.language}
+                      onChange={(e) =>
+                        setUserPrefs({ ...userPrefs, language: e.target.value })
+                      }
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                    >
+                      <option value="en">English</option>
+                      <option value="es">Spanish</option>
+                      <option value="fr">French</option>
+                      <option value="de">German</option>
+                      <option value="zh">Chinese</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                      Timezone
+                    </label>
+                    <select
+                      value={userPrefs.timezone}
+                      onChange={(e) =>
+                        setUserPrefs({ ...userPrefs, timezone: e.target.value })
+                      }
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                    >
+                      <option value="Asia/Kathmandu">Kathmandu (NPT)</option>
+                      <option value="America/Los_Angeles">
+                        Pacific Time (PT)
+                      </option>
+                      <option value="America/Denver">Mountain Time (MT)</option>
+                      <option value="America/Chicago">Central Time (CT)</option>
+                      <option value="America/New_York">
+                        Eastern Time (ET)
+                      </option>
+                      <option value="Europe/London">London (GMT)</option>
+                      <option value="Asia/Tokyo">Tokyo (JST)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                      Date Format
+                    </label>
+                    <select
+                      value={userPrefs.date_format}
+                      onChange={(e) =>
+                        setUserPrefs({
+                          ...userPrefs,
+                          date_format: e.target.value,
+                        })
+                      }
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                    >
+                      <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                      <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                      <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-neutral-200">
+                  <button className="btn-secondary">Cancel</button>
+                  <button
+                    onClick={handleSavePreferences}
+                    disabled={updateUserPrefsMutation.isPending}
+                    className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {updateUserPrefsMutation.isPending ? (
+                      <>
+                        <FontAwesomeIcon
+                          icon={faSpinner}
+                          className="animate-spin"
+                        />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <FontAwesomeIcon icon={faSave} />
+                        Save Preferences
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Account Tab */}
+            {activeTab === "account" && settingsData && (
+              <div className="space-y-6">
+                <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
+                  <h2 className="heading-3 text-neutral-900 mb-6">
+                    Account Information
+                  </h2>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between p-4 bg-neutral-50 rounded-lg">
+                      <div>
+                        <p className="text-neutral-600 text-sm mb-1">
+                          Account Created
+                        </p>
+                        <p className="font-semibold text-neutral-900">
+                          {new Date(
+                            settingsData.account_info.account_created
+                          ).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between p-4 bg-neutral-50 rounded-lg">
+                      <div>
+                        <p className="text-neutral-600 text-sm mb-1">
+                          Account Status
+                        </p>
+                        <span className="px-3 py-1 bg-green-100 text-green-700 rounded-lg text-sm font-semibold border border-green-200">
+                          {settingsData.account_info.account_status}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between p-4 bg-neutral-50 rounded-lg">
+                      <div>
+                        <p className="text-neutral-600 text-sm mb-1">
+                          Last Login
+                        </p>
+                        <p className="font-semibold text-neutral-900">
+                          {settingsData.account_info.last_login
+                            ? new Date(
+                                settingsData.account_info.last_login
+                              ).toLocaleString()
+                            : "Never"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-neutral-0 rounded-xl border-2 border-red-200 p-6">
+                  <h2 className="heading-3 text-red-600 mb-2">Danger Zone</h2>
+                  <p className="text-neutral-600 body-regular mb-6">
+                    Once you delete your account, there is no going back. Please
+                    be certain.
+                  </p>
+                  <button
+                    onClick={() => setShowDeleteModal(true)}
+                    className="flex items-center gap-2 px-5 py-3 bg-red-600 text-neutral-0 rounded-lg hover:bg-red-700 transition-colors font-semibold"
+                  >
+                    <FontAwesomeIcon icon={faTrash} />
+                    Delete Account
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1757,10 +2555,8 @@ export default function SettingsPage() {
                 <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
               </button>
             </div>
-
             <div className="p-6">
               <div className="space-y-5">
-                {/* Image Upload */}
                 <div>
                   <label className="block text-neutral-700 font-semibold mb-2 body-small">
                     Project Image <span className="text-red-500">*</span>
@@ -1827,7 +2623,6 @@ export default function SettingsPage() {
                     className="hidden"
                   />
                 </div>
-
                 <div>
                   <label className="block text-neutral-700 font-semibold mb-2 body-small">
                     Project Title <span className="text-red-500">*</span>
@@ -1845,7 +2640,6 @@ export default function SettingsPage() {
                     className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                   />
                 </div>
-
                 <div>
                   <label className="block text-neutral-700 font-semibold mb-2 body-small">
                     Category <span className="text-red-500">*</span>
@@ -1869,7 +2663,6 @@ export default function SettingsPage() {
                     <option>Commercial</option>
                   </select>
                 </div>
-
                 <div>
                   <label className="block text-neutral-700 font-semibold mb-2 body-small">
                     Description
@@ -1889,7 +2682,6 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-
             <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3 sticky bottom-0">
               <button
                 onClick={() => {
@@ -1937,6 +2729,299 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Experience Modal */}
+      {showExperienceModal && (
+        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-lg w-full">
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between">
+              <h3 className="heading-4 text-neutral-900">
+                {editingExperience ? "Edit Experience" : "Add Experience"}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowExperienceModal(false);
+                  setEditingExperience(null);
+                  resetExperienceForm();
+                }}
+                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+              >
+                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2">
+                  Project Title *
+                </label>
+                <input
+                  type="text"
+                  value={experienceForm.title}
+                  onChange={(e) =>
+                    setExperienceForm({
+                      ...experienceForm,
+                      title: e.target.value,
+                    })
+                  }
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2">
+                  Client Name *
+                </label>
+                <input
+                  type="text"
+                  value={experienceForm.client_name}
+                  onChange={(e) =>
+                    setExperienceForm({
+                      ...experienceForm,
+                      client_name: e.target.value,
+                    })
+                  }
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2">
+                  Completion Date *
+                </label>
+                <input
+                  type="date"
+                  value={experienceForm.completion_date}
+                  onChange={(e) =>
+                    setExperienceForm({
+                      ...experienceForm,
+                      completion_date: e.target.value,
+                    })
+                  }
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2">
+                  Description
+                </label>
+                <textarea
+                  value={experienceForm.description}
+                  onChange={(e) =>
+                    setExperienceForm({
+                      ...experienceForm,
+                      description: e.target.value,
+                    })
+                  }
+                  rows={3}
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowExperienceModal(false);
+                  setEditingExperience(null);
+                  resetExperienceForm();
+                }}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+              <button onClick={handleAddExperience} className="btn-primary">
+                {editingExperience ? "Update" : "Add"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* License Modal */}
+      {showLicenseModal && (
+        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-lg w-full">
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between">
+              <h3 className="heading-4 text-neutral-900">
+                {editingLicense ? "Edit License" : "Add License"}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowLicenseModal(false);
+                  setEditingLicense(null);
+                  resetLicenseForm();
+                }}
+                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+              >
+                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2">
+                  Title *
+                </label>
+                <input
+                  type="text"
+                  value={licenseForm.title}
+                  onChange={(e) =>
+                    setLicenseForm({ ...licenseForm, title: e.target.value })
+                  }
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2">
+                  Issuer *
+                </label>
+                <input
+                  type="text"
+                  value={licenseForm.issuer}
+                  onChange={(e) =>
+                    setLicenseForm({ ...licenseForm, issuer: e.target.value })
+                  }
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2">
+                  License Number
+                </label>
+                <input
+                  type="text"
+                  value={licenseForm.license_number}
+                  onChange={(e) =>
+                    setLicenseForm({
+                      ...licenseForm,
+                      license_number: e.target.value,
+                    })
+                  }
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2">
+                  Issue Date
+                </label>
+                <input
+                  type="date"
+                  value={licenseForm.issue_date}
+                  onChange={(e) =>
+                    setLicenseForm({
+                      ...licenseForm,
+                      issue_date: e.target.value,
+                    })
+                  }
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowLicenseModal(false);
+                  setEditingLicense(null);
+                  resetLicenseForm();
+                }}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+              <button onClick={handleAddLicense} className="btn-primary">
+                {editingLicense ? "Update" : "Add"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Specialization Modal */}
+      {showSpecializationModal && (
+        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-lg w-full">
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between">
+              <h3 className="heading-4 text-neutral-900">
+                {editingSpecialization
+                  ? "Edit Specialization"
+                  : "Add Specialization"}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowSpecializationModal(false);
+                  setEditingSpecialization(null);
+                  resetSpecializationForm();
+                }}
+                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+              >
+                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2">
+                  Title *
+                </label>
+                <input
+                  type="text"
+                  value={specializationForm.title}
+                  onChange={(e) =>
+                    setSpecializationForm({
+                      ...specializationForm,
+                      title: e.target.value,
+                    })
+                  }
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2">
+                  Description *
+                </label>
+                <textarea
+                  value={specializationForm.description}
+                  onChange={(e) =>
+                    setSpecializationForm({
+                      ...specializationForm,
+                      description: e.target.value,
+                    })
+                  }
+                  rows={3}
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2">
+                  Price (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={specializationForm.price}
+                  onChange={(e) =>
+                    setSpecializationForm({
+                      ...specializationForm,
+                      price: e.target.value,
+                    })
+                  }
+                  placeholder="e.g., $50/hr or Fixed $500"
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowSpecializationModal(false);
+                  setEditingSpecialization(null);
+                  resetSpecializationForm();
+                }}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+              <button onClick={handleAddSpecialization} className="btn-primary">
+                {editingSpecialization ? "Update" : "Add"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Upload Verification Documents Modal */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -1956,15 +3041,12 @@ export default function SettingsPage() {
                 <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
               </button>
             </div>
-
             <div className="p-6">
               <div className="space-y-5">
-                {/* Document Upload */}
                 <div>
                   <label className="block text-neutral-700 font-semibold mb-2 body-small">
                     Upload Documents <span className="text-red-500">*</span>
                   </label>
-
                   {documentPreviews.length > 0 ? (
                     <div className="space-y-3">
                       {documentPreviews.map((preview, index) => (
@@ -2037,7 +3119,6 @@ export default function SettingsPage() {
                     className="hidden"
                   />
                 </div>
-
                 <div>
                   <label className="block text-neutral-700 font-semibold mb-2 body-small">
                     Document Type <span className="text-red-500">*</span>
@@ -2061,7 +3142,6 @@ export default function SettingsPage() {
                     <option value="other">Other</option>
                   </select>
                 </div>
-
                 <div>
                   <label className="block text-neutral-700 font-semibold mb-2 body-small">
                     Document Number
@@ -2079,7 +3159,6 @@ export default function SettingsPage() {
                     className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                   />
                 </div>
-
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-neutral-700 font-semibold mb-2 body-small">
@@ -2116,7 +3195,6 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-
             <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3 sticky bottom-0">
               <button
                 onClick={() => {
@@ -2176,7 +3254,6 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-
             <div className="p-6">
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
                 <p className="text-red-700 text-sm">
@@ -2195,7 +3272,6 @@ export default function SettingsPage() {
                 action is permanent and cannot be reversed.
               </p>
             </div>
-
             <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowDeleteModal(false)}
@@ -2226,7 +3302,6 @@ export default function SettingsPage() {
             opacity: 1;
           }
         }
-
         .animate-slide-in-right {
           animation: slide-in-right 0.3s ease-out;
         }
