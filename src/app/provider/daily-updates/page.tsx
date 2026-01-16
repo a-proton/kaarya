@@ -21,10 +21,12 @@ import {
   faFilter,
   faClock,
   faUser,
+  faCloudUpload,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/auth";
+import { uploadProjectUpdateMedia } from "@/lib/storageService";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
@@ -48,6 +50,10 @@ interface MediaFile {
   file: File;
   type: "image" | "video";
   preview: string;
+  uploadStatus?: "pending" | "uploading" | "uploaded" | "failed";
+  uploadProgress?: number;
+  uploadedUrl?: string;
+  error?: string;
 }
 
 interface ApiUpdate {
@@ -76,10 +82,14 @@ interface UpdateFormData {
   work_hours: string;
 }
 
-// Custom API function for FormData uploads
-async function uploadUpdateWithMedia(
+// API function to create update with media URLs (not files)
+async function createUpdateWithMediaUrls(
   projectId: string,
-  formData: FormData
+  updateData: {
+    update_text: string;
+    work_hours: string;
+    media_urls: string[];
+  }
 ): Promise<any> {
   const token = getAccessToken();
 
@@ -93,9 +103,9 @@ async function uploadUpdateWithMedia(
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
-        // DO NOT set Content-Type - browser will set it with boundary
+        "Content-Type": "application/json",
       },
-      body: formData,
+      body: JSON.stringify(updateData),
       credentials: "include",
     }
   );
@@ -108,14 +118,12 @@ async function uploadUpdateWithMedia(
       errorData = { detail: `HTTP ${response.status} Error` };
     }
 
-    // Extract error message
     let errorMessage = "Failed to create update";
     if (errorData.detail) {
       errorMessage = errorData.detail;
     } else if (errorData.error) {
       errorMessage = errorData.error;
     } else if (typeof errorData === "object") {
-      // Handle field-specific errors
       const fieldErrors = Object.entries(errorData)
         .map(([field, messages]) => {
           const msgArray = Array.isArray(messages) ? messages : [messages];
@@ -233,6 +241,7 @@ export default function DailyUpdatesPage() {
   >("completed");
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [viewingUpdate, setViewingUpdate] = useState<DailyUpdate | null>(null);
   const [editingUpdate, setEditingUpdate] = useState<DailyUpdate | null>(null);
@@ -272,9 +281,7 @@ export default function DailyUpdatesPage() {
             project_id: project.id,
             project_name: project.project_name,
             client_name: project.client?.full_name || "Unassigned",
-            // Extract title from first line of update_text
             title: update.update_text.split("\n")[0].substring(0, 100),
-            // Infer status from work_hours (you can adjust this logic)
             status:
               parseFloat(update.work_hours) > 0 ? "completed" : "in-progress",
           }));
@@ -295,34 +302,98 @@ export default function DailyUpdatesPage() {
 
   const createUpdateMutation = useMutation({
     mutationFn: async (data: UpdateFormData & { media: MediaFile[] }) => {
-      const formData = new FormData();
+      // Step 1: Upload all media files to Supabase
+      console.log("📤 Starting media upload to Supabase...");
+      const uploadedUrls: string[] = [];
 
-      // Add update text (title + content combined)
-      formData.append("update_text", `${data.title}\n\n${data.content}`);
+      if (data.media.length > 0) {
+        setIsUploadingMedia(true);
 
-      // Add work hours (backend expects decimal, default to 0 if empty)
-      const hours = data.work_hours.trim();
-      formData.append("work_hours", hours || "0");
+        for (let i = 0; i < data.media.length; i++) {
+          const media = data.media[i];
 
-      // Add media files - backend expects files named 'media_files'
-      // Based on your Django model, it should accept multiple files
-      data.media.forEach((media) => {
-        formData.append("media_files", media.file, media.file.name);
-      });
-
-      // Log FormData contents for debugging
-      console.log("📤 Sending FormData:");
-      for (const [key, value] of formData.entries()) {
-        if (value instanceof File) {
-          console.log(
-            `${key}: File(${value.name}, ${value.size} bytes, ${value.type})`
+          // Update status to uploading
+          setMediaFiles((prev) =>
+            prev.map((m) =>
+              m.id === media.id
+                ? { ...m, uploadStatus: "uploading", uploadProgress: 0 }
+                : m
+            )
           );
-        } else {
-          console.log(`${key}: ${value}`);
+
+          try {
+            console.log(
+              `📤 Uploading file ${i + 1}/${data.media.length}: ${
+                media.file.name
+              }`
+            );
+
+            const uploadResult = await uploadProjectUpdateMedia(media.file, {
+              folder: `project_updates/${data.project}`,
+            });
+
+            if (uploadResult.success && uploadResult.publicUrl) {
+              uploadedUrls.push(uploadResult.publicUrl);
+
+              // Update status to uploaded
+              setMediaFiles((prev) =>
+                prev.map((m) =>
+                  m.id === media.id
+                    ? {
+                        ...m,
+                        uploadStatus: "uploaded",
+                        uploadProgress: 100,
+                        uploadedUrl: uploadResult.publicUrl,
+                      }
+                    : m
+                )
+              );
+
+              console.log(`✅ Upload successful: ${uploadResult.publicUrl}`);
+            } else {
+              throw new Error(uploadResult.error || "Upload failed");
+            }
+          } catch (error) {
+            console.error(`❌ Upload failed for ${media.file.name}:`, error);
+
+            // Update status to failed
+            setMediaFiles((prev) =>
+              prev.map((m) =>
+                m.id === media.id
+                  ? {
+                      ...m,
+                      uploadStatus: "failed",
+                      error:
+                        error instanceof Error
+                          ? error.message
+                          : "Upload failed",
+                    }
+                  : m
+              )
+            );
+
+            throw new Error(
+              `Failed to upload ${media.file.name}: ${
+                error instanceof Error ? error.message : "Unknown error"
+              }`
+            );
+          }
         }
+
+        setIsUploadingMedia(false);
       }
 
-      return uploadUpdateWithMedia(data.project, formData);
+      // Step 2: Create update with media URLs
+      console.log("📝 Creating update with media URLs...");
+      const updatePayload = {
+        update_text: `${data.title}\n\n${data.content}`,
+        work_hours: data.work_hours.trim() || "0",
+        media_urls: uploadedUrls,
+      };
+
+      console.log("📤 Sending update payload:", updatePayload);
+
+      return createUpdateWithMediaUrls(data.project, updatePayload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["all-daily-updates"] });
@@ -332,6 +403,7 @@ export default function DailyUpdatesPage() {
     onError: (error: Error) => {
       console.error("❌ Create update error:", error);
       alert(error.message || "Failed to post update");
+      setIsUploadingMedia(false);
     },
   });
 
@@ -375,10 +447,11 @@ export default function DailyUpdatesPage() {
         return;
       }
 
-      // Validate file size (50MB limit)
-      const maxSize = 50 * 1024 * 1024; // 50MB
+      // Validate file size (100MB limit for videos, 5MB for images)
+      const maxSize = isVideo ? 100 * 1024 * 1024 : 5 * 1024 * 1024;
       if (file.size > maxSize) {
-        alert(`File ${file.name} is too large. Maximum size is 50MB`);
+        const maxSizeMB = isVideo ? 100 : 5;
+        alert(`File ${file.name} is too large. Maximum size is ${maxSizeMB}MB`);
         return;
       }
 
@@ -390,6 +463,8 @@ export default function DailyUpdatesPage() {
         file,
         type: fileType,
         preview,
+        uploadStatus: "pending",
+        uploadProgress: 0,
       };
 
       newFiles.push(newMedia);
@@ -459,6 +534,7 @@ export default function DailyUpdatesPage() {
     setSelectedProject("");
     setUpdateDate(new Date().toISOString().split("T")[0]);
     setEditingUpdate(null);
+    setIsUploadingMedia(false);
   };
 
   const showSuccessNotification = (message: string) => {
@@ -573,6 +649,24 @@ export default function DailyUpdatesPage() {
               <p className="font-semibold">Update Posted Successfully!</p>
               <p className="text-green-100 text-sm">
                 Your daily update has been saved
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Progress Toast */}
+      {isUploadingMedia && (
+        <div className="fixed top-8 right-8 z-50 animate-slide-in-right">
+          <div className="bg-blue-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3">
+            <FontAwesomeIcon
+              icon={faSpinner}
+              className="animate-spin text-xl"
+            />
+            <div>
+              <p className="font-semibold">Uploading Media...</p>
+              <p className="text-blue-100 text-sm">
+                Please wait while files are being uploaded
               </p>
             </div>
           </div>
@@ -783,6 +877,7 @@ export default function DailyUpdatesPage() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-neutral-0 rounded-lg hover:bg-primary-700 transition-colors font-medium text-sm"
+                disabled={isUploadingMedia}
               >
                 <FontAwesomeIcon icon={faPlus} />
                 Add Files
@@ -794,6 +889,7 @@ export default function DailyUpdatesPage() {
                 multiple
                 onChange={handleFileSelect}
                 className="hidden"
+                disabled={isUploadingMedia}
               />
             </div>
 
@@ -827,10 +923,45 @@ export default function DailyUpdatesPage() {
                         </div>
                       )}
                     </div>
+
+                    {/* Upload Status Overlay */}
+                    {media.uploadStatus && media.uploadStatus !== "pending" && (
+                      <div className="absolute inset-0 bg-neutral-900/70 flex items-center justify-center">
+                        {media.uploadStatus === "uploading" && (
+                          <div className="text-center text-neutral-0">
+                            <FontAwesomeIcon
+                              icon={faSpinner}
+                              className="text-2xl mb-2 animate-spin"
+                            />
+                            <p className="text-xs">Uploading...</p>
+                          </div>
+                        )}
+                        {media.uploadStatus === "uploaded" && (
+                          <div className="text-center text-green-400">
+                            <FontAwesomeIcon
+                              icon={faCheck}
+                              className="text-2xl mb-2"
+                            />
+                            <p className="text-xs">Uploaded!</p>
+                          </div>
+                        )}
+                        {media.uploadStatus === "failed" && (
+                          <div className="text-center text-red-400">
+                            <FontAwesomeIcon
+                              icon={faTimes}
+                              className="text-2xl mb-2"
+                            />
+                            <p className="text-xs">Failed</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => removeMedia(media.id)}
-                      className="absolute top-2 right-2 w-7 h-7 bg-red-600 text-neutral-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-700"
+                      disabled={isUploadingMedia}
+                      className="absolute top-2 right-2 w-7 h-7 bg-red-600 text-neutral-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-700 disabled:opacity-50"
                       aria-label="Remove file"
                     >
                       <FontAwesomeIcon icon={faTimes} className="text-sm" />
@@ -839,6 +970,11 @@ export default function DailyUpdatesPage() {
                       <p className="text-neutral-0 text-xs truncate">
                         {media.file.name}
                       </p>
+                      {media.error && (
+                        <p className="text-red-400 text-xs truncate">
+                          {media.error}
+                        </p>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -851,7 +987,7 @@ export default function DailyUpdatesPage() {
                 <div className="flex flex-col items-center gap-3">
                   <div className="w-16 h-16 bg-neutral-100 rounded-full flex items-center justify-center">
                     <FontAwesomeIcon
-                      icon={faImage}
+                      icon={faCloudUpload}
                       className="text-neutral-400 text-2xl"
                     />
                   </div>
@@ -860,7 +996,10 @@ export default function DailyUpdatesPage() {
                       Click to upload or drag and drop
                     </p>
                     <p className="text-neutral-500 text-sm">
-                      PNG, JPG, GIF, MP4, MOV up to 50MB
+                      Images (up to 5MB) or Videos (up to 100MB)
+                    </p>
+                    <p className="text-neutral-400 text-xs mt-1">
+                      Supported: JPG, PNG, GIF, MP4, MOV, WEBM
                     </p>
                   </div>
                 </div>
@@ -870,16 +1009,16 @@ export default function DailyUpdatesPage() {
             {mediaFiles.length > 0 && (
               <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200 flex items-start gap-3">
                 <FontAwesomeIcon
-                  icon={faImage}
+                  icon={faCloudUpload}
                   className="text-blue-600 mt-0.5"
                 />
                 <div className="flex-1">
                   <p className="text-blue-700 text-sm font-medium">
                     {mediaFiles.length} file{mediaFiles.length > 1 ? "s" : ""}{" "}
-                    attached
+                    ready to upload
                   </p>
                   <p className="text-blue-600 text-xs mt-1">
-                    Images and videos will be uploaded with your update
+                    Files will be uploaded to Supabase when you post the update
                   </p>
                 </div>
               </div>
@@ -899,16 +1038,29 @@ export default function DailyUpdatesPage() {
                   resetForm();
                 }
               }}
-              className="px-6 py-3 border-2 border-neutral-200 text-neutral-700 rounded-lg font-semibold hover:bg-neutral-50 transition-colors"
+              disabled={isSubmitting || isUploadingMedia}
+              className="px-6 py-3 border-2 border-neutral-200 text-neutral-700 rounded-lg font-semibold hover:bg-neutral-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Discard
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || createUpdateMutation.isPending}
+              disabled={
+                isSubmitting ||
+                createUpdateMutation.isPending ||
+                isUploadingMedia
+              }
               className="btn-primary-lg flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed min-w-[200px] justify-center"
             >
-              {isSubmitting || createUpdateMutation.isPending ? (
+              {isUploadingMedia ? (
+                <>
+                  <FontAwesomeIcon
+                    icon={faCloudUpload}
+                    className="animate-pulse"
+                  />
+                  Uploading Media...
+                </>
+              ) : isSubmitting || createUpdateMutation.isPending ? (
                 <>
                   <FontAwesomeIcon icon={faSpinner} className="animate-spin" />
                   Posting...
@@ -951,6 +1103,12 @@ export default function DailyUpdatesPage() {
               <li className="flex items-start gap-2">
                 <span className="text-primary-600 mt-1">•</span>
                 <span>Note next steps or what's planned for tomorrow</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-primary-600 mt-1">•</span>
+                <span className="font-medium text-blue-700">
+                  📤 Media files are uploaded to Supabase cloud storage
+                </span>
               </li>
             </ul>
           </div>

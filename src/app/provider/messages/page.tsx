@@ -12,10 +12,12 @@ import {
   faPlus,
   faSpinner,
   faExclamationTriangle,
+  faCloudUpload,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { uploadMessageMedia } from "@/lib/storageService";
 
 // ==================================================================================
 // TYPE DEFINITIONS
@@ -85,6 +87,16 @@ interface ConversationCreateData {
   client_email?: string;
   client_phone?: string;
   initial_message?: string;
+}
+
+interface MediaPreviewFile {
+  file: File;
+  type: string;
+  url: string;
+  name: string;
+  uploadStatus?: "pending" | "uploading" | "uploaded" | "failed";
+  uploadedUrl?: string;
+  error?: string;
 }
 
 // ==================================================================================
@@ -184,11 +196,8 @@ export default function MessagesPage() {
   const [messageInput, setMessageInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showMediaPreview, setShowMediaPreview] = useState(false);
-  const [previewFile, setPreviewFile] = useState<{
-    type: string;
-    url: string;
-    name: string;
-  } | null>(null);
+  const [previewFile, setPreviewFile] = useState<MediaPreviewFile | null>(null);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -253,11 +262,79 @@ export default function MessagesPage() {
   // ==================================================================================
 
   const sendMessageMutation = useMutation({
-    mutationFn: async (data: MessageCreateData) => {
+    mutationFn: async (data: {
+      messageData: MessageCreateData;
+      previewFile: MediaPreviewFile | null;
+    }) => {
       if (!selectedConversationId) throw new Error("No conversation selected");
+
+      let finalMessageData = { ...data.messageData };
+
+      // Step 1: Upload media to Supabase if there's a file
+      if (data.previewFile) {
+        console.log("📤 Uploading media to Supabase...");
+        setIsUploadingMedia(true);
+
+        // Update preview status to uploading
+        setPreviewFile((prev) =>
+          prev ? { ...prev, uploadStatus: "uploading" } : null
+        );
+
+        try {
+          const uploadResult = await uploadMessageMedia(data.previewFile.file, {
+            folder: `messages/${selectedConversationId}`,
+          });
+
+          if (uploadResult.success && uploadResult.publicUrl) {
+            console.log("✅ Upload successful:", uploadResult.publicUrl);
+
+            // Update preview status to uploaded
+            setPreviewFile((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    uploadStatus: "uploaded",
+                    uploadedUrl: uploadResult.publicUrl,
+                  }
+                : null
+            );
+
+            // Update message data with Supabase URL
+            finalMessageData.file_url = uploadResult.publicUrl;
+          } else {
+            throw new Error(uploadResult.error || "Upload failed");
+          }
+        } catch (error) {
+          console.error("❌ Upload failed:", error);
+
+          // Update preview status to failed
+          setPreviewFile((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  uploadStatus: "failed",
+                  error:
+                    error instanceof Error ? error.message : "Upload failed",
+                }
+              : null
+          );
+
+          setIsUploadingMedia(false);
+          throw new Error(
+            `Media upload failed: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`
+          );
+        }
+
+        setIsUploadingMedia(false);
+      }
+
+      // Step 2: Send message to backend with Supabase URL
+      console.log("📝 Sending message to backend:", finalMessageData);
       return api.post(
         `/api/v1/messages/conversations/${selectedConversationId}/messages/send/`,
-        data
+        finalMessageData
       );
     },
     onSuccess: async () => {
@@ -270,11 +347,13 @@ export default function MessagesPage() {
       setMessageInput("");
       setPreviewFile(null);
       setShowMediaPreview(false);
+      setIsUploadingMedia(false);
     },
     onError: (error: any) => {
+      setIsUploadingMedia(false);
       alert(
         `Failed to send message: ${
-          error.data?.detail || error.message || "Unknown error"
+          error.message || error.data?.detail || "Unknown error"
         }`
       );
     },
@@ -309,23 +388,50 @@ export default function MessagesPage() {
           ? "video"
           : "file"
         : "text",
-      file_url: previewFile?.url || undefined,
+      // file_url will be set after upload in mutation
     };
 
-    sendMessageMutation.mutate(messageData);
+    sendMessageMutation.mutate({
+      messageData,
+      previewFile,
+    });
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Validate file type
+    const isImage = file.type.startsWith("image/");
+    const isVideo = file.type.startsWith("video/");
+
+    if (!isImage && !isVideo) {
+      alert("Please select a valid image or video file");
+      return;
+    }
+
+    // Validate file size (5MB for images, 100MB for videos)
+    const maxSize = isVideo ? 100 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      const maxSizeMB = isVideo ? 100 : 5;
+      alert(`File is too large. Maximum size is ${maxSizeMB}MB`);
+      return;
+    }
+
     const fileUrl = URL.createObjectURL(file);
     setPreviewFile({
+      file,
       type: file.type,
       url: fileUrl,
       name: file.name,
+      uploadStatus: "pending",
     });
     setShowMediaPreview(true);
+
+    // Clear file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const cancelPreview = () => {
@@ -334,6 +440,7 @@ export default function MessagesPage() {
     }
     setPreviewFile(null);
     setShowMediaPreview(false);
+    setIsUploadingMedia(false);
   };
 
   const handleConversationSelect = (conversationId: number) => {
@@ -453,6 +560,24 @@ export default function MessagesPage() {
             )}
           </div>
         </div>
+
+        {/* Upload Progress Toast */}
+        {isUploadingMedia && (
+          <div className="fixed top-8 right-8 z-50 animate-slide-in-right">
+            <div className="bg-blue-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3">
+              <FontAwesomeIcon
+                icon={faSpinner}
+                className="animate-spin text-xl"
+              />
+              <div>
+                <p className="font-semibold">Uploading to Cloud...</p>
+                <p className="text-blue-100 text-sm">
+                  Please wait while your file is being uploaded
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Main Chat Area - CENTER/LEFT */}
         {selectedConversationId ? (
@@ -579,7 +704,10 @@ export default function MessagesPage() {
                                   <img
                                     src={message.mediaUrl}
                                     alt="Shared image"
-                                    className="max-w-full h-auto"
+                                    className="max-w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                                    onClick={() =>
+                                      window.open(message.mediaUrl!, "_blank")
+                                    }
                                   />
                                 ) : (
                                   <div className="w-64 h-48 bg-neutral-200 flex items-center justify-center">
@@ -648,31 +776,66 @@ export default function MessagesPage() {
             {showMediaPreview && previewFile && (
               <div className="px-6 py-3 bg-neutral-50 border-t border-neutral-200 flex-shrink-0">
                 <div className="flex items-center gap-3 bg-white rounded-lg p-3 border border-neutral-200">
-                  {previewFile.type.startsWith("image") ? (
-                    <img
-                      src={previewFile.url}
-                      alt="Preview"
-                      className="w-12 h-12 rounded object-cover"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 bg-neutral-100 rounded flex items-center justify-center">
-                      <FontAwesomeIcon
-                        icon={faVideo}
-                        className="w-6 h-6 text-neutral-600"
+                  <div className="relative">
+                    {previewFile.type.startsWith("image") ? (
+                      <img
+                        src={previewFile.url}
+                        alt="Preview"
+                        className="w-12 h-12 rounded object-cover"
                       />
-                    </div>
-                  )}
+                    ) : (
+                      <div className="w-12 h-12 bg-neutral-100 rounded flex items-center justify-center">
+                        <FontAwesomeIcon
+                          icon={faVideo}
+                          className="w-6 h-6 text-neutral-600"
+                        />
+                      </div>
+                    )}
+
+                    {/* Upload Status Overlay */}
+                    {previewFile.uploadStatus &&
+                      previewFile.uploadStatus !== "pending" && (
+                        <div className="absolute inset-0 bg-neutral-900/70 rounded flex items-center justify-center">
+                          {previewFile.uploadStatus === "uploading" && (
+                            <FontAwesomeIcon
+                              icon={faSpinner}
+                              className="text-white text-lg animate-spin"
+                            />
+                          )}
+                          {previewFile.uploadStatus === "uploaded" && (
+                            <FontAwesomeIcon
+                              icon={faCheck}
+                              className="text-green-400 text-lg"
+                            />
+                          )}
+                          {previewFile.uploadStatus === "failed" && (
+                            <FontAwesomeIcon
+                              icon={faTimes}
+                              className="text-red-400 text-lg"
+                            />
+                          )}
+                        </div>
+                      )}
+                  </div>
+
                   <div className="flex-1">
                     <p className="text-sm font-medium text-neutral-900">
                       {previewFile.name}
                     </p>
                     <p className="text-xs text-neutral-500">
                       {previewFile.type.startsWith("image") ? "Image" : "Video"}
+                      {previewFile.uploadStatus === "uploading" &&
+                        " - Uploading..."}
+                      {previewFile.uploadStatus === "uploaded" &&
+                        " - Uploaded!"}
+                      {previewFile.uploadStatus === "failed" &&
+                        ` - ${previewFile.error || "Upload failed"}`}
                     </p>
                   </div>
                   <button
                     onClick={cancelPreview}
-                    className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+                    disabled={isUploadingMedia}
+                    className="p-2 hover:bg-neutral-100 rounded-lg transition-colors disabled:opacity-50"
                   >
                     <FontAwesomeIcon
                       icon={faTimes}
@@ -696,7 +859,7 @@ export default function MessagesPage() {
                 />
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={sendMessageMutation.isPending}
+                  disabled={sendMessageMutation.isPending || isUploadingMedia}
                   className="p-2.5 hover:bg-neutral-50 rounded-lg transition-colors text-neutral-600 flex-shrink-0 disabled:opacity-50"
                   title="Add image or video"
                 >
@@ -712,13 +875,14 @@ export default function MessagesPage() {
                       if (
                         e.key === "Enter" &&
                         !e.shiftKey &&
-                        !sendMessageMutation.isPending
+                        !sendMessageMutation.isPending &&
+                        !isUploadingMedia
                       ) {
                         e.preventDefault();
                         handleSendMessage();
                       }
                     }}
-                    disabled={sendMessageMutation.isPending}
+                    disabled={sendMessageMutation.isPending || isUploadingMedia}
                     placeholder="Type a message..."
                     className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50 resize-none"
                     rows={1}
@@ -730,11 +894,20 @@ export default function MessagesPage() {
                   onClick={handleSendMessage}
                   disabled={
                     sendMessageMutation.isPending ||
+                    isUploadingMedia ||
                     (!messageInput.trim() && !previewFile)
                   }
                   className="px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 flex-shrink-0"
                 >
-                  {sendMessageMutation.isPending ? (
+                  {isUploadingMedia ? (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faCloudUpload}
+                        className="animate-pulse"
+                      />
+                      Uploading...
+                    </>
+                  ) : sendMessageMutation.isPending ? (
                     <>
                       <FontAwesomeIcon icon={faSpinner} spin />
                       Sending...
@@ -882,6 +1055,23 @@ export default function MessagesPage() {
           </div>
         </div>
       </div>
+
+      <style jsx>{`
+        @keyframes slide-in-right {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+
+        .animate-slide-in-right {
+          animation: slide-in-right 0.3s ease-out;
+        }
+      `}</style>
     </div>
   );
 }
