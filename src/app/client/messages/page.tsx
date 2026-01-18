@@ -1,577 +1,888 @@
 "use client";
-
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faMessage,
+  faSearch,
   faPaperPlane,
   faImage,
-  faFile,
-  faTimes,
-  faDownload,
+  faVideo,
+  faEllipsisVertical,
   faCheck,
   faCheckDouble,
-  faCircle,
-  faUser,
-  faEllipsisV,
-  faPaperclip,
-  faSmile,
+  faTimes,
+  faPlus,
+  faSpinner,
+  faExclamationTriangle,
+  faCloudUpload,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { isAuthenticated } from "@/lib/auth";
+import { uploadMessageMedia } from "@/lib/storageService";
+
+// ==================================================================================
+// TYPE DEFINITIONS
+// ==================================================================================
 
 interface Message {
-  id: string;
-  sender: "client" | "provider";
+  id: number;
+  senderId: string;
   content: string;
-  timestamp: Date;
+  timestamp: string;
+  type: "text" | "image" | "video" | "file";
+  mediaUrl?: string | null;
+  fileName?: string | null;
   status: "sent" | "delivered" | "read";
-  attachments?: Attachment[];
+  sender_type: "client" | "service_provider";
+  sender_name: string;
+  sender_image: string | null;
+  is_read: boolean;
 }
 
-interface Attachment {
-  id: string;
+interface Conversation {
+  id: number;
   name: string;
-  type: "image" | "file";
-  url: string;
-  size?: string;
+  initials: string;
+  avatar?: string | null;
+  lastMessage: string;
+  lastMessageTime: string;
+  unreadCount: number;
+  isOnline: boolean;
+  color: string;
+  service_provider: {
+    id: number;
+    full_name: string;
+    business_name?: string;
+    profile_image?: string;
+  };
+  is_active: boolean;
 }
+
+interface MediaPreviewFile {
+  file: File;
+  type: string;
+  url: string;
+  name: string;
+  uploadStatus?: "pending" | "uploading" | "uploaded" | "failed";
+  uploadedUrl?: string;
+  error?: string;
+}
+
+// ==================================================================================
+// HELPER FUNCTIONS
+// ==================================================================================
+
+const formatTime = (dateString: string) => {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString();
+};
+
+// ==================================================================================
+// MAIN COMPONENT
+// ==================================================================================
 
 export default function ClientMessagesPage() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      sender: "provider",
-      content:
-        "Hi John! I wanted to update you on the kitchen remodel progress. We've completed the electrical wiring and the inspector approved everything.",
-      timestamp: new Date(Date.now() - 3600000 * 2),
-      status: "read",
-    },
-    {
-      id: "2",
-      sender: "client",
-      content:
-        "That's great news! When do you think you'll start on the cabinets?",
-      timestamp: new Date(Date.now() - 3600000 * 1.5),
-      status: "read",
-    },
-    {
-      id: "3",
-      sender: "provider",
-      content:
-        "We'll begin cabinet installation tomorrow morning. I've attached some photos of the electrical work we completed today.",
-      timestamp: new Date(Date.now() - 3600000),
-      status: "read",
-      attachments: [
-        {
-          id: "a1",
-          name: "electrical_wiring_1.jpg",
-          type: "image",
-          url: "https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=400&h=300&fit=crop",
-        },
-        {
-          id: "a2",
-          name: "electrical_wiring_2.jpg",
-          type: "image",
-          url: "https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=400&h=300&fit=crop",
-        },
-      ],
-    },
-    {
-      id: "4",
-      sender: "client",
-      content:
-        "Perfect! The wiring looks professional. Thanks for keeping me updated.",
-      timestamp: new Date(Date.now() - 1800000),
-      status: "read",
-    },
-    {
-      id: "5",
-      sender: "provider",
-      content:
-        "You're welcome! I'll send you progress photos as we work on the cabinets.",
-      timestamp: new Date(Date.now() - 900000),
-      status: "read",
-    },
-  ]);
-
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [selectedConversationId, setSelectedConversationId] = useState<
+    number | null
+  >(null);
   const [messageInput, setMessageInput] = useState("");
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [isTyping, setIsTyping] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showMediaPreview, setShowMediaPreview] = useState(false);
+  const [previewFile, setPreviewFile] = useState<MediaPreviewFile | null>(null);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Provider info
-  const provider = {
-    name: "Michael Rodriguez",
-    initials: "MR",
-    role: "Licensed Electrician",
-    status: "online",
-    lastSeen: "Active now",
-    phone: "+1 (555) 123-4567",
-    projects: ["Kitchen Remodel", "Bathroom Renovation"],
-  };
+  // ==================================================================================
+  // DATA FETCHING
+  // ==================================================================================
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+  // Fetch conversations
+  const {
+    data: conversationsData = [],
+    isLoading: conversationsLoading,
+    error: conversationsError,
+  } = useQuery({
+    queryKey: ["client-conversations"],
+    queryFn: async () => {
+      if (!isAuthenticated()) {
+        router.push("/login?type=client&session=expired");
+        throw new Error("Not authenticated");
+      }
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!messageInput.trim() && attachments.length === 0) return;
-
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      sender: "client",
-      content: messageInput,
-      timestamp: new Date(),
-      status: "sent",
-      attachments: attachments.length > 0 ? [...attachments] : undefined,
-    };
-
-    setMessages([...messages, newMessage]);
-    setMessageInput("");
-    setAttachments([]);
-
-    // Simulate message delivery
-    setTimeout(() => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === newMessage.id ? { ...msg, status: "delivered" } : msg
-        )
+      const response = await api.get<Conversation[]>(
+        "/api/v1/messages/conversations/",
       );
-    }, 1000);
 
-    // Simulate message read
-    setTimeout(() => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === newMessage.id ? { ...msg, status: "read" } : msg
-        )
+      // Transform to match frontend format
+      return response.map((conv: any) => {
+        const providerName =
+          conv.service_provider?.business_name ||
+          conv.service_provider?.full_name ||
+          "Provider";
+        const initials = providerName
+          .split(" ")
+          .map((n: string) => n[0])
+          .join("")
+          .toUpperCase()
+          .slice(0, 2);
+        const colors = [
+          "bg-primary-600",
+          "bg-secondary-600",
+          "bg-purple-600",
+          "bg-blue-600",
+        ];
+
+        return {
+          id: conv.id,
+          name: providerName,
+          initials,
+          avatar: conv.service_provider?.profile_image,
+          lastMessage: conv.last_message?.message_text || "No messages yet",
+          lastMessageTime: formatTime(conv.last_message_at || conv.created_at),
+          unreadCount: 0, // Backend will provide this via annotation
+          isOnline: false, // Can be enhanced with real-time status
+          color: colors[conv.id % colors.length],
+          service_provider: conv.service_provider,
+          is_active: conv.is_active,
+        };
+      });
+    },
+    refetchInterval: 5000,
+  });
+
+  // Fetch messages for selected conversation
+  const {
+    data: messagesData = [],
+    isLoading: messagesLoading,
+    error: messagesError,
+  } = useQuery({
+    queryKey: ["client-messages", selectedConversationId],
+    queryFn: async () => {
+      if (!selectedConversationId) return [];
+
+      const response = await api.get<{ results: any[] }>(
+        `/api/v1/messages/conversations/${selectedConversationId}/messages/`,
       );
-    }, 2000);
+
+      // Transform messages and sort by timestamp
+      const messages = response.results.map((msg: any) => ({
+        id: msg.id,
+        senderId: msg.sender_type,
+        content: msg.message_text || "",
+        timestamp: msg.created_at,
+        type: msg.message_type || "text",
+        mediaUrl: msg.file_url,
+        fileName: null,
+        status: msg.is_read ? "read" : "delivered",
+        sender_type: msg.sender_type,
+        sender_name: msg.sender_name,
+        sender_image: msg.sender_image,
+        is_read: msg.is_read,
+      }));
+
+      return messages.sort(
+        (a: Message, b: Message) =>
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      );
+    },
+    enabled: !!selectedConversationId,
+    refetchInterval: 3000,
+  });
+
+  // ==================================================================================
+  // MUTATIONS
+  // ==================================================================================
+
+  // Send message mutation
+  const sendMessageMutation = useMutation({
+    mutationFn: async (data: {
+      messageText: string;
+      previewFile: MediaPreviewFile | null;
+    }) => {
+      if (!selectedConversationId) throw new Error("No conversation selected");
+
+      let messageData: any = {
+        message_text: data.messageText,
+        message_type: "text",
+      };
+
+      // Upload media to Supabase if there's a file
+      if (data.previewFile) {
+        setIsUploadingMedia(true);
+        setPreviewFile((prev) =>
+          prev ? { ...prev, uploadStatus: "uploading" } : null,
+        );
+
+        try {
+          const uploadResult = await uploadMessageMedia(data.previewFile.file, {
+            folder: `messages/${selectedConversationId}`,
+          });
+
+          if (uploadResult.success && uploadResult.publicUrl) {
+            setPreviewFile((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    uploadStatus: "uploaded",
+                    uploadedUrl: uploadResult.publicUrl,
+                  }
+                : null,
+            );
+
+            messageData.file_url = uploadResult.publicUrl;
+            messageData.message_type = data.previewFile.type.startsWith("image")
+              ? "image"
+              : "video";
+          } else {
+            throw new Error(uploadResult.error || "Upload failed");
+          }
+        } catch (error) {
+          setPreviewFile((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  uploadStatus: "failed",
+                  error:
+                    error instanceof Error ? error.message : "Upload failed",
+                }
+              : null,
+          );
+          setIsUploadingMedia(false);
+          throw error;
+        }
+
+        setIsUploadingMedia(false);
+      }
+
+      // Send message to backend
+      return api.post(
+        `/api/v1/messages/conversations/${selectedConversationId}/messages/send/`,
+        messageData,
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["client-messages", selectedConversationId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["client-conversations"] });
+      setMessageInput("");
+      setPreviewFile(null);
+      setShowMediaPreview(false);
+    },
+    onError: (error: any) => {
+      setIsUploadingMedia(false);
+      alert(`Failed to send message: ${error.message || "Unknown error"}`);
+    },
+  });
+
+  // Mark conversation as read
+  const markReadMutation = useMutation({
+    mutationFn: async (conversationId: number) => {
+      return api.post(
+        `/api/v1/messages/conversations/${conversationId}/mark-read/`,
+        {},
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["client-conversations"] });
+    },
+  });
+
+  // ==================================================================================
+  // HANDLERS
+  // ==================================================================================
+
+  const handleSendMessage = () => {
+    if (!messageInput.trim() && !previewFile) return;
+
+    sendMessageMutation.mutate({
+      messageText: messageInput.trim(),
+      previewFile,
+    });
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    Array.from(files).forEach((file) => {
-      const fileType = file.type.startsWith("image/") ? "image" : "file";
-      const preview = URL.createObjectURL(file);
+    const isImage = file.type.startsWith("image/");
+    const isVideo = file.type.startsWith("video/");
 
-      const newAttachment: Attachment = {
-        id: Date.now().toString() + Math.random(),
-        name: file.name,
-        type: fileType,
-        url: preview,
-        size: formatFileSize(file.size),
-      };
+    if (!isImage && !isVideo) {
+      alert("Please select a valid image or video file");
+      return;
+    }
 
-      setAttachments((prev) => [...prev, newAttachment]);
+    const maxSize = isVideo ? 100 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert(`File is too large. Maximum size is ${isVideo ? 100 : 5}MB`);
+      return;
+    }
+
+    const fileUrl = URL.createObjectURL(file);
+    setPreviewFile({
+      file,
+      type: file.type,
+      url: fileUrl,
+      name: file.name,
+      uploadStatus: "pending",
     });
+    setShowMediaPreview(true);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   };
 
-  const removeAttachment = (id: string) => {
-    setAttachments((prev) => prev.filter((att) => att.id !== id));
-  };
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-  };
-
-  const formatTime = (date: Date): string => {
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-
-    if (diff < 60000) return "Just now";
-    if (diff < 3600000) return Math.floor(diff / 60000) + "m ago";
-    if (diff < 86400000) return Math.floor(diff / 3600000) + "h ago";
-
-    return date.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-  };
-
-  const formatMessageDate = (date: Date): string => {
-    const now = new Date();
-    const messageDate = new Date(date);
-
-    if (
-      messageDate.getDate() === now.getDate() &&
-      messageDate.getMonth() === now.getMonth() &&
-      messageDate.getFullYear() === now.getFullYear()
-    ) {
-      return "Today";
+  const cancelPreview = () => {
+    if (previewFile) {
+      URL.revokeObjectURL(previewFile.url);
     }
-
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-
-    if (
-      messageDate.getDate() === yesterday.getDate() &&
-      messageDate.getMonth() === yesterday.getMonth() &&
-      messageDate.getFullYear() === yesterday.getFullYear()
-    ) {
-      return "Yesterday";
-    }
-
-    return messageDate.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    setPreviewFile(null);
+    setShowMediaPreview(false);
+    setIsUploadingMedia(false);
   };
 
-  const getStatusIcon = (status: Message["status"]) => {
-    switch (status) {
-      case "sent":
-        return <FontAwesomeIcon icon={faCheck} className="text-neutral-400" />;
-      case "delivered":
-        return (
-          <FontAwesomeIcon icon={faCheckDouble} className="text-neutral-400" />
-        );
-      case "read":
-        return (
-          <FontAwesomeIcon icon={faCheckDouble} className="text-primary-600" />
-        );
-    }
+  const handleConversationSelect = (conversationId: number) => {
+    setSelectedConversationId(conversationId);
+    markReadMutation.mutate(conversationId);
   };
 
-  // Group messages by date
-  const groupedMessages = messages.reduce((groups, message) => {
-    const date = formatMessageDate(message.timestamp);
-    if (!groups[date]) {
-      groups[date] = [];
-    }
-    groups[date].push(message);
-    return groups;
-  }, {} as Record<string, Message[]>);
+  const getMessageStatus = (status: Message["status"]) => {
+    if (status === "sent")
+      return <FontAwesomeIcon icon={faCheck} className="w-3 h-3" />;
+    if (status === "delivered")
+      return (
+        <FontAwesomeIcon
+          icon={faCheckDouble}
+          className="w-3 h-3 text-neutral-400"
+        />
+      );
+    return (
+      <FontAwesomeIcon
+        icon={faCheckDouble}
+        className="w-3 h-3 text-primary-600"
+      />
+    );
+  };
+
+  const filteredConversations = conversationsData.filter((conv) =>
+    conv.name.toLowerCase().includes(searchQuery.toLowerCase()),
+  );
+
+  const currentConversation = conversationsData.find(
+    (c) => c.id === selectedConversationId,
+  );
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messagesData]);
+
+  // ==================================================================================
+  // LOADING & ERROR STATES
+  // ==================================================================================
+
+  if (conversationsLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-neutral-50">
+        <div className="text-center">
+          <FontAwesomeIcon
+            icon={faSpinner}
+            spin
+            className="w-8 h-8 text-primary-600 mb-4"
+          />
+          <p className="text-neutral-600">Loading conversations...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (conversationsError) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-neutral-50">
+        <div className="text-center max-w-md px-6">
+          <FontAwesomeIcon
+            icon={faExclamationTriangle}
+            className="w-16 h-16 text-red-500 mb-4"
+          />
+          <h2 className="heading-3 text-neutral-900 mb-2">
+            Error Loading Conversations
+          </h2>
+          <p className="body-regular text-neutral-600 mb-6">
+            Failed to load your conversations.
+          </p>
+          <button
+            onClick={() =>
+              queryClient.invalidateQueries({
+                queryKey: ["client-conversations"],
+              })
+            }
+            className="btn-primary"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ==================================================================================
+  // RENDER
+  // ==================================================================================
 
   return (
-    <div className="h-screen bg-neutral-50 flex flex-col">
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-6 py-4 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <div className="w-12 h-12 rounded-full bg-primary-600 flex items-center justify-center text-neutral-0 font-semibold text-lg">
-                {provider.initials}
-              </div>
-              {provider.status === "online" && (
-                <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-neutral-0 rounded-full"></div>
-              )}
-            </div>
-            <div>
-              <h1 className="heading-4 text-neutral-900">{provider.name}</h1>
-              <div className="flex items-center gap-2">
-                <p className="text-neutral-600 text-sm">{provider.role}</p>
-                <span className="text-neutral-400">•</span>
-                <p className="text-neutral-500 text-sm flex items-center gap-1">
-                  {provider.status === "online" ? (
-                    <>
-                      <FontAwesomeIcon
-                        icon={faCircle}
-                        className="text-green-500 text-xs"
-                      />
-                      {provider.lastSeen}
-                    </>
-                  ) : (
-                    provider.lastSeen
-                  )}
+    <div className="flex h-screen bg-neutral-50 overflow-hidden">
+      <div className="flex-1 flex flex-col lg:flex-row max-w-[1920px] mx-auto w-full overflow-hidden">
+        {/* Upload Progress Toast */}
+        {isUploadingMedia && (
+          <div className="fixed top-8 right-8 z-50 animate-slide-in-right">
+            <div className="bg-blue-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3">
+              <FontAwesomeIcon
+                icon={faSpinner}
+                className="animate-spin text-xl"
+              />
+              <div>
+                <p className="font-semibold">Uploading to Cloud...</p>
+                <p className="text-blue-100 text-sm">
+                  Please wait while your file is being uploaded
                 </p>
               </div>
             </div>
           </div>
+        )}
 
-          <div className="flex items-center gap-2">
-            <button
-              className="p-3 text-neutral-600 hover:bg-neutral-100 rounded-lg transition-colors"
-              title="More options"
-            >
-              <FontAwesomeIcon icon={faEllipsisV} />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto px-6 py-4">
-        <div className="max-w-4xl mx-auto space-y-6">
-          {Object.entries(groupedMessages).map(([date, dateMessages]) => (
-            <div key={date}>
-              {/* Date Separator */}
-              <div className="flex items-center justify-center my-6">
-                <div className="px-4 py-1.5 bg-neutral-200 rounded-full">
-                  <p className="text-neutral-600 text-xs font-medium">{date}</p>
-                </div>
-              </div>
-
-              {/* Messages */}
-              <div className="space-y-4">
-                {dateMessages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex items-end gap-2 ${
-                      message.sender === "client"
-                        ? "flex-row-reverse"
-                        : "flex-row"
-                    }`}
-                  >
-                    {/* Avatar */}
-                    {message.sender === "provider" && (
-                      <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center text-neutral-0 font-semibold text-sm flex-shrink-0">
-                        {provider.initials}
-                      </div>
-                    )}
-
-                    {/* Message Bubble */}
-                    <div
-                      className={`max-w-[70%] ${
-                        message.sender === "client"
-                          ? "items-end"
-                          : "items-start"
-                      }`}
-                    >
-                      {/* Message Content */}
-                      <div
-                        className={`rounded-2xl px-4 py-3 ${
-                          message.sender === "client"
-                            ? "bg-primary-600 text-neutral-0"
-                            : "bg-neutral-0 border border-neutral-200 text-neutral-900"
-                        }`}
-                      >
-                        <p className="body-regular leading-relaxed whitespace-pre-wrap break-words">
-                          {message.content}
-                        </p>
-
-                        {/* Attachments */}
-                        {message.attachments &&
-                          message.attachments.length > 0 && (
-                            <div className="mt-3 space-y-2">
-                              {message.attachments.map((attachment) => (
-                                <div key={attachment.id}>
-                                  {attachment.type === "image" ? (
-                                    <div className="rounded-lg overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
-                                      <img
-                                        src={attachment.url}
-                                        alt={attachment.name}
-                                        className="w-full max-w-xs"
-                                      />
-                                    </div>
-                                  ) : (
-                                    <div
-                                      className={`flex items-center gap-3 p-3 rounded-lg ${
-                                        message.sender === "client"
-                                          ? "bg-primary-700"
-                                          : "bg-neutral-50"
-                                      }`}
-                                    >
-                                      <FontAwesomeIcon
-                                        icon={faFile}
-                                        className={`text-xl ${
-                                          message.sender === "client"
-                                            ? "text-neutral-0"
-                                            : "text-neutral-600"
-                                        }`}
-                                      />
-                                      <div className="flex-1 min-w-0">
-                                        <p
-                                          className={`text-sm font-medium truncate ${
-                                            message.sender === "client"
-                                              ? "text-neutral-0"
-                                              : "text-neutral-900"
-                                          }`}
-                                        >
-                                          {attachment.name}
-                                        </p>
-                                        {attachment.size && (
-                                          <p
-                                            className={`text-xs ${
-                                              message.sender === "client"
-                                                ? "text-neutral-200"
-                                                : "text-neutral-500"
-                                            }`}
-                                          >
-                                            {attachment.size}
-                                          </p>
-                                        )}
-                                      </div>
-                                      <button
-                                        className={`p-2 rounded-lg transition-colors ${
-                                          message.sender === "client"
-                                            ? "hover:bg-primary-600 text-neutral-0"
-                                            : "hover:bg-neutral-100 text-neutral-600"
-                                        }`}
-                                      >
-                                        <FontAwesomeIcon icon={faDownload} />
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                      </div>
-
-                      {/* Message Info */}
-                      <div
-                        className={`flex items-center gap-1 mt-1 px-2 ${
-                          message.sender === "client"
-                            ? "justify-end"
-                            : "justify-start"
-                        }`}
-                      >
-                        <p className="text-neutral-500 text-xs">
-                          {formatTime(message.timestamp)}
-                        </p>
-                        {message.sender === "client" && (
-                          <span className="text-xs">
-                            {getStatusIcon(message.status)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-
-          {/* Typing Indicator */}
-          {isTyping && (
-            <div className="flex items-end gap-2">
-              <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center text-neutral-0 font-semibold text-sm flex-shrink-0">
-                {provider.initials}
-              </div>
-              <div className="bg-neutral-0 border border-neutral-200 rounded-2xl px-4 py-3">
-                <div className="flex gap-1">
-                  <div className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce"></div>
-                  <div
-                    className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce"
-                    style={{ animationDelay: "0.1s" }}
-                  ></div>
-                  <div
-                    className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce"
-                    style={{ animationDelay: "0.2s" }}
-                  ></div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div ref={messagesEndRef} />
-        </div>
-      </div>
-
-      {/* Input Area */}
-      <div className="bg-neutral-0 border-t border-neutral-200 px-6 py-4 flex-shrink-0">
-        <div className="max-w-4xl mx-auto">
-          {/* Attachment Preview */}
-          {attachments.length > 0 && (
-            <div className="mb-4 flex gap-3 flex-wrap">
-              {attachments.map((attachment) => (
-                <div
-                  key={attachment.id}
-                  className="relative group bg-neutral-100 rounded-lg overflow-hidden"
-                >
-                  {attachment.type === "image" ? (
-                    <div className="w-20 h-20">
-                      <img
-                        src={attachment.url}
-                        alt={attachment.name}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
+        {/* Main Chat Area */}
+        {selectedConversationId ? (
+          <div className="flex-1 flex flex-col bg-white lg:border-r border-neutral-200 overflow-hidden">
+            {/* Chat Header */}
+            <div className="bg-white border-b border-neutral-200 px-6 py-4 flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  {currentConversation?.avatar ? (
+                    <img
+                      src={currentConversation.avatar}
+                      alt={currentConversation.name}
+                      className="w-10 h-10 rounded-full object-cover"
+                    />
                   ) : (
-                    <div className="w-20 h-20 flex items-center justify-center">
-                      <FontAwesomeIcon
-                        icon={faFile}
-                        className="text-2xl text-neutral-600"
-                      />
+                    <div
+                      className={`w-10 h-10 rounded-full ${currentConversation?.color} flex items-center justify-center text-white font-semibold`}
+                    >
+                      {currentConversation?.initials}
                     </div>
                   )}
-                  <button
-                    onClick={() => removeAttachment(attachment.id)}
-                    className="absolute top-1 right-1 w-6 h-6 bg-red-600 text-neutral-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                  >
-                    <FontAwesomeIcon icon={faTimes} className="text-xs" />
-                  </button>
+                  {currentConversation?.isOnline && (
+                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
+                  )}
                 </div>
-              ))}
-            </div>
-          )}
-
-          {/* Input Form */}
-          <form onSubmit={handleSendMessage} className="flex items-end gap-3">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*,.pdf,.doc,.docx"
-              multiple
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="p-3 text-neutral-600 hover:bg-neutral-100 rounded-lg transition-colors flex-shrink-0"
-              title="Attach file"
-            >
-              <FontAwesomeIcon icon={faPaperclip} className="text-xl" />
-            </button>
-
-            <div className="flex-1 relative">
-              <textarea
-                value={messageInput}
-                onChange={(e) => setMessageInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendMessage(e);
-                  }
-                }}
-                placeholder="Type your message..."
-                rows={1}
-                className="w-full px-4 py-3 pr-12 bg-neutral-100 border border-neutral-200 rounded-xl focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all resize-none max-h-32"
-                style={{
-                  minHeight: "48px",
-                  height: "auto",
-                }}
-              />
-              <button
-                type="button"
-                className="absolute right-3 bottom-3 text-neutral-400 hover:text-neutral-600 transition-colors"
-                title="Add emoji"
-              >
-                <FontAwesomeIcon icon={faSmile} />
+                <div>
+                  <h2 className="font-semibold text-neutral-900">
+                    {currentConversation?.name}
+                  </h2>
+                  <p className="text-xs text-neutral-500">
+                    {currentConversation?.isOnline ? "Online" : "Offline"}
+                  </p>
+                </div>
+              </div>
+              <button className="p-2 hover:bg-neutral-100 rounded-lg transition-colors">
+                <FontAwesomeIcon
+                  icon={faEllipsisVertical}
+                  className="w-5 h-5 text-neutral-600"
+                />
               </button>
             </div>
 
-            <button
-              type="submit"
-              disabled={!messageInput.trim() && attachments.length === 0}
-              className="p-3 bg-primary-600 text-neutral-0 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
-              title="Send message"
-            >
-              <FontAwesomeIcon icon={faPaperPlane} className="text-xl" />
-            </button>
-          </form>
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {messagesLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <FontAwesomeIcon
+                    icon={faSpinner}
+                    spin
+                    className="w-8 h-8 text-primary-600"
+                  />
+                </div>
+              ) : messagesError ? (
+                <div className="flex items-center justify-center h-full text-red-500">
+                  Failed to load messages
+                </div>
+              ) : messagesData.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center">
+                  <div className="w-20 h-20 bg-neutral-100 rounded-full flex items-center justify-center mb-4">
+                    <FontAwesomeIcon
+                      icon={faPaperPlane}
+                      className="w-8 h-8 text-neutral-400"
+                    />
+                  </div>
+                  <p className="text-neutral-600 font-medium mb-1">
+                    No messages yet
+                  </p>
+                  <p className="text-neutral-500 text-sm">
+                    Start the conversation by sending a message
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {messagesData.map((message) => {
+                    const isMine = message.sender_type === "client";
+                    return (
+                      <div
+                        key={message.id}
+                        className={`flex ${isMine ? "justify-end" : "justify-start"}`}
+                      >
+                        <div
+                          className={`max-w-[70%] ${isMine ? "items-end" : "items-start"}`}
+                        >
+                          {message.type === "text" && (
+                            <div
+                              className={`px-4 py-2.5 rounded-2xl ${isMine ? "bg-primary-600 text-white rounded-br-sm" : "bg-neutral-100 text-neutral-900 rounded-bl-sm"}`}
+                            >
+                              <p className="body-regular whitespace-pre-wrap break-words">
+                                {message.content}
+                              </p>
+                            </div>
+                          )}
 
-          <p className="text-neutral-400 text-xs mt-2 text-center">
-            Press Enter to send, Shift + Enter for new line
-          </p>
+                          {message.type === "image" && (
+                            <div
+                              className={`rounded-2xl overflow-hidden ${isMine ? "rounded-br-sm" : "rounded-bl-sm"}`}
+                            >
+                              {message.content && (
+                                <div
+                                  className={`px-4 py-2.5 ${isMine ? "bg-primary-600 text-white" : "bg-neutral-100 text-neutral-900"}`}
+                                >
+                                  <p className="body-regular">
+                                    {message.content}
+                                  </p>
+                                </div>
+                              )}
+                              <div className="relative">
+                                {message.mediaUrl ? (
+                                  <img
+                                    src={message.mediaUrl}
+                                    alt="Shared image"
+                                    className="max-w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                                    onClick={() =>
+                                      window.open(message.mediaUrl!, "_blank")
+                                    }
+                                  />
+                                ) : (
+                                  <div className="w-64 h-48 bg-neutral-200 flex items-center justify-center">
+                                    <FontAwesomeIcon
+                                      icon={faImage}
+                                      className="w-12 h-12 text-neutral-400"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {message.type === "video" && (
+                            <div
+                              className={`rounded-2xl overflow-hidden ${isMine ? "rounded-br-sm" : "rounded-bl-sm"}`}
+                            >
+                              {message.content && (
+                                <div
+                                  className={`px-4 py-2.5 ${isMine ? "bg-primary-600 text-white" : "bg-neutral-100 text-neutral-900"}`}
+                                >
+                                  <p className="body-regular">
+                                    {message.content}
+                                  </p>
+                                </div>
+                              )}
+                              <video
+                                src={message.mediaUrl || ""}
+                                controls
+                                className="max-w-full h-auto"
+                              />
+                            </div>
+                          )}
+
+                          <div
+                            className={`flex items-center gap-1 mt-1 ${isMine ? "justify-end" : "justify-start"}`}
+                          >
+                            <span className="text-xs text-neutral-500">
+                              {formatTime(message.timestamp)}
+                            </span>
+                            {isMine && (
+                              <span className="text-neutral-500">
+                                {getMessageStatus(message.status)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div ref={messagesEndRef} />
+                </div>
+              )}
+            </div>
+
+            {/* Media Preview */}
+            {showMediaPreview && previewFile && (
+              <div className="px-6 py-3 bg-neutral-50 border-t border-neutral-200 flex-shrink-0">
+                <div className="flex items-center gap-3 bg-white rounded-lg p-3 border border-neutral-200">
+                  <div className="relative">
+                    {previewFile.type.startsWith("image") ? (
+                      <img
+                        src={previewFile.url}
+                        alt="Preview"
+                        className="w-12 h-12 rounded object-cover"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 bg-neutral-100 rounded flex items-center justify-center">
+                        <FontAwesomeIcon
+                          icon={faVideo}
+                          className="w-6 h-6 text-neutral-600"
+                        />
+                      </div>
+                    )}
+                    {previewFile.uploadStatus &&
+                      previewFile.uploadStatus !== "pending" && (
+                        <div className="absolute inset-0 bg-neutral-900/70 rounded flex items-center justify-center">
+                          {previewFile.uploadStatus === "uploading" && (
+                            <FontAwesomeIcon
+                              icon={faSpinner}
+                              className="text-white text-lg animate-spin"
+                            />
+                          )}
+                          {previewFile.uploadStatus === "uploaded" && (
+                            <FontAwesomeIcon
+                              icon={faCheck}
+                              className="text-green-400 text-lg"
+                            />
+                          )}
+                          {previewFile.uploadStatus === "failed" && (
+                            <FontAwesomeIcon
+                              icon={faTimes}
+                              className="text-red-400 text-lg"
+                            />
+                          )}
+                        </div>
+                      )}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-neutral-900">
+                      {previewFile.name}
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      {previewFile.type.startsWith("image") ? "Image" : "Video"}
+                      {previewFile.uploadStatus === "uploading" &&
+                        " - Uploading..."}
+                      {previewFile.uploadStatus === "uploaded" &&
+                        " - Uploaded!"}
+                      {previewFile.uploadStatus === "failed" &&
+                        ` - ${previewFile.error || "Upload failed"}`}
+                    </p>
+                  </div>
+                  <button
+                    onClick={cancelPreview}
+                    disabled={isUploadingMedia}
+                    className="p-2 hover:bg-neutral-100 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    <FontAwesomeIcon
+                      icon={faTimes}
+                      className="w-4 h-4 text-neutral-600"
+                    />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Message Input */}
+            <div className="bg-white border-t border-neutral-200 px-6 py-4 flex-shrink-0">
+              <div className="flex items-end gap-3">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  className="hidden"
+                  onChange={handleFileSelect}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={sendMessageMutation.isPending || isUploadingMedia}
+                  className="p-2.5 hover:bg-neutral-50 rounded-lg transition-colors text-neutral-600 flex-shrink-0 disabled:opacity-50"
+                  title="Add image or video"
+                >
+                  <FontAwesomeIcon icon={faPlus} className="w-5 h-5" />
+                </button>
+
+                <div className="flex-1">
+                  <textarea
+                    value={messageInput}
+                    onChange={(e) => setMessageInput(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (
+                        e.key === "Enter" &&
+                        !e.shiftKey &&
+                        !sendMessageMutation.isPending &&
+                        !isUploadingMedia
+                      ) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                    disabled={sendMessageMutation.isPending || isUploadingMedia}
+                    placeholder="Type a message..."
+                    className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50 resize-none"
+                    rows={1}
+                  />
+                </div>
+
+                <button
+                  onClick={handleSendMessage}
+                  disabled={
+                    sendMessageMutation.isPending ||
+                    isUploadingMedia ||
+                    (!messageInput.trim() && !previewFile)
+                  }
+                  className="px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 flex-shrink-0"
+                >
+                  {isUploadingMedia ? (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faCloudUpload}
+                        className="animate-pulse"
+                      />
+                      Uploading...
+                    </>
+                  ) : sendMessageMutation.isPending ? (
+                    <>
+                      <FontAwesomeIcon icon={faSpinner} spin />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon icon={faPaperPlane} />
+                      Send
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 hidden lg:flex items-center justify-center bg-neutral-50">
+            <div className="text-center">
+              <div className="w-24 h-24 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <FontAwesomeIcon
+                  icon={faPaperPlane}
+                  className="w-10 h-10 text-neutral-400"
+                />
+              </div>
+              <h3 className="heading-3 text-neutral-900 mb-2">
+                Select a conversation
+              </h3>
+              <p className="body-regular text-neutral-600">
+                Choose a conversation from the list to start messaging
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Sidebar - Conversations List */}
+        <div className="w-full lg:w-[400px] bg-white flex flex-col border-l border-neutral-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-neutral-200 flex-shrink-0">
+            <h2 className="heading-3 text-neutral-900 mb-4">
+              Your Service Providers
+            </h2>
+            <div className="relative">
+              <FontAwesomeIcon
+                icon={faSearch}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 w-4 h-4"
+              />
+              <input
+                type="text"
+                placeholder="Search..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-small"
+              />
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            {filteredConversations.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-center px-6">
+                <FontAwesomeIcon
+                  icon={faSearch}
+                  className="w-12 h-12 text-neutral-300 mb-3"
+                />
+                <p className="text-neutral-600 font-medium">
+                  No conversations found
+                </p>
+                {searchQuery && (
+                  <p className="text-neutral-500 text-sm mt-1">
+                    Try a different search term
+                  </p>
+                )}
+              </div>
+            ) : (
+              filteredConversations.map((conversation) => (
+                <div
+                  key={conversation.id}
+                  onClick={() => handleConversationSelect(conversation.id)}
+                  className={`px-6 py-4 border-b border-neutral-100 cursor-pointer transition-colors hover:bg-neutral-50 ${selectedConversationId === conversation.id ? "bg-primary-50 border-r-4 border-r-primary-600" : ""}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="relative flex-shrink-0">
+                      {conversation.avatar ? (
+                        <img
+                          src={conversation.avatar}
+                          alt={conversation.name}
+                          className="w-12 h-12 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div
+                          className={`w-12 h-12 rounded-full ${conversation.color} flex items-center justify-center text-white font-semibold`}
+                        >
+                          {conversation.initials}
+                        </div>
+                      )}
+                      {conversation.isOnline && (
+                        <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between mb-1">
+                        <h3 className="font-semibold text-neutral-900 truncate">
+                          {conversation.name}
+                        </h3>
+                        <span className="text-xs text-neutral-500 flex-shrink-0 ml-2">
+                          {conversation.lastMessageTime}
+                        </span>
+                      </div>
+                      <p className="text-sm text-neutral-600 truncate">
+                        {conversation.lastMessage}
+                      </p>
+                      {conversation.unreadCount > 0 && (
+                        <span className="inline-block mt-2 bg-primary-600 text-white px-2 py-0.5 rounded-full text-xs font-semibold">
+                          {conversation.unreadCount}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
     </div>

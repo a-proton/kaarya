@@ -7,17 +7,88 @@ import {
   faSignOut,
   faCircle,
 } from "@fortawesome/free-solid-svg-icons";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { getUserProfile, clearTokens, getRefreshToken } from "@/lib/auth";
+import { api } from "@/lib/api";
 
 export default function ClientTopbar() {
+  const router = useRouter();
   const [notificationCount] = useState(7);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [userProfile, setUserProfile] = useState<{
+    full_name?: string;
+    email?: string;
+    initials?: string;
+  } | null>(null);
 
-  const handleLogout = () => {
-    console.log("Client logging out...");
-    // Add your logout logic here
-    alert("Logged out successfully!");
-    setShowLogoutModal(false);
+  // Load user profile on mount
+  useEffect(() => {
+    const profile = getUserProfile();
+    if (profile) {
+      setUserProfile({
+        full_name: profile.full_name,
+        email: profile.email,
+        initials:
+          profile.initials ||
+          getInitials(profile.full_name || profile.email || ""),
+      });
+    }
+  }, []);
+
+  // Generate initials from name
+  const getInitials = (name: string): string => {
+    if (!name) return "CL";
+    const words = name.split(" ");
+    if (words.length >= 2) {
+      return `${words[0][0]}${words[1][0]}`.toUpperCase();
+    }
+    return words[0].substring(0, 2).toUpperCase();
+  };
+
+  // Get first name from full name
+  const getFirstName = (fullName?: string): string => {
+    if (!fullName) return "Client";
+    return fullName.split(" ")[0];
+  };
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+
+    try {
+      const refreshToken = getRefreshToken();
+
+      // Call logout API
+      if (refreshToken) {
+        try {
+          await api.post("/api/v1/auth/logout/", {
+            refresh_token: refreshToken,
+          });
+          console.log("✅ Logout API call successful");
+        } catch (apiError) {
+          console.error("❌ Logout API error (continuing anyway):", apiError);
+          // Continue with logout even if API call fails
+        }
+      }
+
+      // Clear all tokens and user data
+      clearTokens();
+      console.log("✅ Tokens cleared");
+
+      // Close modal
+      setShowLogoutModal(false);
+
+      // Redirect to login page
+      router.push("/login?type=client");
+    } catch (error) {
+      console.error("❌ Logout error:", error);
+      // Even if there's an error, still clear tokens and redirect
+      clearTokens();
+      router.push("/login?type=client");
+    } finally {
+      setIsLoggingOut(false);
+    }
   };
 
   // Mock data for active projects
@@ -35,7 +106,9 @@ export default function ClientTopbar() {
       <div className="sticky top-0 z-50 bg-neutral-0 border-b border-neutral-200 px-8 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="heading-2 text-neutral-900">Welcome back, John</h1>
+            <h1 className="heading-2 text-neutral-900">
+              Welcome back, {getFirstName(userProfile?.full_name)}
+            </h1>
             <div className="flex items-center gap-4 mt-2">
               {activeProjects.map((project, index) => (
                 <div key={index} className="flex items-center gap-2 text-sm">
@@ -79,37 +152,10 @@ export default function ClientTopbar() {
             <button
               onClick={() => setShowLogoutModal(true)}
               className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-neutral-0 font-semibold cursor-pointer hover:bg-blue-700 transition-colors"
+              title={userProfile?.full_name || "Client User"}
             >
-              JS
+              {userProfile?.initials || "CL"}
             </button>
-          </div>
-        </div>
-
-        {/* Quick Stats Bar */}
-        <div className="grid grid-cols-4 gap-4 mt-6">
-          <div className="bg-primary-50 border border-primary-200 rounded-lg p-4">
-            <p className="text-primary-600 text-sm font-medium mb-1">
-              Active Projects
-            </p>
-            <p className="text-2xl font-bold text-primary-700">2</p>
-          </div>
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <p className="text-blue-600 text-sm font-medium mb-1">
-              Pending Updates
-            </p>
-            <p className="text-2xl font-bold text-blue-700">3</p>
-          </div>
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <p className="text-yellow-600 text-sm font-medium mb-1">
-              Upcoming Milestones
-            </p>
-            <p className="text-2xl font-bold text-yellow-700">4</p>
-          </div>
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <p className="text-green-600 text-sm font-medium mb-1">
-              Unread Messages
-            </p>
-            <p className="text-2xl font-bold text-green-700">5</p>
           </div>
         </div>
       </div>
@@ -148,16 +194,27 @@ export default function ClientTopbar() {
             <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowLogoutModal(false)}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
+                disabled={isLoggingOut}
+                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 onClick={handleLogout}
-                className="px-5 py-2.5 bg-red-600 text-neutral-0 rounded-lg hover:bg-red-700 transition-colors font-semibold flex items-center gap-2"
+                disabled={isLoggingOut}
+                className="px-5 py-2.5 bg-red-600 text-neutral-0 rounded-lg hover:bg-red-700 transition-colors font-semibold flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <FontAwesomeIcon icon={faSignOut} />
-                Logout
+                {isLoggingOut ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-neutral-0 border-t-transparent" />
+                    Logging out...
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon icon={faSignOut} />
+                    Logout
+                  </>
+                )}
               </button>
             </div>
           </div>

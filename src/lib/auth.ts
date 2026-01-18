@@ -75,7 +75,7 @@ interface TokenPayload {
 // Login API call
 export async function login(
   email: string,
-  password: string
+  password: string,
 ): Promise<LoginResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/auth/login/`, {
     method: "POST",
@@ -113,7 +113,7 @@ export async function logout(refreshToken: string): Promise<void> {
 
 // Refresh token API call
 export async function refreshToken(
-  refresh: string
+  refresh: string,
 ): Promise<{ access_token: string }> {
   const response = await fetch(`${API_BASE_URL}/api/v1/auth/token/refresh/`, {
     method: "POST",
@@ -139,7 +139,7 @@ function decodeToken(token: string): TokenPayload | null {
       atob(base64)
         .split("")
         .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join("")
+        .join(""),
     );
     return JSON.parse(jsonPayload);
   } catch (error) {
@@ -151,7 +151,7 @@ function decodeToken(token: string): TokenPayload | null {
 // Check if token is expired or will expire soon
 export function isTokenExpired(
   token: string,
-  bufferSeconds: number = 60
+  bufferSeconds: number = 60,
 ): boolean {
   const payload = decodeToken(token);
 
@@ -307,4 +307,75 @@ export function isAuthenticated(): boolean {
   }
 
   return true;
+}
+// Replace the forgot password functions in your lib/auth.ts with these corrected versions
+// They now use API_BASE_URL to match your existing login/logout functions
+
+/**
+ * Request password reset link
+ */
+export async function forgotPassword(email: string) {
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/password/forgot/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || "Failed to send reset email");
+  }
+
+  return response.json();
+}
+
+/**
+ * Verify reset token validity
+ */
+export async function verifyResetToken(token: string) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/auth/password/verify-token/?token=${token}`,
+    {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error("Invalid or expired token");
+  }
+
+  return response.json();
+}
+
+/**
+ * Reset password with token
+ */
+export async function resetPassword(
+  token: string,
+  newPassword: string,
+  newPasswordConfirm: string,
+) {
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/password/reset/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      token,
+      new_password: newPassword,
+      new_password_confirm: newPasswordConfirm,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || "Failed to reset password");
+  }
+
+  return response.json();
 }

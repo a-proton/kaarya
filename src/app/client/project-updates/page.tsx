@@ -17,15 +17,54 @@ import {
   faChevronUp,
   faCalendar,
   faUser,
-  faFolder,
 } from "@fortawesome/free-solid-svg-icons";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { api } from "@/lib/api";
+import { isAuthenticated } from "@/lib/auth";
+
+// ========== INTERFACES ==========
+interface UpdateMedia {
+  id: number;
+  media_type: "image" | "video";
+  media_url: string;
+  thumbnail_url: string;
+  caption?: string;
+  file_size: number;
+  created_at: string;
+}
+
+interface ProjectUpdate {
+  id: number;
+  update_text: string;
+  work_hours?: number;
+  posted_by_name: string;
+  milestone?: number;
+  milestone_title?: string;
+  media: UpdateMedia[];
+  created_at: string;
+}
+
+interface Project {
+  id: number;
+  project_name: string;
+  description?: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled" | "on_hold";
+  status_display: string;
+  service_provider: {
+    id: number;
+    full_name: string;
+    business_name?: string;
+    profile_image?: string;
+  };
+  created_at: string;
+}
 
 interface DailyUpdate {
   id: string;
   projectId: string;
   projectName: string;
-  postedBy: string; // Provider who posted the update
+  postedBy: string;
   providerName: string;
   providerInitials: string;
   date: string;
@@ -48,143 +87,177 @@ interface Comment {
   timeAgo: string;
 }
 
+// ========== HELPER FUNCTIONS ==========
+const getInitials = (name: string): string => {
+  if (!name) return "?";
+  const words = name.split(" ");
+  if (words.length >= 2) {
+    return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  }
+  return words[0][0].toUpperCase();
+};
+
+const getTimeAgo = (dateString: string): string => {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffMins < 60)
+    return `${diffMins} minute${diffMins !== 1 ? "s" : ""} ago`;
+  if (diffHours < 24)
+    return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
+  if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? "s" : ""} ago`;
+
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+};
+
+const formatDate = (dateString: string): string => {
+  return new Date(dateString).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+};
+
+// Transform backend data to frontend format
+const transformUpdateToFrontend = (
+  update: ProjectUpdate,
+  project: Project,
+): DailyUpdate => {
+  const providerInitials = project.service_provider.profile_image
+    ? ""
+    : getInitials(project.service_provider.full_name);
+
+  return {
+    id: update.id.toString(),
+    projectId: project.id.toString(),
+    projectName: project.project_name,
+    postedBy: update.posted_by_name,
+    providerName: update.posted_by_name,
+    providerInitials: providerInitials,
+    date: formatDate(update.created_at),
+    timeAgo: getTimeAgo(update.created_at),
+    title: update.milestone_title || "Daily Progress Update",
+    description: update.update_text,
+    status:
+      project.status === "completed"
+        ? "completed"
+        : project.status === "in_progress"
+          ? "in-progress"
+          : "blocked",
+    images: update.media
+      .filter((m) => m.media_type === "image")
+      .map((m) => m.media_url),
+    videos: update.media
+      .filter((m) => m.media_type === "video")
+      .map((m) => m.media_url),
+    documents: [],
+    comments: [],
+  };
+};
+
 export default function ClientProjectUpdatesPage() {
+  const router = useRouter();
+
+  // ========== STATE ==========
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [allUpdates, setAllUpdates] = useState<DailyUpdate[]>([]);
   const [selectedProject, setSelectedProject] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedUpdate, setExpandedUpdate] = useState<string | null>(null);
   const [commentText, setCommentText] = useState<{ [key: string]: string }>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock data for projects
-  const projects = [
-    { id: "1", name: "Kitchen Remodel", status: "active" },
-    { id: "2", name: "Bathroom Renovation", status: "active" },
-    { id: "3", name: "Living Room Redesign", status: "completed" },
-  ];
+  // ========== API CALLS ==========
 
-  // Mock data for daily updates
-  const dailyUpdates: DailyUpdate[] = [
-    {
-      id: "1",
-      projectId: "1",
-      projectName: "Kitchen Remodel",
-      postedBy: "Michael Rodriguez",
-      providerName: "Michael Rodriguez",
-      providerInitials: "MR",
-      date: "January 15, 2025",
-      timeAgo: "2 hours ago",
-      title: "Electrical Wiring Installation Completed",
-      description:
-        "Today we completed the electrical wiring installation for the kitchen. All outlets, switches, and lighting fixtures have been properly wired and tested. The electrical inspector will come tomorrow for the final inspection. We also started preparing the walls for drywall installation.",
-      status: "completed",
-      images: [
-        "https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=400&h=300&fit=crop",
-        "https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=400&h=300&fit=crop",
-      ],
-      videos: [],
-      documents: ["Electrical_Inspection_Report.pdf"],
-      comments: [
-        {
-          id: "c1",
-          author: "John Smith",
-          authorInitials: "JS",
-          isClient: true,
-          text: "Great progress! When do you expect the inspection to be completed?",
-          timeAgo: "1 hour ago",
-        },
-        {
-          id: "c2",
-          author: "Michael Rodriguez",
-          authorInitials: "MR",
-          isClient: false,
-          text: "The inspector is scheduled for tomorrow at 10 AM. I'll update you once it's done.",
-          timeAgo: "45 minutes ago",
-        },
-      ],
-    },
-    {
-      id: "2",
-      projectId: "2",
-      projectName: "Bathroom Renovation",
-      postedBy: "Sarah Johnson",
-      providerName: "Sarah Johnson",
-      providerInitials: "SJ",
-      date: "January 15, 2025",
-      timeAgo: "5 hours ago",
-      title: "Plumbing Installation in Progress",
-      description:
-        "We've started installing the new plumbing system. The water supply lines and drainage pipes are being laid out according to the approved plans. We encountered a minor issue with the existing pipes that needed replacement, which will add approximately 1 day to the schedule.",
-      status: "in-progress",
-      images: [
-        "https://images.unsplash.com/photo-1600607687644-c7171b42498f?w=400&h=300&fit=crop",
-      ],
-      videos: [],
-      documents: [],
-      comments: [
-        {
-          id: "c3",
-          author: "John Smith",
-          authorInitials: "JS",
-          isClient: true,
-          text: "Thanks for the update. Is the 1-day delay going to affect the final completion date?",
-          timeAgo: "3 hours ago",
-        },
-      ],
-    },
-    {
-      id: "3",
-      projectId: "1",
-      projectName: "Kitchen Remodel",
-      postedBy: "Michael Rodriguez",
-      providerName: "Michael Rodriguez",
-      providerInitials: "MR",
-      date: "January 14, 2025",
-      timeAgo: "1 day ago",
-      title: "Cabinet Installation Started",
-      description:
-        "We began installing the custom cabinets today. The base cabinets are now in place and leveled. Tomorrow we'll continue with the upper cabinets and start the countertop measurements for the final template.",
-      status: "completed",
-      images: [
-        "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&h=300&fit=crop",
-        "https://images.unsplash.com/photo-1556909172-54557c7e4fb7?w=400&h=300&fit=crop",
-        "https://images.unsplash.com/photo-1556909212-d5b604d0c90d?w=400&h=300&fit=crop",
-      ],
-      videos: [],
-      documents: ["Cabinet_Specifications.pdf"],
-      comments: [],
-    },
-    {
-      id: "4",
-      projectId: "2",
-      projectName: "Bathroom Renovation",
-      postedBy: "Sarah Johnson",
-      providerName: "Sarah Johnson",
-      providerInitials: "SJ",
-      date: "January 13, 2025",
-      timeAgo: "2 days ago",
-      title: "Demolition Phase Completed",
-      description:
-        "All demolition work has been completed. Old fixtures, tiles, and flooring have been removed. The space is now ready for the plumbing and electrical rough-in work. We've also disposed of all debris according to local regulations.",
-      status: "completed",
-      images: [
-        "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=400&h=300&fit=crop",
-      ],
-      videos: [],
-      documents: [],
-      comments: [
-        {
-          id: "c4",
-          author: "John Smith",
-          authorInitials: "JS",
-          isClient: true,
-          text: "Looks good! The space looks much bigger now.",
-          timeAgo: "2 days ago",
-        },
-      ],
-    },
-  ];
+  // Fetch all client projects
+  const fetchProjects = async () => {
+    try {
+      const data = await api.get<{ results: Project[] }>("/api/v1/projects/");
+      return data.results || [];
+    } catch (err) {
+      console.error("Error fetching projects:", err);
+      throw err;
+    }
+  };
 
-  // Filter updates based on selected project and search
-  const filteredUpdates = dailyUpdates.filter((update) => {
+  // Fetch updates for a specific project
+  const fetchProjectUpdates = async (
+    projectId: number,
+  ): Promise<ProjectUpdate[]> => {
+    try {
+      const data = await api.get<{ results: ProjectUpdate[] }>(
+        `/api/v1/projects/${projectId}/updates/`,
+      );
+      return data.results || [];
+    } catch (err) {
+      console.error(`Error fetching updates for project ${projectId}:`, err);
+      return [];
+    }
+  };
+
+  // Load all data on component mount
+  useEffect(() => {
+    const loadData = async () => {
+      // Check authentication first
+      if (!isAuthenticated()) {
+        console.log("❌ User not authenticated, redirecting to login...");
+        router.push("/login?type=client&session=expired");
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError(null);
+
+        // Fetch all projects
+        const projectsData = await fetchProjects();
+        setProjects(projectsData);
+
+        // Fetch updates for each project
+        const allUpdatesPromises = projectsData.map(
+          async (project: Project) => {
+            const updates = await fetchProjectUpdates(project.id);
+            return updates.map((update) =>
+              transformUpdateToFrontend(update, project),
+            );
+          },
+        );
+
+        const updatesArrays = await Promise.all(allUpdatesPromises);
+        const flattenedUpdates = updatesArrays.flat();
+
+        // Sort by date (newest first)
+        flattenedUpdates.sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+        );
+
+        setAllUpdates(flattenedUpdates);
+      } catch (err: any) {
+        // The api utility will handle 401 errors and redirect automatically
+        // But we can still set error state for other types of errors
+        if (err.status !== 401) {
+          setError(err.message || "Failed to load updates");
+        }
+        console.error("Error loading data:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [router]);
+
+  // ========== FILTERING ==========
+  const filteredUpdates = allUpdates.filter((update) => {
     const matchesProject =
       selectedProject === "all" || update.projectId === selectedProject;
     const matchesSearch =
@@ -195,15 +268,24 @@ export default function ClientProjectUpdatesPage() {
     return matchesProject && matchesSearch;
   });
 
-  const handleAddComment = (updateId: string) => {
+  // ========== EVENT HANDLERS ==========
+  const handleAddComment = async (updateId: string) => {
     const comment = commentText[updateId];
     if (!comment || comment.trim() === "") {
       alert("Please enter a comment");
       return;
     }
-    console.log("Adding comment to update:", updateId, comment);
-    alert("Comment added successfully!");
-    setCommentText({ ...commentText, [updateId]: "" });
+
+    try {
+      // TODO: Implement API call to add comment when backend supports it
+      // await api.post(`/api/v1/updates/${updateId}/comments/`, { text: comment });
+      console.log("Adding comment to update:", updateId, comment);
+      alert("Comment functionality coming soon!");
+      setCommentText({ ...commentText, [updateId]: "" });
+    } catch (err) {
+      console.error("Error adding comment:", err);
+      alert("Failed to add comment. Please try again.");
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -232,6 +314,38 @@ export default function ClientProjectUpdatesPage() {
     }
   };
 
+  // ========== LOADING & ERROR STATES ==========
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+          <p className="text-neutral-600">Loading your project updates...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
+          <h3 className="text-red-800 font-semibold mb-2">
+            Error Loading Updates
+          </h3>
+          <p className="text-red-600">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 btn-primary"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ========== RENDER ==========
   return (
     <div className="min-h-screen bg-neutral-50">
       {/* Header */}
@@ -264,10 +378,10 @@ export default function ClientProjectUpdatesPage() {
                 onChange={(e) => setSelectedProject(e.target.value)}
                 className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all cursor-pointer"
               >
-                <option value="all">All Projects</option>
+                <option value="all">All Projects ({projects.length})</option>
                 {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
+                  <option key={project.id} value={project.id.toString()}>
+                    {project.project_name}
                   </option>
                 ))}
               </select>
@@ -300,7 +414,10 @@ export default function ClientProjectUpdatesPage() {
               </span>
               {selectedProject !== "all" && (
                 <span className="px-3 py-1 bg-primary-50 text-primary-700 rounded-lg text-sm font-medium border border-primary-200">
-                  {projects.find((p) => p.id === selectedProject)?.name}
+                  {
+                    projects.find((p) => p.id.toString() === selectedProject)
+                      ?.project_name
+                  }
                 </span>
               )}
               {searchQuery && (
@@ -349,7 +466,7 @@ export default function ClientProjectUpdatesPage() {
                           </span>
                           <span
                             className={`text-xs font-semibold px-2 py-1 border rounded flex items-center gap-1 ${getStatusColor(
-                              update.status
+                              update.status,
                             )}`}
                           >
                             <FontAwesomeIcon
@@ -390,7 +507,7 @@ export default function ClientProjectUpdatesPage() {
                   </div>
 
                   {/* Description */}
-                  <p className="text-neutral-700 leading-relaxed">
+                  <p className="text-neutral-700 leading-relaxed whitespace-pre-wrap">
                     {update.description}
                   </p>
                 </div>
@@ -420,6 +537,10 @@ export default function ClientProjectUpdatesPage() {
                                 src={image}
                                 alt={`Update image ${index + 1}`}
                                 className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.src =
+                                    "https://via.placeholder.com/400x300?text=Image+Not+Found";
+                                }}
                               />
                             </div>
                           ))}
@@ -441,15 +562,15 @@ export default function ClientProjectUpdatesPage() {
                           {update.videos.map((video, index) => (
                             <div
                               key={index}
-                              className="flex items-center gap-3 p-3 bg-neutral-0 rounded-lg border border-neutral-200 hover:bg-neutral-50 cursor-pointer transition-colors"
+                              className="aspect-video bg-neutral-900 rounded-lg overflow-hidden"
                             >
-                              <FontAwesomeIcon
-                                icon={faVideo}
-                                className="text-primary-600 text-xl"
-                              />
-                              <span className="font-medium text-neutral-900">
-                                Video {index + 1}
-                              </span>
+                              <video
+                                src={video}
+                                controls
+                                className="w-full h-full"
+                              >
+                                Your browser does not support video playback.
+                              </video>
                             </div>
                           ))}
                         </div>
@@ -492,7 +613,7 @@ export default function ClientProjectUpdatesPage() {
                   <button
                     onClick={() =>
                       setExpandedUpdate(
-                        expandedUpdate === update.id ? null : update.id
+                        expandedUpdate === update.id ? null : update.id,
                       )
                     }
                     className="flex items-center gap-2 text-neutral-700 hover:text-primary-600 font-semibold mb-4 transition-colors"
@@ -550,7 +671,7 @@ export default function ClientProjectUpdatesPage() {
                       {/* Add Comment */}
                       <div className="flex gap-3 pt-4 border-t border-neutral-200">
                         <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-neutral-0 font-semibold flex-shrink-0">
-                          JS
+                          CL
                         </div>
                         <div className="flex-1">
                           <textarea

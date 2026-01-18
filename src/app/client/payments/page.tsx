@@ -16,87 +16,135 @@ import {
   faFilter,
   faTimes,
   faChevronDown,
+  faSpinner,
+  faPlus,
 } from "@fortawesome/free-solid-svg-icons";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { isAuthenticated } from "@/lib/auth";
+import { useRouter } from "next/navigation";
 
 interface Payment {
-  id: string;
-  invoiceNumber: string;
-  description: string;
-  amount: number;
-  date: string;
-  status: "paid" | "pending" | "overdue";
-  paymentMethod?: string;
-  transactionId?: string;
+  id: number;
+  project: number;
+  amount: string;
+  payment_date: string;
+  payment_method?: string;
+  transaction_id?: string;
+  payment_type: "advance" | "milestone" | "final" | "other";
+  payment_status: "pending" | "completed" | "failed";
+  receipt_url?: string;
+  notes?: string;
+  posted_by_name: string;
+  created_at: string;
 }
 
-interface ProjectCost {
-  projectName: string;
-  totalCost: number;
-  amountPaid: number;
-  amountDue: number;
-  currency: string;
+interface Project {
+  id: number;
+  project_name: string;
+  total_cost: string | null;
+  advance_payment: string | null;
+  balance_payment: string | null;
+  status: string;
+  service_provider: {
+    id: number;
+    full_name: string;
+    business_name?: string;
+    profile_image?: string;
+  };
 }
 
 export default function ClientPaymentsPage() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+  const [selectedProject, setSelectedProject] = useState<number | null>(null);
 
-  // Mock project cost data
-  const projectCost: ProjectCost = {
-    projectName: "Kitchen Remodel",
-    totalCost: 45000,
-    amountPaid: 27000,
-    amountDue: 18000,
-    currency: "USD",
-  };
+  // Fetch projects
+  const {
+    data: projectsResponse,
+    isLoading: projectsLoading,
+    error: projectsError,
+  } = useQuery({
+    queryKey: ["client-projects"],
+    queryFn: async () => {
+      if (!isAuthenticated()) {
+        router.push("/login?type=client&session=expired");
+        throw new Error("Not authenticated");
+      }
+      return api.get<{ count: number; results: Project[] }>(
+        "/api/v1/projects/",
+      );
+    },
+  });
 
-  // Mock payment history
-  const payments: Payment[] = [
-    {
-      id: "1",
-      invoiceNumber: "INV-2025-001",
-      description: "Initial Deposit - Kitchen Remodel",
-      amount: 15000,
-      date: "2025-01-05",
-      status: "paid",
-      paymentMethod: "Credit Card",
-      transactionId: "TXN-458920",
-    },
-    {
-      id: "2",
-      invoiceNumber: "INV-2025-002",
-      description: "Milestone 1 - Foundation & Electrical Work",
-      amount: 12000,
-      date: "2025-01-15",
-      status: "paid",
-      paymentMethod: "Bank Transfer",
-      transactionId: "TXN-458921",
-    },
-    {
-      id: "3",
-      invoiceNumber: "INV-2025-003",
-      description: "Milestone 2 - Cabinet Installation",
-      amount: 10000,
-      date: "2025-01-25",
-      status: "pending",
-    },
-    {
-      id: "4",
-      invoiceNumber: "INV-2025-004",
-      description: "Final Payment - Project Completion",
-      amount: 8000,
-      date: "2025-02-10",
-      status: "pending",
-    },
-  ];
+  // Extract projects array from response
+  const projects = projectsResponse?.results || [];
 
-  const formatCurrency = (amount: number) => {
+  // Fetch payments for selected project
+  const {
+    data: paymentsResponse,
+    isLoading: paymentsLoading,
+    error: paymentsError,
+  } = useQuery({
+    queryKey: ["project-payments", selectedProject],
+    queryFn: async () => {
+      if (!selectedProject) return { count: 0, results: [] };
+      return api.get<{ count: number; results: Payment[] }>(
+        `/api/v1/projects/${selectedProject}/payments/`,
+      );
+    },
+    enabled: !!selectedProject,
+  });
+
+  // Extract payments array from response
+  const paymentsData = paymentsResponse?.results || [];
+
+  // Record payment mutation
+  const recordPaymentMutation = useMutation({
+    mutationFn: async (paymentData: {
+      amount: number;
+      payment_date: string;
+      payment_method: string;
+      transaction_id?: string;
+      payment_type: string;
+      payment_status: string;
+      receipt_url?: string;
+      notes?: string;
+    }) => {
+      if (!selectedProject) throw new Error("No project selected");
+      return api.post(
+        `/api/v1/projects/${selectedProject}/payments/record/`,
+        paymentData,
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["client-projects"] });
+      setShowPaymentModal(false);
+    },
+  });
+
+  // Set first project as default
+  useEffect(() => {
+    if (projects.length > 0 && !selectedProject) {
+      setSelectedProject(projects[0].id);
+    }
+  }, [projects, selectedProject]);
+
+  const currentProject = projects.find((p) => p.id === selectedProject);
+
+  const formatCurrency = (amount: string | number | null) => {
+    if (!amount) return "$0.00";
+    const num = typeof amount === "string" ? parseFloat(amount) : amount;
     return new Intl.NumberFormat("en-US", {
       style: "currency",
-      currency: projectCost.currency,
-    }).format(amount);
+      currency: "USD",
+    }).format(num);
   };
 
   const formatDate = (dateString: string) => {
@@ -107,21 +155,21 @@ export default function ClientPaymentsPage() {
     });
   };
 
-  const getStatusBadge = (status: Payment["status"]) => {
+  const getStatusBadge = (status: Payment["payment_status"]) => {
     const styles = {
-      paid: "bg-green-50 text-green-700 border-green-200",
+      completed: "bg-green-50 text-green-700 border-green-200",
       pending: "bg-yellow-50 text-yellow-700 border-yellow-200",
-      overdue: "bg-red-50 text-red-700 border-red-200",
+      failed: "bg-red-50 text-red-700 border-red-200",
     };
     const icons = {
-      paid: faCheckCircle,
+      completed: faCheckCircle,
       pending: faClock,
-      overdue: faExclamationCircle,
+      failed: faExclamationCircle,
     };
     const labels = {
-      paid: "Paid",
+      completed: "Paid",
       pending: "Pending",
-      overdue: "Overdue",
+      failed: "Failed",
     };
 
     return (
@@ -136,42 +184,106 @@ export default function ClientPaymentsPage() {
 
   const filteredPayments =
     filterStatus === "all"
-      ? payments
-      : payments.filter((p) => p.status === filterStatus);
+      ? paymentsData
+      : paymentsData.filter((p) => p.payment_status === filterStatus);
 
   const handleViewInvoice = (payment: Payment) => {
     setSelectedPayment(payment);
     setShowInvoiceModal(true);
   };
 
-  const handleDownloadInvoice = (payment: Payment) => {
-    console.log("Downloading invoice:", payment.invoiceNumber);
-    alert(`Downloading invoice ${payment.invoiceNumber}`);
+  const handleRecordPayment = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+
+    recordPaymentMutation.mutate({
+      amount: parseFloat(formData.get("amount") as string),
+      payment_date: formData.get("payment_date") as string,
+      payment_method: formData.get("payment_method") as string,
+      transaction_id: formData.get("transaction_id") as string,
+      payment_type: formData.get("payment_type") as string,
+      payment_status: "completed",
+      notes: formData.get("notes") as string,
+    });
   };
 
-  const handleMakePayment = (payment: Payment) => {
-    console.log("Making payment for:", payment.invoiceNumber);
-    alert(`Redirecting to payment gateway for ${payment.invoiceNumber}`);
-  };
+  const totalPaid =
+    paymentsData
+      .filter((p) => p.payment_status === "completed")
+      .reduce((sum, p) => sum + parseFloat(p.amount), 0) || 0;
 
-  const progressPercentage =
-    (projectCost.amountPaid / projectCost.totalCost) * 100;
+  const totalCost = currentProject?.total_cost
+    ? parseFloat(currentProject.total_cost)
+    : 0;
+  const amountDue = totalCost - totalPaid;
+  const progressPercentage = totalCost > 0 ? (totalPaid / totalCost) * 100 : 0;
+
+  if (projectsLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <FontAwesomeIcon
+          icon={faSpinner}
+          spin
+          className="w-8 h-8 text-primary-600"
+        />
+      </div>
+    );
+  }
+
+  if (projectsError || projects.length === 0) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <p className="text-neutral-600">No projects found</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-neutral-50">
       {/* Header */}
       <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div>
-          <h1 className="heading-2 text-neutral-900 mb-1">
-            Payments & Invoices
-          </h1>
-          <p className="text-neutral-600 body-regular">
-            Track your project costs and payment history
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="heading-2 text-neutral-900 mb-1">
+              Payments & Invoices
+            </h1>
+            <p className="text-neutral-600 body-regular">
+              Track your project costs and payment history
+            </p>
+          </div>
+          <button
+            onClick={() => setShowPaymentModal(true)}
+            className="btn-primary flex items-center gap-2"
+          >
+            <FontAwesomeIcon icon={faPlus} />
+            Record Payment
+          </button>
         </div>
       </div>
 
       <div className="p-8 max-w-7xl mx-auto">
+        {/* Project Selector */}
+        {projects.length > 1 && (
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-neutral-700 mb-2">
+              Select Project
+            </label>
+            <select
+              value={selectedProject || ""}
+              onChange={(e) => setSelectedProject(Number(e.target.value))}
+              className="w-full md:w-96 px-4 py-3 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.project_name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {/* Project Cost Overview */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           {/* Total Project Cost */}
@@ -185,12 +297,12 @@ export default function ClientPaymentsPage() {
                   Total Project Cost
                 </p>
                 <p className="text-xs text-neutral-200">
-                  {projectCost.projectName}
+                  {currentProject?.project_name}
                 </p>
               </div>
             </div>
             <p className="text-4xl font-bold mb-2">
-              {formatCurrency(projectCost.totalCost)}
+              {formatCurrency(totalCost)}
             </p>
             <div className="mt-4 pt-4 border-t border-white/20">
               <div className="flex items-center justify-between text-sm mb-2">
@@ -225,7 +337,7 @@ export default function ClientPaymentsPage() {
               </div>
             </div>
             <p className="text-3xl font-bold text-green-600 mb-2">
-              {formatCurrency(projectCost.amountPaid)}
+              {formatCurrency(totalPaid)}
             </p>
             <div className="flex items-center gap-2 text-sm text-neutral-600">
               <FontAwesomeIcon
@@ -233,8 +345,11 @@ export default function ClientPaymentsPage() {
                 className="text-green-600 text-xs"
               />
               <span>
-                {payments.filter((p) => p.status === "paid").length} payments
-                completed
+                {
+                  paymentsData.filter((p) => p.payment_status === "completed")
+                    .length
+                }{" "}
+                payments completed
               </span>
             </div>
           </div>
@@ -252,11 +367,11 @@ export default function ClientPaymentsPage() {
                 <p className="text-neutral-600 text-sm font-medium">
                   Amount Due
                 </p>
-                <p className="text-xs text-neutral-500">Pending payments</p>
+                <p className="text-xs text-neutral-500">Remaining balance</p>
               </div>
             </div>
             <p className="text-3xl font-bold text-yellow-600 mb-2">
-              {formatCurrency(projectCost.amountDue)}
+              {formatCurrency(amountDue)}
             </p>
             <div className="flex items-center gap-2 text-sm text-neutral-600">
               <FontAwesomeIcon
@@ -264,8 +379,11 @@ export default function ClientPaymentsPage() {
                 className="text-yellow-600 text-xs"
               />
               <span>
-                {payments.filter((p) => p.status !== "paid").length} pending
-                invoices
+                {
+                  paymentsData.filter((p) => p.payment_status !== "completed")
+                    .length
+                }{" "}
+                pending
               </span>
             </div>
           </div>
@@ -300,9 +418,9 @@ export default function ClientPaymentsPage() {
                     className="appearance-none px-4 py-2 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all text-sm cursor-pointer pr-10"
                   >
                     <option value="all">All Payments</option>
-                    <option value="paid">Paid</option>
+                    <option value="completed">Completed</option>
                     <option value="pending">Pending</option>
-                    <option value="overdue">Overdue</option>
+                    <option value="failed">Failed</option>
                   </select>
                   <FontAwesomeIcon
                     icon={faChevronDown}
@@ -311,27 +429,19 @@ export default function ClientPaymentsPage() {
                 </div>
               </div>
             </div>
-
-            {/* Active Filter Indicator */}
-            {filterStatus !== "all" && (
-              <div className="flex items-center gap-2">
-                <span className="text-neutral-600 text-sm">Active filter:</span>
-                <span className="inline-flex items-center gap-2 px-3 py-1 bg-primary-50 text-primary-700 rounded-lg text-sm font-medium border border-primary-200">
-                  {filterStatus.charAt(0).toUpperCase() + filterStatus.slice(1)}
-                  <button
-                    onClick={() => setFilterStatus("all")}
-                    className="hover:text-primary-900"
-                  >
-                    <FontAwesomeIcon icon={faTimes} className="text-xs" />
-                  </button>
-                </span>
-              </div>
-            )}
           </div>
 
           {/* Payment List */}
           <div className="divide-y divide-neutral-200">
-            {filteredPayments.length > 0 ? (
+            {paymentsLoading ? (
+              <div className="p-12 text-center">
+                <FontAwesomeIcon
+                  icon={faSpinner}
+                  spin
+                  className="w-8 h-8 text-primary-600"
+                />
+              </div>
+            ) : filteredPayments.length > 0 ? (
               filteredPayments.map((payment) => (
                 <div
                   key={payment.id}
@@ -349,38 +459,38 @@ export default function ClientPaymentsPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 mb-2">
                           <h3 className="font-semibold text-neutral-900">
-                            {payment.description}
+                            {payment.payment_type.charAt(0).toUpperCase() +
+                              payment.payment_type.slice(1)}{" "}
+                            Payment
                           </h3>
-                          {getStatusBadge(payment.status)}
+                          {getStatusBadge(payment.payment_status)}
                         </div>
                         <div className="flex items-center gap-4 text-sm text-neutral-600">
-                          <span className="flex items-center gap-1">
-                            <FontAwesomeIcon
-                              icon={faFileInvoice}
-                              className="text-xs"
-                            />
-                            {payment.invoiceNumber}
-                          </span>
                           <span className="flex items-center gap-1">
                             <FontAwesomeIcon
                               icon={faCalendar}
                               className="text-xs"
                             />
-                            {formatDate(payment.date)}
+                            {formatDate(payment.payment_date)}
                           </span>
-                          {payment.paymentMethod && (
+                          {payment.payment_method && (
                             <span className="flex items-center gap-1">
                               <FontAwesomeIcon
                                 icon={faCreditCard}
                                 className="text-xs"
                               />
-                              {payment.paymentMethod}
+                              {payment.payment_method}
                             </span>
                           )}
                         </div>
-                        {payment.transactionId && (
+                        {payment.transaction_id && (
                           <p className="text-xs text-neutral-500 mt-1">
-                            Transaction ID: {payment.transactionId}
+                            Transaction ID: {payment.transaction_id}
+                          </p>
+                        )}
+                        {payment.notes && (
+                          <p className="text-sm text-neutral-600 mt-2">
+                            {payment.notes}
                           </p>
                         )}
                       </div>
@@ -397,25 +507,10 @@ export default function ClientPaymentsPage() {
                         <button
                           onClick={() => handleViewInvoice(payment)}
                           className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="View invoice"
+                          title="View details"
                         >
                           <FontAwesomeIcon icon={faEye} />
                         </button>
-                        <button
-                          onClick={() => handleDownloadInvoice(payment)}
-                          className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                          title="Download invoice"
-                        >
-                          <FontAwesomeIcon icon={faDownload} />
-                        </button>
-                        {payment.status === "pending" && (
-                          <button
-                            onClick={() => handleMakePayment(payment)}
-                            className="px-4 py-2 bg-primary-600 text-neutral-0 rounded-lg hover:bg-primary-700 transition-colors font-medium text-sm"
-                          >
-                            Pay Now
-                          </button>
-                        )}
                       </div>
                     </div>
                   </div>
@@ -428,58 +523,155 @@ export default function ClientPaymentsPage() {
                   className="text-5xl mb-4 opacity-30"
                 />
                 <p className="font-medium">No payments found</p>
-                <p className="text-sm mt-2">Try adjusting your filter</p>
+                <p className="text-sm mt-2">
+                  {filterStatus === "all"
+                    ? "Record your first payment"
+                    : "Try adjusting your filter"}
+                </p>
               </div>
             )}
           </div>
         </div>
+      </div>
 
-        {/* Payment Info Card */}
-        <div className="mt-6 bg-blue-50 border border-blue-200 rounded-xl p-6">
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-              <FontAwesomeIcon
-                icon={faCreditCard}
-                className="text-blue-600 text-xl"
-              />
+      {/* Record Payment Modal */}
+      {showPaymentModal && (
+        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full">
+            <div className="bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between">
+              <h3 className="heading-4 text-neutral-900">Record Payment</h3>
+              <button
+                onClick={() => setShowPaymentModal(false)}
+                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+              >
+                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+              </button>
             </div>
-            <div className="flex-1">
-              <h3 className="font-semibold text-blue-900 mb-2">
-                Payment Information
-              </h3>
-              <p className="text-blue-700 text-sm mb-3">
-                Payments are processed securely through our payment gateway. You
-                can pay using credit card, debit card, or bank transfer.
-              </p>
-              <div className="flex items-center gap-4 text-sm text-blue-600">
-                <span className="flex items-center gap-1">
-                  <FontAwesomeIcon icon={faCheckCircle} />
-                  Secure payments
-                </span>
-                <span className="flex items-center gap-1">
-                  <FontAwesomeIcon icon={faCheckCircle} />
-                  Instant receipts
-                </span>
-                <span className="flex items-center gap-1">
-                  <FontAwesomeIcon icon={faCheckCircle} />
-                  Multiple payment methods
-                </span>
+
+            <form onSubmit={handleRecordPayment} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 mb-2">
+                    Amount *
+                  </label>
+                  <input
+                    type="number"
+                    name="amount"
+                    step="0.01"
+                    required
+                    className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                    placeholder="0.00"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 mb-2">
+                    Payment Date *
+                  </label>
+                  <input
+                    type="date"
+                    name="payment_date"
+                    required
+                    defaultValue={new Date().toISOString().split("T")[0]}
+                    className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                  />
+                </div>
               </div>
-            </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 mb-2">
+                    Payment Type *
+                  </label>
+                  <select
+                    name="payment_type"
+                    required
+                    className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                  >
+                    <option value="advance">Advance</option>
+                    <option value="milestone">Milestone</option>
+                    <option value="final">Final</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 mb-2">
+                    Payment Method
+                  </label>
+                  <input
+                    type="text"
+                    name="payment_method"
+                    className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                    placeholder="Credit Card, Bank Transfer, etc."
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-neutral-700 mb-2">
+                  Transaction ID
+                </label>
+                <input
+                  type="text"
+                  name="transaction_id"
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                  placeholder="Optional transaction reference"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-neutral-700 mb-2">
+                  Notes
+                </label>
+                <textarea
+                  name="notes"
+                  rows={3}
+                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                  placeholder="Additional payment details..."
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-neutral-200">
+                <button
+                  type="button"
+                  onClick={() => setShowPaymentModal(false)}
+                  className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={recordPaymentMutation.isPending}
+                  className="btn-primary flex items-center gap-2"
+                >
+                  {recordPaymentMutation.isPending ? (
+                    <>
+                      <FontAwesomeIcon icon={faSpinner} spin />
+                      Recording...
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon icon={faCheckCircle} />
+                      Record Payment
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
-      </div>
+      )}
 
       {/* View Invoice Modal */}
       {showInvoiceModal && selectedPayment && (
         <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-            {/* Modal Header */}
             <div className="sticky top-0 bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between z-10">
               <div>
-                <h3 className="heading-4 text-neutral-900">Invoice Details</h3>
+                <h3 className="heading-4 text-neutral-900">Payment Details</h3>
                 <p className="text-neutral-600 text-sm mt-1">
-                  {selectedPayment.invoiceNumber}
+                  {currentProject?.project_name}
                 </p>
               </div>
               <button
@@ -490,58 +682,44 @@ export default function ClientPaymentsPage() {
               </button>
             </div>
 
-            {/* Invoice Content */}
             <div className="p-8">
-              {/* Invoice Header */}
               <div className="flex items-start justify-between mb-8 pb-8 border-b border-neutral-200">
                 <div>
                   <h2 className="text-3xl font-bold text-neutral-900 mb-2">
-                    INVOICE
+                    PAYMENT RECEIPT
                   </h2>
-                  <p className="text-neutral-600">
-                    {selectedPayment.invoiceNumber}
-                  </p>
+                  <p className="text-neutral-600">ID: {selectedPayment.id}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-neutral-600 text-sm mb-1">Date Issued</p>
+                  <p className="text-neutral-600 text-sm mb-1">Date</p>
                   <p className="font-semibold text-neutral-900">
-                    {formatDate(selectedPayment.date)}
+                    {formatDate(selectedPayment.payment_date)}
                   </p>
                 </div>
               </div>
 
-              {/* From/To Section */}
               <div className="grid grid-cols-2 gap-8 mb-8 pb-8 border-b border-neutral-200">
                 <div>
                   <p className="text-neutral-600 text-sm font-semibold mb-2">
                     FROM
                   </p>
                   <p className="font-semibold text-neutral-900">
-                    Michael Rodriguez
+                    {currentProject?.service_provider.business_name ||
+                      currentProject?.service_provider.full_name}
                   </p>
-                  <p className="text-neutral-600 text-sm">
-                    Licensed Electrician
-                  </p>
-                  <p className="text-neutral-600 text-sm">+1 (555) 123-4567</p>
-                  <p className="text-neutral-600 text-sm">
-                    michael@contractor.com
-                  </p>
+                  <p className="text-neutral-600 text-sm">Service Provider</p>
                 </div>
                 <div>
                   <p className="text-neutral-600 text-sm font-semibold mb-2">
-                    TO
+                    PAYMENT BY
                   </p>
-                  <p className="font-semibold text-neutral-900">John Smith</p>
-                  <p className="text-neutral-600 text-sm">
-                    {projectCost.projectName}
+                  <p className="font-semibold text-neutral-900">
+                    {selectedPayment.posted_by_name}
                   </p>
-                  <p className="text-neutral-600 text-sm">
-                    john.smith@email.com
-                  </p>
+                  <p className="text-neutral-600 text-sm">Client</p>
                 </div>
               </div>
 
-              {/* Invoice Items */}
               <div className="mb-8">
                 <table className="w-full">
                   <thead>
@@ -557,7 +735,9 @@ export default function ClientPaymentsPage() {
                   <tbody>
                     <tr className="border-b border-neutral-100">
                       <td className="py-4 text-neutral-900">
-                        {selectedPayment.description}
+                        {selectedPayment.payment_type.charAt(0).toUpperCase() +
+                          selectedPayment.payment_type.slice(1)}{" "}
+                        Payment - {currentProject?.project_name}
                       </td>
                       <td className="py-4 text-right font-semibold text-neutral-900">
                         {formatCurrency(selectedPayment.amount)}
@@ -567,7 +747,6 @@ export default function ClientPaymentsPage() {
                 </table>
               </div>
 
-              {/* Total */}
               <div className="flex justify-end mb-8">
                 <div className="w-64">
                   <div className="flex items-center justify-between py-3 border-t-2 border-neutral-900">
@@ -581,47 +760,52 @@ export default function ClientPaymentsPage() {
                 </div>
               </div>
 
-              {/* Status */}
               <div className="bg-neutral-50 rounded-lg p-4 mb-6">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between mb-2">
                   <span className="font-semibold text-neutral-700">
                     Payment Status:
                   </span>
-                  {getStatusBadge(selectedPayment.status)}
+                  {getStatusBadge(selectedPayment.payment_status)}
                 </div>
-                {selectedPayment.paymentMethod && (
+                {selectedPayment.payment_method && (
                   <div className="flex items-center justify-between mt-2">
                     <span className="text-neutral-600 text-sm">
                       Payment Method:
                     </span>
                     <span className="font-medium text-neutral-900 text-sm">
-                      {selectedPayment.paymentMethod}
+                      {selectedPayment.payment_method}
                     </span>
                   </div>
                 )}
-                {selectedPayment.transactionId && (
+                {selectedPayment.transaction_id && (
                   <div className="flex items-center justify-between mt-2">
                     <span className="text-neutral-600 text-sm">
                       Transaction ID:
                     </span>
                     <span className="font-mono text-neutral-900 text-sm">
-                      {selectedPayment.transactionId}
+                      {selectedPayment.transaction_id}
                     </span>
+                  </div>
+                )}
+                {selectedPayment.notes && (
+                  <div className="mt-3 pt-3 border-t border-neutral-200">
+                    <p className="text-neutral-600 text-sm mb-1">Notes:</p>
+                    <p className="text-neutral-900 text-sm">
+                      {selectedPayment.notes}
+                    </p>
                   </div>
                 )}
               </div>
 
-              {/* Notes */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <p className="text-blue-700 text-sm">
                   <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                  Thank you for your business! If you have any questions about
-                  this invoice, please contact your service provider.
+                  Thank you for your payment! This receipt has been recorded in
+                  the project history.
                 </p>
               </div>
             </div>
 
-            {/* Modal Footer */}
             <div className="sticky bottom-0 bg-neutral-50 border-t border-neutral-200 px-6 py-4 flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowInvoiceModal(false)}
@@ -629,25 +813,6 @@ export default function ClientPaymentsPage() {
               >
                 Close
               </button>
-              <button
-                onClick={() => handleDownloadInvoice(selectedPayment)}
-                className="btn-primary flex items-center gap-2"
-              >
-                <FontAwesomeIcon icon={faDownload} />
-                Download Invoice
-              </button>
-              {selectedPayment.status === "pending" && (
-                <button
-                  onClick={() => {
-                    setShowInvoiceModal(false);
-                    handleMakePayment(selectedPayment);
-                  }}
-                  className="px-5 py-2.5 bg-green-600 text-neutral-0 rounded-lg font-semibold hover:bg-green-700 transition-colors flex items-center gap-2"
-                >
-                  <FontAwesomeIcon icon={faCreditCard} />
-                  Pay Now
-                </button>
-              )}
             </div>
           </div>
         </div>

@@ -18,8 +18,43 @@ import {
   faTimes,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { isAuthenticated } from "@/lib/auth";
 
-interface Comment {
+// ========== INTERFACES ==========
+interface Milestone {
+  id: number;
+  project?: number; // Make optional since backend might not include it
+  title: string;
+  description: string;
+  target_date: string | null;
+  completion_date: string | null;
+  status: "pending" | "in_progress" | "completed";
+  milestone_order: number | null;
+  completion_percentage: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface Project {
+  id: number;
+  project_name: string;
+  description: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled" | "on_hold";
+  status_display: string;
+  service_provider: {
+    id: number;
+    full_name: string;
+    business_name?: string;
+    profile_image?: string;
+    initials: string;
+  };
+  created_at: string;
+}
+
+interface MilestoneComment {
   id: string;
   author: string;
   authorInitials: string;
@@ -28,207 +63,229 @@ interface Comment {
   timeAgo: string;
 }
 
-interface Milestone {
-  id: string;
-  projectId: string;
+interface EnrichedMilestone extends Milestone {
+  projectId: number; // Add explicit projectId from the enrichment
   projectName: string;
-  title: string;
-  description: string;
-  dueDate: string;
-  status: "pending" | "in-progress" | "completed";
   postedBy: string;
   providerInitials: string;
-  comments: Comment[];
-  createdDate: string;
+  comments: MilestoneComment[];
 }
 
+// ========== HELPER FUNCTIONS ==========
+const getTimeAgo = (dateString: string): string => {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffMins < 60)
+    return `${diffMins} minute${diffMins !== 1 ? "s" : ""} ago`;
+  if (diffHours < 24)
+    return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
+  if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? "s" : ""} ago`;
+
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+};
+
+const formatDate = (dateString: string | null): string => {
+  if (!dateString) return "Not set";
+  return new Date(dateString).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+};
+
+const isOverdue = (dueDate: string | null, status: string): boolean => {
+  if (!dueDate || status === "completed") return false;
+  return new Date(dueDate) < new Date();
+};
+
 export default function ClientMilestonesPage() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  // ========== STATE ==========
   const [selectedProject, setSelectedProject] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedMilestone, setExpandedMilestone] = useState<string | null>(
-    null
+    null,
   );
   const [commentText, setCommentText] = useState<{ [key: string]: string }>({});
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
 
-  // Mock data for projects
-  const projects = [
-    { id: "1", name: "Kitchen Remodel", status: "active" },
-    { id: "2", name: "Bathroom Renovation", status: "active" },
-    { id: "3", name: "Living Room Redesign", status: "completed" },
-  ];
+  // ========== API QUERIES ==========
 
-  // Mock data for milestones
-  const milestones: Milestone[] = [
-    {
-      id: "1",
-      projectId: "1",
-      projectName: "Kitchen Remodel",
-      title: "Foundation Complete",
-      description:
-        "Complete all foundation work including pouring concrete and letting it cure for the required time period.",
-      dueDate: "2025-01-20",
-      status: "completed",
-      postedBy: "Michael Rodriguez",
-      providerInitials: "MR",
-      createdDate: "January 10, 2025",
-      comments: [
-        {
-          id: "c1",
-          author: "John Smith",
-          authorInitials: "JS",
-          isClient: true,
-          text: "Great work! The foundation looks solid.",
-          timeAgo: "2 hours ago",
-        },
-        {
-          id: "c2",
-          author: "Michael Rodriguez",
-          authorInitials: "MR",
-          isClient: false,
-          text: "Thank you! We're moving ahead of schedule.",
-          timeAgo: "1 hour ago",
-        },
-      ],
+  // Fetch only client's associated projects
+  const {
+    data: projectsData,
+    isLoading: projectsLoading,
+    error: projectsError,
+  } = useQuery({
+    queryKey: ["client-projects"],
+    queryFn: async () => {
+      if (!isAuthenticated()) {
+        router.push("/login?type=client&session=expired");
+        throw new Error("Not authenticated");
+      }
+      // This endpoint returns only projects where the client is associated
+      const data = await api.get<{ results: Project[] }>("/api/v1/projects/");
+      return data.results || [];
     },
-    {
-      id: "2",
-      projectId: "1",
-      projectName: "Kitchen Remodel",
-      title: "Electrical Wiring Installation",
-      description:
-        "Install all electrical wiring, outlets, and fixtures according to the approved electrical plan. Schedule inspection after completion.",
-      dueDate: "2025-01-25",
-      status: "in-progress",
-      postedBy: "Michael Rodriguez",
-      providerInitials: "MR",
-      createdDate: "January 10, 2025",
-      comments: [
-        {
-          id: "c3",
-          author: "John Smith",
-          authorInitials: "JS",
-          isClient: true,
-          text: "When do you expect to finish this milestone?",
-          timeAgo: "3 hours ago",
-        },
-        {
-          id: "c4",
-          author: "Michael Rodriguez",
-          authorInitials: "MR",
-          isClient: false,
-          text: "We should complete it by end of this week. Inspection is scheduled for Monday.",
-          timeAgo: "2 hours ago",
-        },
-      ],
-    },
-    {
-      id: "3",
-      projectId: "1",
-      projectName: "Kitchen Remodel",
-      title: "Cabinet Installation",
-      description:
-        "Install custom cabinets, ensure proper leveling, and prepare for countertop measurements.",
-      dueDate: "2025-02-01",
-      status: "pending",
-      postedBy: "Michael Rodriguez",
-      providerInitials: "MR",
-      createdDate: "January 10, 2025",
-      comments: [],
-    },
-    {
-      id: "4",
-      projectId: "2",
-      projectName: "Bathroom Renovation",
-      title: "Demolition Phase",
-      description:
-        "Remove all existing fixtures, tiles, and flooring. Dispose of debris according to local regulations.",
-      dueDate: "2025-01-18",
-      status: "completed",
-      postedBy: "Sarah Johnson",
-      providerInitials: "SJ",
-      createdDate: "January 12, 2025",
-      comments: [
-        {
-          id: "c5",
-          author: "John Smith",
-          authorInitials: "JS",
-          isClient: true,
-          text: "The space looks much bigger now!",
-          timeAgo: "1 day ago",
-        },
-      ],
-    },
-    {
-      id: "5",
-      projectId: "2",
-      projectName: "Bathroom Renovation",
-      title: "Plumbing Installation",
-      description:
-        "Install new plumbing system including water supply lines and drainage pipes according to approved plans.",
-      dueDate: "2025-01-28",
-      status: "in-progress",
-      postedBy: "Sarah Johnson",
-      providerInitials: "SJ",
-      createdDate: "January 12, 2025",
-      comments: [],
-    },
-    {
-      id: "6",
-      projectId: "2",
-      projectName: "Bathroom Renovation",
-      title: "Tile Installation",
-      description:
-        "Install bathroom tiles on walls and floors. Ensure proper waterproofing and grouting.",
-      dueDate: "2025-02-05",
-      status: "pending",
-      postedBy: "Sarah Johnson",
-      providerInitials: "SJ",
-      createdDate: "January 12, 2025",
-      comments: [],
-    },
-  ];
-
-  // Filter milestones
-  const filteredMilestones = milestones.filter((milestone) => {
-    const matchesProject =
-      selectedProject === "all" || milestone.projectId === selectedProject;
-    const matchesStatus =
-      selectedStatus === "all" || milestone.status === selectedStatus;
-    const matchesSearch =
-      searchQuery === "" ||
-      milestone.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      milestone.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      milestone.projectName.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesProject && matchesStatus && matchesSearch;
   });
 
-  // Group milestones by project
-  const groupedMilestones = filteredMilestones.reduce((acc, milestone) => {
-    if (!acc[milestone.projectId]) {
-      acc[milestone.projectId] = [];
-    }
-    acc[milestone.projectId].push(milestone);
-    return acc;
-  }, {} as { [key: string]: Milestone[] });
+  // Fetch milestones for client's projects only
+  const {
+    data: allMilestones,
+    isLoading: milestonesLoading,
+    error: milestonesError,
+  } = useQuery({
+    queryKey: ["client-milestones", projectsData],
+    queryFn: async () => {
+      if (!projectsData || projectsData.length === 0) {
+        console.log("No projects found for client");
+        return [];
+      }
 
-  const handleAddComment = (milestoneId: string) => {
+      console.log(
+        "Fetching milestones for projects:",
+        projectsData.map((p) => ({ id: p.id, name: p.project_name })),
+      );
+
+      // Fetch milestones only for projects the client is associated with
+      const milestonesPromises = projectsData.map(async (project) => {
+        try {
+          console.log(`Fetching milestones for project ${project.id}...`);
+          const data = await api.get<{ results: Milestone[] }>(
+            `/api/v1/projects/${project.id}/milestones/`,
+          );
+          console.log(`Milestones for project ${project.id}:`, data);
+
+          const enrichedMilestones = (data.results || []).map((milestone) => ({
+            ...milestone,
+            projectId: project.id, // Explicitly add projectId for filtering
+            projectName: project.project_name,
+            postedBy: project.service_provider.full_name,
+            providerInitials: project.service_provider.initials,
+            comments: [] as MilestoneComment[],
+          }));
+
+          console.log(
+            `Enriched milestones for project ${project.id}:`,
+            enrichedMilestones,
+          );
+          return enrichedMilestones;
+        } catch (err) {
+          console.error(
+            `Error fetching milestones for project ${project.id}:`,
+            err,
+          );
+          return [];
+        }
+      });
+
+      const milestonesArrays = await Promise.all(milestonesPromises);
+      const flatMilestones = milestonesArrays.flat();
+      console.log("All milestones (flat):", flatMilestones);
+      return flatMilestones;
+    },
+    enabled: !!projectsData && projectsData.length > 0,
+  });
+
+  // ========== MUTATIONS ==========
+
+  // Add comment mutation (placeholder - backend doesn't support this yet)
+  const addCommentMutation = useMutation({
+    mutationFn: async ({
+      milestoneId,
+      comment,
+    }: {
+      milestoneId: string;
+      comment: string;
+    }) => {
+      // TODO: Implement when backend supports milestone comments
+      // await api.post(`/api/v1/milestones/${milestoneId}/comments/`, { text: comment });
+      throw new Error("Comment functionality coming soon!");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["client-milestones"] });
+      setShowSuccessMessage(true);
+      setTimeout(() => setShowSuccessMessage(false), 3000);
+    },
+    onError: (error: any) => {
+      alert(error.message || "Failed to add comment. Please try again.");
+    },
+  });
+
+  // ========== EVENT HANDLERS ==========
+
+  const handleAddComment = async (milestoneId: string) => {
     const comment = commentText[milestoneId];
     if (!comment || comment.trim() === "") {
       alert("Please enter a comment");
       return;
     }
-    console.log("Adding comment to milestone:", milestoneId, comment);
-    setShowSuccessMessage(true);
-    setTimeout(() => setShowSuccessMessage(false), 3000);
-    setCommentText({ ...commentText, [milestoneId]: "" });
+
+    try {
+      await addCommentMutation.mutateAsync({ milestoneId, comment });
+      setCommentText({ ...commentText, [milestoneId]: "" });
+    } catch (err) {
+      // Error already handled in mutation
+    }
   };
+
+  // ========== FILTERING ==========
+
+  const filteredMilestones = (allMilestones || []).filter((milestone) => {
+    // Use projectId that we added during enrichment
+    const matchesProject =
+      selectedProject === "all" ||
+      milestone.projectId.toString() === selectedProject;
+    const matchesStatus =
+      selectedStatus === "all" || milestone.status === selectedStatus;
+    const matchesSearch =
+      searchQuery === "" ||
+      milestone.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      milestone.description
+        ?.toLowerCase()
+        .includes(searchQuery.toLowerCase()) ||
+      milestone.projectName?.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesProject && matchesStatus && matchesSearch;
+  });
+
+  console.log("Filtered milestones:", filteredMilestones);
+  console.log("Selected project:", selectedProject);
+  console.log("Selected status:", selectedStatus);
+  console.log("Search query:", searchQuery);
+
+  // Group milestones by project
+  const groupedMilestones = filteredMilestones.reduce(
+    (acc, milestone) => {
+      // Use projectId that we added during enrichment
+      const projectId = milestone.projectId.toString();
+
+      if (!acc[projectId]) {
+        acc[projectId] = [];
+      }
+      acc[projectId].push(milestone);
+      return acc;
+    },
+    {} as { [key: string]: EnrichedMilestone[] },
+  );
+
+  // ========== HELPER FUNCTIONS ==========
 
   const getStatusBadgeColor = (status: string) => {
     const colors = {
       pending: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      "in-progress": "bg-blue-100 text-blue-700 border-blue-200",
+      in_progress: "bg-blue-100 text-blue-700 border-blue-200",
       completed: "bg-green-100 text-green-700 border-green-200",
     };
     return colors[status as keyof typeof colors];
@@ -237,7 +294,7 @@ export default function ClientMilestonesPage() {
   const getStatusIcon = (status: string) => {
     const icons = {
       pending: faExclamationTriangle,
-      "in-progress": faClock,
+      in_progress: faClock,
       completed: faCheck,
     };
     return icons[status as keyof typeof icons];
@@ -246,29 +303,63 @@ export default function ClientMilestonesPage() {
   const getStatusText = (status: string) => {
     const texts = {
       pending: "Pending",
-      "in-progress": "In Progress",
+      in_progress: "In Progress",
       completed: "Completed",
     };
     return texts[status as keyof typeof texts];
   };
 
-  const isOverdue = (dueDate: string, status: string) => {
-    if (status === "completed") return false;
-    return new Date(dueDate) < new Date();
-  };
-
-  // Calculate project progress
   const getProjectProgress = (projectId: string) => {
-    const projectMilestones = milestones.filter(
-      (m) => m.projectId === projectId
+    const projectMilestones = (allMilestones || []).filter(
+      (m) => m.projectId.toString() === projectId,
     );
     const completed = projectMilestones.filter(
-      (m) => m.status === "completed"
+      (m) => m.status === "completed",
     ).length;
     return projectMilestones.length > 0
       ? Math.round((completed / projectMilestones.length) * 100)
       : 0;
   };
+
+  // ========== LOADING & ERROR STATES ==========
+
+  const isLoading = projectsLoading || milestonesLoading;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+          <p className="text-neutral-600">Loading milestones...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (projectsError || milestonesError) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
+          <h3 className="text-red-800 font-semibold mb-2">
+            Error Loading Milestones
+          </h3>
+          <p className="text-red-600">
+            {(projectsError as any)?.message ||
+              (milestonesError as any)?.message ||
+              "Unknown error"}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 btn-primary"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ========== RENDER ==========
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -324,10 +415,12 @@ export default function ClientMilestonesPage() {
                 onChange={(e) => setSelectedProject(e.target.value)}
                 className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all cursor-pointer"
               >
-                <option value="all">All Projects</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
+                <option value="all">
+                  All Projects ({projectsData?.length || 0})
+                </option>
+                {projectsData?.map((project) => (
+                  <option key={project.id} value={project.id.toString()}>
+                    {project.project_name}
                   </option>
                 ))}
               </select>
@@ -349,7 +442,7 @@ export default function ClientMilestonesPage() {
               >
                 <option value="all">All Statuses</option>
                 <option value="pending">Pending</option>
-                <option value="in-progress">In Progress</option>
+                <option value="in_progress">In Progress</option>
                 <option value="completed">Completed</option>
               </select>
             </div>
@@ -383,7 +476,11 @@ export default function ClientMilestonesPage() {
               </span>
               {selectedProject !== "all" && (
                 <span className="px-3 py-1 bg-primary-50 text-primary-700 rounded-lg text-sm font-medium border border-primary-200">
-                  {projects.find((p) => p.id === selectedProject)?.name}
+                  {
+                    projectsData?.find(
+                      (p) => p.id.toString() === selectedProject,
+                    )?.project_name
+                  }
                 </span>
               )}
               {selectedStatus !== "all" && (
@@ -422,7 +519,9 @@ export default function ClientMilestonesPage() {
           <div className="space-y-6">
             {Object.entries(groupedMilestones).map(
               ([projectId, projectMilestones]) => {
-                const project = projects.find((p) => p.id === projectId);
+                const project = projectsData?.find(
+                  (p) => p.id.toString() === projectId,
+                );
                 const progress = getProjectProgress(projectId);
 
                 return (
@@ -434,12 +533,12 @@ export default function ClientMilestonesPage() {
                     <div className="bg-gradient-to-r from-primary-50 to-secondary-50 p-6 border-b border-neutral-200">
                       <div className="flex items-center justify-between mb-3">
                         <h2 className="heading-4 text-neutral-900">
-                          {project?.name}
+                          {project?.project_name}
                         </h2>
                         <span className="text-sm font-semibold text-neutral-600">
                           {
                             projectMilestones.filter(
-                              (m) => m.status === "completed"
+                              (m) => m.status === "completed",
                             ).length
                           }{" "}
                           / {projectMilestones.length} Completed
@@ -469,7 +568,7 @@ export default function ClientMilestonesPage() {
                                 </h3>
                                 <span
                                   className={`text-xs font-semibold px-2 py-1 border rounded flex items-center gap-1 ${getStatusBadgeColor(
-                                    milestone.status
+                                    milestone.status,
                                   )}`}
                                 >
                                   <FontAwesomeIcon
@@ -478,8 +577,8 @@ export default function ClientMilestonesPage() {
                                   {getStatusText(milestone.status)}
                                 </span>
                                 {isOverdue(
-                                  milestone.dueDate,
-                                  milestone.status
+                                  milestone.target_date,
+                                  milestone.status,
                                 ) && (
                                   <span className="text-xs font-semibold px-2 py-1 bg-red-100 text-red-700 border border-red-200 rounded">
                                     Overdue
@@ -506,14 +605,20 @@ export default function ClientMilestonesPage() {
                                     className="text-xs"
                                   />
                                   <span className="font-medium">Due:</span>{" "}
-                                  {new Date(
-                                    milestone.dueDate
-                                  ).toLocaleDateString("en-US", {
-                                    month: "short",
-                                    day: "numeric",
-                                    year: "numeric",
-                                  })}
+                                  {formatDate(milestone.target_date)}
                                 </span>
+                                {milestone.completion_date && (
+                                  <span className="flex items-center gap-1">
+                                    <FontAwesomeIcon
+                                      icon={faCheck}
+                                      className="text-xs"
+                                    />
+                                    <span className="font-medium">
+                                      Completed:
+                                    </span>{" "}
+                                    {formatDate(milestone.completion_date)}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -523,9 +628,9 @@ export default function ClientMilestonesPage() {
                             <button
                               onClick={() =>
                                 setExpandedMilestone(
-                                  expandedMilestone === milestone.id
+                                  expandedMilestone === milestone.id.toString()
                                     ? null
-                                    : milestone.id
+                                    : milestone.id.toString(),
                                 )
                               }
                               className="flex items-center gap-2 text-neutral-700 hover:text-primary-600 font-semibold mb-4 transition-colors"
@@ -536,7 +641,7 @@ export default function ClientMilestonesPage() {
                               </span>
                               <FontAwesomeIcon
                                 icon={
-                                  expandedMilestone === milestone.id
+                                  expandedMilestone === milestone.id.toString()
                                     ? faChevronUp
                                     : faChevronDown
                                 }
@@ -544,7 +649,7 @@ export default function ClientMilestonesPage() {
                               />
                             </button>
 
-                            {expandedMilestone === milestone.id && (
+                            {expandedMilestone === milestone.id.toString() && (
                               <div className="space-y-4">
                                 {/* Existing Comments */}
                                 {milestone.comments.length > 0 ? (
@@ -595,15 +700,19 @@ export default function ClientMilestonesPage() {
                                 {/* Add Comment */}
                                 <div className="flex gap-3 pt-4 border-t border-neutral-200">
                                   <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-neutral-0 font-semibold flex-shrink-0">
-                                    JS
+                                    CL
                                   </div>
                                   <div className="flex-1">
                                     <textarea
-                                      value={commentText[milestone.id] || ""}
+                                      value={
+                                        commentText[milestone.id.toString()] ||
+                                        ""
+                                      }
                                       onChange={(e) =>
                                         setCommentText({
                                           ...commentText,
-                                          [milestone.id]: e.target.value,
+                                          [milestone.id.toString()]:
+                                            e.target.value,
                                         })
                                       }
                                       placeholder="Add a comment or ask a question about this milestone..."
@@ -613,12 +722,17 @@ export default function ClientMilestonesPage() {
                                     <div className="flex justify-end mt-2">
                                       <button
                                         onClick={() =>
-                                          handleAddComment(milestone.id)
+                                          handleAddComment(
+                                            milestone.id.toString(),
+                                          )
                                         }
-                                        className="btn-primary text-sm flex items-center gap-2"
+                                        disabled={addCommentMutation.isPending}
+                                        className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50"
                                       >
                                         <FontAwesomeIcon icon={faPaperPlane} />
-                                        Post Comment
+                                        {addCommentMutation.isPending
+                                          ? "Posting..."
+                                          : "Post Comment"}
                                       </button>
                                     </div>
                                   </div>
@@ -631,7 +745,7 @@ export default function ClientMilestonesPage() {
                     </div>
                   </div>
                 );
-              }
+              },
             )}
           </div>
         )}

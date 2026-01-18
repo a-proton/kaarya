@@ -10,7 +10,7 @@ import {
   storeTokens,
   extractAccessToken,
   extractRefreshToken,
-  storeUserProfile, // Add this
+  storeUserProfile,
 } from "@/lib/auth";
 interface LoginFormData {
   email: string;
@@ -32,7 +32,7 @@ function LoginContent() {
   const registered = searchParams.get("registered");
 
   const [activeTab, setActiveTab] = useState<AccountType>(
-    accountType === "provider" ? "provider" : "user"
+    accountType === "provider" ? "provider" : "user",
   );
   const [showPassword, setShowPassword] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -82,52 +82,68 @@ function LoginContent() {
     try {
       setToast(null);
 
-      console.log("=== LOGIN ATTEMPT ===");
-      console.log("Email:", data.email);
-
       // Call login API
       const response = await login(data.email, data.password);
 
-      console.log("=== LOGIN API RESPONSE ===");
-      console.log("Full response:", JSON.stringify(response, null, 2));
+      // Check if user data exists
+      if (!response.data?.user) {
+        throw new Error("Invalid response format from server");
+      }
 
-      // Extract tokens using helper functions
+      const userType = response.data.user.user_type;
+
+      // ==================== USER TYPE VALIDATION ====================
+      // Prevent providers from logging in through User tab
+      if (activeTab === "user" && userType === "service_provider") {
+        setToast({
+          type: "error",
+          message:
+            "Service providers cannot log in here. Please use the Provider login tab.",
+        });
+        return;
+      }
+
+      // Prevent clients from logging in through Provider tab
+      if (activeTab === "provider" && userType === "client") {
+        setToast({
+          type: "error",
+          message: "Clients cannot log in here. Please use the User login tab.",
+        });
+        return;
+      }
+
+      // Validate that only clients can use User tab
+      if (activeTab === "user" && userType !== "client") {
+        setToast({
+          type: "error",
+          message:
+            "Only clients can log in through this tab. Please contact your service provider for login credentials.",
+        });
+        return;
+      }
+
+      // Validate that only providers can use Provider tab
+      if (activeTab === "provider" && userType !== "service_provider") {
+        setToast({
+          type: "error",
+          message: "Only service providers can log in through this tab.",
+        });
+        return;
+      }
+      // ==================== END VALIDATION ====================
+
+      // Extract tokens
       const accessToken = extractAccessToken(response);
       const refreshToken = extractRefreshToken(response);
 
-      console.log(
-        "Extracted access token:",
-        accessToken ? "✅ Found" : "❌ Not found"
-      );
-      console.log(
-        "Extracted refresh token:",
-        refreshToken ? "✅ Found" : "❌ Not found"
-      );
-
       if (!accessToken) {
-        console.error("NO ACCESS TOKEN FOUND!");
-        throw new Error(
-          "No access token received. Please check the backend response format."
-        );
+        throw new Error("No access token received from server");
       }
 
-      // Store tokens FIRST
-      console.log("=== STORING TOKENS ===");
+      // Store tokens
       storeTokens(accessToken, refreshToken || undefined);
 
-      // Verify token storage immediately
-      const storedAccessToken = localStorage.getItem("accessToken");
-      const storedRefreshToken = localStorage.getItem("refreshToken");
-      console.log("Token storage verification:");
-      console.log("  Access token stored?", !!storedAccessToken);
-      console.log("  Refresh token stored?", !!storedRefreshToken);
-
       // Store user profile
-      console.log("=== PREPARING USER PROFILE ===");
-      console.log("response.data exists?", !!response.data);
-      console.log("response.data.profile exists?", !!response.data?.profile);
-      console.log("response.data.user exists?", !!response.data?.user);
-
       if (response.data?.profile && response.data?.user) {
         const userProfile = {
           id: response.data.user.id,
@@ -141,38 +157,8 @@ function LoginContent() {
           category_name: response.data.profile.category_name,
         };
 
-        console.log("=== USER PROFILE TO STORE ===");
-        console.log("Profile object:", JSON.stringify(userProfile, null, 2));
-        console.log("Key fields:");
-        console.log("  full_name:", userProfile.full_name);
-        console.log("  business_name:", userProfile.business_name);
-        console.log("  initials:", userProfile.initials);
-
-        // Store the profile
-        console.log("=== CALLING storeUserProfile ===");
         storeUserProfile(userProfile);
-
-        // CRITICAL: Verify storage immediately
-        console.log("=== VERIFYING STORAGE ===");
-        const stored = localStorage.getItem("userProfile");
-        console.log("Raw stored string:", stored);
-
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          console.log("✅ Storage successful!");
-          console.log("Parsed stored profile:", parsed);
-          console.log("Verification:");
-          console.log("  Stored full_name:", parsed.full_name);
-          console.log("  Stored business_name:", parsed.business_name);
-          console.log("  Stored initials:", parsed.initials);
-        } else {
-          console.error("❌ STORAGE FAILED - Nothing in localStorage!");
-          console.error("This is the problem! Profile was not saved.");
-        }
-        console.log("=== END VERIFICATION ===");
       } else {
-        console.error("❌ MISSING DATA IN RESPONSE");
-        console.error("response.data:", response.data);
         throw new Error("Invalid response format from server");
       }
 
@@ -182,23 +168,21 @@ function LoginContent() {
         message: "Login successful! Redirecting...",
       });
 
-      console.log("=== REDIRECTING ===");
-      console.log("Active tab:", activeTab);
-
-      // Redirect based on account type with a slight delay to ensure storage completes
+      // Redirect based on user_type
       setTimeout(() => {
-        console.log("Executing redirect...");
-        if (activeTab === "provider") {
-          console.log("Redirecting to /provider/dashboard");
+        if (userType === "service_provider") {
           router.push("/provider/dashboard");
-        } else {
-          console.log("Redirecting to /client/dashboard");
+        } else if (userType === "client") {
           router.push("/client/dashboard");
+        } else {
+          setToast({
+            type: "error",
+            message: "Unknown account type. Please contact support.",
+          });
         }
       }, 1500);
     } catch (error) {
-      console.error("=== LOGIN ERROR ===");
-      console.error("Error:", error);
+      console.error("Login error:", error);
       setToast({
         type: "error",
         message:
@@ -219,8 +203,8 @@ function LoginContent() {
               toast.type === "success"
                 ? "bg-green-50 border-green-200"
                 : toast.type === "error"
-                ? "bg-red-50 border-red-200"
-                : "bg-blue-50 border-blue-200"
+                  ? "bg-red-50 border-red-200"
+                  : "bg-blue-50 border-blue-200"
             }`}
           >
             <div className="flex items-start gap-3">
@@ -229,8 +213,8 @@ function LoginContent() {
                   toast.type === "success"
                     ? "fa-check-circle text-green-500"
                     : toast.type === "error"
-                    ? "fa-exclamation-circle text-red-500"
-                    : "fa-info-circle text-blue-500"
+                      ? "fa-exclamation-circle text-red-500"
+                      : "fa-info-circle text-blue-500"
                 } text-xl mt-0.5`}
               ></i>
               <div className="flex-1">
@@ -239,23 +223,23 @@ function LoginContent() {
                     toast.type === "success"
                       ? "text-green-800"
                       : toast.type === "error"
-                      ? "text-red-800"
-                      : "text-blue-800"
+                        ? "text-red-800"
+                        : "text-blue-800"
                   }`}
                 >
                   {toast.type === "success"
                     ? "Success!"
                     : toast.type === "error"
-                    ? "Error"
-                    : "Info"}
+                      ? "Error"
+                      : "Info"}
                 </h3>
                 <p
                   className={`text-sm ${
                     toast.type === "success"
                       ? "text-green-700"
                       : toast.type === "error"
-                      ? "text-red-700"
-                      : "text-blue-700"
+                        ? "text-red-700"
+                        : "text-blue-700"
                   }`}
                 >
                   {toast.message}
@@ -267,8 +251,8 @@ function LoginContent() {
                   toast.type === "success"
                     ? "text-green-400 hover:text-green-600"
                     : toast.type === "error"
-                    ? "text-red-400 hover:text-red-600"
-                    : "text-blue-400 hover:text-blue-600"
+                      ? "text-red-400 hover:text-red-600"
+                      : "text-blue-400 hover:text-blue-600"
                 } transition-colors`}
               >
                 <i className="fas fa-times"></i>
