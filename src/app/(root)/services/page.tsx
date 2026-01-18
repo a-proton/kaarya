@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import ServiceProviderCard from "../../../components/cards/ServiceProviderCard";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -8,14 +8,22 @@ import {
   faMapMarkerAlt,
   faSliders,
   faChevronDown,
+  faSpinner,
 } from "@fortawesome/free-solid-svg-icons";
-import { getProvidersForListing } from "./[slug]/_components/providerData";
+import {
+  getProvidersForListing,
+  searchProviders,
+} from "./[slug]/_components/providerData";
 
 export default function ServicesPage() {
   const [selectedCategory, setSelectedCategory] = useState("All Services");
   const [searchTerm, setSearchTerm] = useState("");
   const [location, setLocation] = useState("");
   const [sortBy, setSortBy] = useState("Best Match");
+
+  // State for providers and loading
+  const [providers, setProviders] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const categories = [
     "All Services",
@@ -33,8 +41,56 @@ export default function ServicesPage() {
     "Nearest",
   ];
 
-  // Get providers from centralized data
-  const providers = getProvidersForListing();
+  // Fetch providers on mount
+  useEffect(() => {
+    loadProviders();
+  }, []);
+
+  const loadProviders = async () => {
+    setLoading(true);
+    try {
+      const data = await getProvidersForListing();
+      setProviders(data);
+    } catch (error) {
+      console.error("Failed to load providers:", error);
+      setProviders([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSearch = async () => {
+    setLoading(true);
+    try {
+      const results = await searchProviders({
+        search_query: searchTerm || undefined,
+      });
+
+      const formatted = results.map((p) => ({
+        id: p.id,
+        name: p.name,
+        initials: p.initials,
+        title: p.title,
+        location: p.location,
+        rating: p.rating,
+        reviewCount: p.reviewCount,
+        description: p.about.paragraphs[0],
+        experienceYears: p.experienceYears,
+        successRate: p.successRate || p.jobSuccess,
+        responseTime: p.responseTime,
+        distance: p.distance || "N/A",
+        priceRange: p.priceRange || p.hourlyRate,
+        isVerified: p.isVerified,
+        slug: p.slug,
+      }));
+
+      setProviders(formatted);
+    } catch (error) {
+      console.error("Search failed:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -53,6 +109,7 @@ export default function ServicesPage() {
                 placeholder="Electrician"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyPress={(e) => e.key === "Enter" && handleSearch()}
                 className="w-full pl-12 pr-4 py-3 border border-neutral-200 rounded-lg text-neutral-800 transition-all focus:outline-none focus:border-primary focus:shadow-[0_0_0_3px_rgba(26,177,137,0.08)] bg-neutral-0 placeholder:text-neutral-400"
               />
             </div>
@@ -68,13 +125,28 @@ export default function ServicesPage() {
                 placeholder="Brooklyn, NY"
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
+                onKeyPress={(e) => e.key === "Enter" && handleSearch()}
                 className="w-full pl-12 pr-4 py-3 border border-neutral-200 rounded-lg text-neutral-800 transition-all focus:outline-none focus:border-primary focus:shadow-[0_0_0_3px_rgba(26,177,137,0.08)] bg-neutral-0 placeholder:text-neutral-400"
               />
             </div>
 
             {/* Search Button */}
-            <button className="btn-primary whitespace-nowrap w-full md:w-auto">
-              Search
+            <button
+              onClick={handleSearch}
+              disabled={loading}
+              className="btn-primary whitespace-nowrap w-full md:w-auto disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <FontAwesomeIcon
+                    icon={faSpinner}
+                    className="animate-spin mr-2"
+                  />
+                  Searching...
+                </>
+              ) : (
+                "Search"
+              )}
             </button>
           </div>
         </div>
@@ -86,7 +158,7 @@ export default function ServicesPage() {
           {/* Results Count */}
           <div className="mb-4">
             <span className="text-neutral-700 font-medium">
-              {providers.length} providers found
+              {loading ? "Loading..." : `${providers.length} providers found`}
             </span>
           </div>
 
@@ -133,12 +205,41 @@ export default function ServicesPage() {
             </button>
           </div>
 
-          {/* Providers Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {providers.map((provider) => (
-              <ServiceProviderCard key={provider.id} {...provider} />
-            ))}
-          </div>
+          {/* Loading State */}
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-center">
+                <FontAwesomeIcon
+                  icon={faSpinner}
+                  spin
+                  className="text-4xl text-primary-600 mb-4"
+                />
+                <p className="text-neutral-600">Loading providers...</p>
+              </div>
+            </div>
+          ) : providers.length === 0 ? (
+            <div className="text-center py-20">
+              <div className="w-16 h-16 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <FontAwesomeIcon
+                  icon={faSearch}
+                  className="text-neutral-400 text-2xl"
+                />
+              </div>
+              <h3 className="text-xl font-semibold text-neutral-900 mb-2">
+                No providers found
+              </h3>
+              <p className="text-neutral-600">
+                Try adjusting your search criteria
+              </p>
+            </div>
+          ) : (
+            /* Providers Grid */
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {providers.map((provider) => (
+                <ServiceProviderCard key={provider.id} {...provider} />
+              ))}
+            </div>
+          )}
         </div>
       </section>
     </div>

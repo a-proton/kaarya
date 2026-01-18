@@ -63,6 +63,7 @@ export default function ClientPaymentsPage() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [selectedProject, setSelectedProject] = useState<number | null>(null);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
 
   // Fetch projects
   const {
@@ -109,7 +110,7 @@ export default function ClientPaymentsPage() {
     mutationFn: async (paymentData: {
       amount: number;
       payment_date: string;
-      payment_method: string;
+      payment_method?: string;
       transaction_id?: string;
       payment_type: string;
       payment_status: string;
@@ -117,15 +118,75 @@ export default function ClientPaymentsPage() {
       notes?: string;
     }) => {
       if (!selectedProject) throw new Error("No project selected");
+
+      // Clean up the data - remove empty strings for optional fields
+      const cleanedData = {
+        amount: paymentData.amount,
+        payment_date: paymentData.payment_date,
+        payment_type: paymentData.payment_type,
+        payment_status: paymentData.payment_status,
+        ...(paymentData.payment_method &&
+          paymentData.payment_method.trim() !== "" && {
+            payment_method: paymentData.payment_method,
+          }),
+        ...(paymentData.transaction_id &&
+          paymentData.transaction_id.trim() !== "" && {
+            transaction_id: paymentData.transaction_id,
+          }),
+        ...(paymentData.receipt_url &&
+          paymentData.receipt_url.trim() !== "" && {
+            receipt_url: paymentData.receipt_url,
+          }),
+        ...(paymentData.notes &&
+          paymentData.notes.trim() !== "" && {
+            notes: paymentData.notes,
+          }),
+      };
+
       return api.post(
         `/api/v1/projects/${selectedProject}/payments/record/`,
-        paymentData,
+        cleanedData,
       );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-payments"] });
       queryClient.invalidateQueries({ queryKey: ["client-projects"] });
       setShowPaymentModal(false);
+      setPaymentError(null);
+    },
+    onError: (error: any) => {
+      console.error("Payment recording failed:", error);
+
+      // Extract error message from different possible error formats
+      let errorMessage = "Failed to record payment";
+
+      if (error?.response?.data) {
+        const errorData = error.response.data;
+
+        // Handle DRF validation errors
+        if (typeof errorData === "object") {
+          if (errorData.error) {
+            errorMessage = errorData.error;
+          } else {
+            // Handle field-specific errors
+            const fieldErrors = Object.entries(errorData)
+              .map(([field, errors]) => {
+                if (Array.isArray(errors)) {
+                  return `${field}: ${errors.join(", ")}`;
+                }
+                return `${field}: ${errors}`;
+              })
+              .join("; ");
+            errorMessage = fieldErrors || errorMessage;
+          }
+        } else if (typeof errorData === "string") {
+          errorMessage = errorData;
+        }
+      } else if (error?.message) {
+        errorMessage = error.message;
+      }
+
+      setPaymentError(errorMessage);
     },
   });
 
@@ -194,10 +255,18 @@ export default function ClientPaymentsPage() {
 
   const handleRecordPayment = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    setPaymentError(null);
+
     const formData = new FormData(e.currentTarget);
 
+    const amount = formData.get("amount") as string;
+    if (!amount || parseFloat(amount) <= 0) {
+      setPaymentError("Amount must be greater than 0");
+      return;
+    }
+
     recordPaymentMutation.mutate({
-      amount: parseFloat(formData.get("amount") as string),
+      amount: parseFloat(amount),
       payment_date: formData.get("payment_date") as string,
       payment_method: formData.get("payment_method") as string,
       transaction_id: formData.get("transaction_id") as string,
@@ -254,7 +323,10 @@ export default function ClientPaymentsPage() {
             </p>
           </div>
           <button
-            onClick={() => setShowPaymentModal(true)}
+            onClick={() => {
+              setShowPaymentModal(true);
+              setPaymentError(null);
+            }}
             className="btn-primary flex items-center gap-2"
           >
             <FontAwesomeIcon icon={faPlus} />
@@ -541,7 +613,10 @@ export default function ClientPaymentsPage() {
             <div className="bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between">
               <h3 className="heading-4 text-neutral-900">Record Payment</h3>
               <button
-                onClick={() => setShowPaymentModal(false)}
+                onClick={() => {
+                  setShowPaymentModal(false);
+                  setPaymentError(null);
+                }}
                 className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
               >
                 <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
@@ -549,6 +624,16 @@ export default function ClientPaymentsPage() {
             </div>
 
             <form onSubmit={handleRecordPayment} className="p-6 space-y-4">
+              {/* Error Display */}
+              {paymentError && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-red-700 text-sm flex items-center gap-2">
+                    <FontAwesomeIcon icon={faExclamationCircle} />
+                    {paymentError}
+                  </p>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-neutral-700 mb-2">
@@ -558,6 +643,7 @@ export default function ClientPaymentsPage() {
                     type="number"
                     name="amount"
                     step="0.01"
+                    min="0.01"
                     required
                     className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
                     placeholder="0.00"
@@ -635,7 +721,10 @@ export default function ClientPaymentsPage() {
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-neutral-200">
                 <button
                   type="button"
-                  onClick={() => setShowPaymentModal(false)}
+                  onClick={() => {
+                    setShowPaymentModal(false);
+                    setPaymentError(null);
+                  }}
                   className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
                 >
                   Cancel
@@ -643,7 +732,7 @@ export default function ClientPaymentsPage() {
                 <button
                   type="submit"
                   disabled={recordPaymentMutation.isPending}
-                  className="btn-primary flex items-center gap-2"
+                  className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {recordPaymentMutation.isPending ? (
                     <>

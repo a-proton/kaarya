@@ -1,3 +1,5 @@
+// app/(root)/services/[slug]/page.tsx
+
 import React from "react";
 import ProfileHeader from "./_components/ProfileHeader";
 import ProfileSidebar from "./_components/ProfileSidebar";
@@ -19,12 +21,25 @@ interface PageProps {
 export default async function ServiceProviderProfile({ params }: PageProps) {
   // Await the params Promise
   const { slug } = await params;
-  const provider = getProviderBySlug(slug);
+
+  console.log("🔍 Page received slug:", slug); // ✅ Debug log
+
+  // Check if slug is valid
+  if (!slug || slug === "undefined") {
+    console.error("❌ Invalid slug:", slug);
+    notFound();
+  }
+
+  // Fetch provider data
+  const provider = await getProviderBySlug(slug);
 
   // If provider not found, show 404
   if (!provider) {
+    console.error("❌ Provider not found for slug:", slug);
     notFound();
   }
+
+  console.log("✅ Provider loaded:", provider.name);
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -56,34 +71,75 @@ export default async function ServiceProviderProfile({ params }: PageProps) {
   );
 }
 
+// ✅ IMPORTANT: Disable static generation during development
+export const dynamic = "force-dynamic";
+export const dynamicParams = true;
+
 // Generate static params for all providers
 export async function generateStaticParams() {
-  const { getAllProviders } = await import("./_components/providerData");
-  const providers = getAllProviders();
+  console.log("📋 generateStaticParams called");
 
-  return providers.map((provider) => ({
-    slug: provider.slug,
-  }));
+  try {
+    const { getAllProviders } = await import("./_components/providerData");
+    const providers = await getAllProviders();
+
+    console.log("📦 Providers for static generation:", providers.length);
+
+    // Filter out providers without slugs
+    const validProviders = providers.filter(
+      (p) => p.slug && p.slug !== "undefined",
+    );
+
+    console.log("✅ Valid providers with slugs:", validProviders.length);
+
+    const params = validProviders.map((provider) => {
+      console.log("  - Generating param for slug:", provider.slug);
+      return {
+        slug: provider.slug,
+      };
+    });
+
+    return params;
+  } catch (error) {
+    console.error("❌ Error in generateStaticParams:", error);
+    return []; // Return empty array if error occurs
+  }
 }
 
 // Generate metadata for SEO
 export async function generateMetadata({ params }: PageProps) {
-  // Await params here too
-  const { slug } = await params;
-  const { getProviderBySlug } = await import("./_components/providerData");
-  const provider = getProviderBySlug(slug);
+  try {
+    const { slug } = await params;
 
-  if (!provider) {
+    console.log("🏷️ generateMetadata called with slug:", slug);
+
+    // Skip if slug is invalid
+    if (!slug || slug === "undefined") {
+      return {
+        title: "Provider Not Found | Karya",
+      };
+    }
+
+    const { getProviderBySlug } = await import("./_components/providerData");
+    const provider = await getProviderBySlug(slug);
+
+    if (!provider) {
+      return {
+        title: "Provider Not Found | Karya",
+      };
+    }
+
     return {
-      title: "Provider Not Found",
+      title: `${provider.name} - ${provider.title} | Karya`,
+      description:
+        provider.about.paragraphs[0] ||
+        `Professional ${provider.title} services`,
+      keywords: `${provider.title}, ${provider.location}, ${provider.services.join(", ")}`,
+    };
+  } catch (error) {
+    console.error("❌ Error in generateMetadata:", error);
+    return {
+      title: "Provider | Karya",
     };
   }
-
-  return {
-    title: `${provider.name} - ${provider.title} | Karya`,
-    description: provider.about.paragraphs[0],
-    keywords: `${provider.title}, ${
-      provider.location
-    }, ${provider.services.join(", ")}`,
-  };
 }

@@ -6,19 +6,41 @@ import {
   faMapMarkerAlt,
   faEnvelope,
   faPhoneAlt,
+  faSpinner,
+  faCheckCircle,
+  faExclamationTriangle,
 } from "@fortawesome/free-solid-svg-icons";
 import { faWhatsapp } from "@fortawesome/free-brands-svg-icons";
 
+// ==================================================================================
+// TYPE DEFINITIONS
+// ==================================================================================
+
+interface ContactFormData {
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+}
+
+// ==================================================================================
+// MAIN COMPONENT
+// ==================================================================================
+
 export default function ContactPage() {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<ContactFormData>({
     name: "",
     email: "",
     subject: "",
     message: "",
   });
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
     setFormData({
       ...formData,
@@ -26,15 +48,125 @@ export default function ContactPage() {
     });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Form submitted:", formData);
-    alert("Message sent successfully!");
+
+    // Basic validation
+    if (
+      !formData.name.trim() ||
+      !formData.email.trim() ||
+      !formData.subject.trim() ||
+      !formData.message.trim()
+    ) {
+      setErrorMessage("Please fill in all required fields");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch(
+        "http://localhost:8000/api/v1/contact/submit/",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(formData),
+        },
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(
+          errorData.detail ||
+            errorData.message ||
+            "Failed to submit contact form",
+        );
+      }
+
+      // Success
+      setShowSuccessMessage(true);
+      setFormData({
+        name: "",
+        email: "",
+        subject: "",
+        message: "",
+      });
+
+      // Hide success message after 5 seconds
+      setTimeout(() => {
+        setShowSuccessMessage(false);
+      }, 5000);
+    } catch (error: any) {
+      console.error("Form submission error:", error);
+      setErrorMessage(
+        error.message || "Failed to send message. Please try again.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-white py-8 sm:py-12">
       <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Success Message Banner */}
+        {showSuccessMessage && (
+          <div className="fixed top-4 right-4 z-50 max-w-md animate-slideIn">
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 shadow-lg flex items-start gap-3">
+              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <FontAwesomeIcon
+                  icon={faCheckCircle}
+                  className="text-green-600 text-xl"
+                />
+              </div>
+              <div className="flex-1">
+                <h4 className="font-semibold text-green-900 mb-1">
+                  Message Sent Successfully!
+                </h4>
+                <p className="text-sm text-green-700">
+                  Thank you for contacting us. We'll get back to you as soon as
+                  possible.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowSuccessMessage(false)}
+                className="text-green-600 hover:text-green-800 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Error Message Banner */}
+        {errorMessage && (
+          <div className="fixed top-4 right-4 z-50 max-w-md animate-slideIn">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 shadow-lg flex items-start gap-3">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <FontAwesomeIcon
+                  icon={faExclamationTriangle}
+                  className="text-red-600 text-xl"
+                />
+              </div>
+              <div className="flex-1">
+                <h4 className="font-semibold text-red-900 mb-1">
+                  Submission Failed
+                </h4>
+                <p className="text-sm text-red-700">{errorMessage}</p>
+              </div>
+              <button
+                onClick={() => setErrorMessage(null)}
+                className="text-red-600 hover:text-red-800 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Outer Wrapper */}
         <div className="bg-gradient-to-b from-[#d4f4e7] from-0% via-[#d4f4e7] via-[420px] to-white to-[420px] rounded-none shadow-none overflow-visible px-6 py-12 sm:px-12 sm:py-16 relative min-h-[900px]">
           {/* Header */}
@@ -72,7 +204,7 @@ export default function ContactPage() {
                     </div>
                     <div>
                       <h4 className="text-[0.9375rem] font-semibold mb-1 text-white">
-                        Bisai Technologies, LLC
+                        Kaarya Technologies
                       </h4>
                     </div>
                   </div>
@@ -86,7 +218,7 @@ export default function ContactPage() {
                     </div>
                     <div>
                       <h4 className="text-[0.9375rem] font-semibold mb-1 text-white">
-                        +977 9815126740
+                        +977 9800000000
                       </h4>
                       <p className="text-[0.8125rem] opacity-85">WhatsApp</p>
                     </div>
@@ -113,12 +245,12 @@ export default function ContactPage() {
 
               {/* Right Panel - Form (White) */}
               <div className="p-8 sm:p-12 bg-white">
-                <form onSubmit={handleSubmit}>
+                <div onSubmit={handleSubmit}>
                   {/* Form Row */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-5">
                     <div className="flex flex-col">
                       <label className="text-sm font-medium text-gray-800 mb-2">
-                        Your Name
+                        Your Name <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="text"
@@ -126,13 +258,14 @@ export default function ContactPage() {
                         value={formData.name}
                         onChange={handleChange}
                         placeholder="John Trapealy"
-                        className="px-4 py-3 border border-gray-200 rounded-lg text-[0.9375rem] text-gray-800 transition-all focus:outline-none focus:border-[#1ab189] focus:shadow-[0_0_0_3px_rgba(26,177,137,0.08)] bg-white placeholder:text-gray-400"
+                        disabled={isSubmitting}
+                        className="px-4 py-3 border border-gray-200 rounded-lg text-[0.9375rem] text-gray-800 transition-all focus:outline-none focus:border-[#1ab189] focus:shadow-[0_0_0_3px_rgba(26,177,137,0.08)] bg-white placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
                         required
                       />
                     </div>
                     <div className="flex flex-col">
                       <label className="text-sm font-medium text-gray-800 mb-2">
-                        Your Email
+                        Your Email <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="email"
@@ -140,7 +273,8 @@ export default function ContactPage() {
                         value={formData.email}
                         onChange={handleChange}
                         placeholder="hello@gmail.com"
-                        className="px-4 py-3 border border-gray-200 rounded-lg text-[0.9375rem] text-gray-800 transition-all focus:outline-none focus:border-[#1ab189] focus:shadow-[0_0_0_3px_rgba(26,177,137,0.08)] bg-white placeholder:text-gray-400"
+                        disabled={isSubmitting}
+                        className="px-4 py-3 border border-gray-200 rounded-lg text-[0.9375rem] text-gray-800 transition-all focus:outline-none focus:border-[#1ab189] focus:shadow-[0_0_0_3px_rgba(26,177,137,0.08)] bg-white placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
                         required
                       />
                     </div>
@@ -148,7 +282,7 @@ export default function ContactPage() {
 
                   <div className="flex flex-col mb-5">
                     <label className="text-sm font-medium text-gray-800 mb-2">
-                      Your Subject
+                      Your Subject <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
@@ -156,32 +290,46 @@ export default function ContactPage() {
                       value={formData.subject}
                       onChange={handleChange}
                       placeholder="Enter your subject"
-                      className="px-4 py-3 border border-gray-200 rounded-lg text-[0.9375rem] text-gray-800 transition-all focus:outline-none focus:border-[#1ab189] focus:shadow-[0_0_0_3px_rgba(26,177,137,0.08)] bg-white placeholder:text-gray-400"
+                      disabled={isSubmitting}
+                      className="px-4 py-3 border border-gray-200 rounded-lg text-[0.9375rem] text-gray-800 transition-all focus:outline-none focus:border-[#1ab189] focus:shadow-[0_0_0_3px_rgba(26,177,137,0.08)] bg-white placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
                       required
                     />
                   </div>
 
                   <div className="flex flex-col mb-5">
                     <label className="text-sm font-medium text-gray-800 mb-2">
-                      Message
+                      Message <span className="text-red-500">*</span>
                     </label>
                     <textarea
                       name="message"
                       value={formData.message}
                       onChange={handleChange}
                       placeholder="Write your message..."
-                      className="px-4 py-3 border border-gray-200 rounded-lg text-[0.9375rem] text-gray-800 transition-all focus:outline-none focus:border-[#1ab189] focus:shadow-[0_0_0_3px_rgba(26,177,137,0.08)] bg-white placeholder:text-gray-400 resize-y min-h-[140px]"
+                      disabled={isSubmitting}
+                      className="px-4 py-3 border border-gray-200 rounded-lg text-[0.9375rem] text-gray-800 transition-all focus:outline-none focus:border-[#1ab189] focus:shadow-[0_0_0_3px_rgba(26,177,137,0.08)] bg-white placeholder:text-gray-400 resize-y min-h-[140px] disabled:opacity-50 disabled:cursor-not-allowed"
                       required
                     ></textarea>
                   </div>
 
                   <button
-                    type="submit"
-                    className="bg-[#0d9563] text-white px-8 py-3.5 rounded-lg text-[0.9375rem] font-semibold cursor-pointer transition-all mt-2 hover:bg-[#059953] hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(13,149,99,0.25)]"
+                    type="button"
+                    onClick={handleSubmit}
+                    disabled={isSubmitting}
+                    className="bg-[#0d9563] text-white px-8 py-3.5 rounded-lg text-[0.9375rem] font-semibold cursor-pointer transition-all mt-2 hover:bg-[#059953] hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(13,149,99,0.25)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 flex items-center justify-center gap-2 min-w-[160px]"
                   >
-                    Send Message
+                    {isSubmitting ? (
+                      <>
+                        <FontAwesomeIcon
+                          icon={faSpinner}
+                          className="animate-spin"
+                        />
+                        Sending...
+                      </>
+                    ) : (
+                      "Send Message"
+                    )}
                   </button>
-                </form>
+                </div>
               </div>
             </div>
           </div>
@@ -257,7 +405,7 @@ export default function ContactPage() {
                     Call us for urgent issues
                   </p>
                   <div className="text-[0.9375rem] font-semibold text-[#0d9563] mb-1">
-                    (636) 209-4879
+                    +977 9800000000
                   </div>
                   <div className="text-[0.8125rem] text-gray-400">
                     Mon-Fri, 9AM-6PM PST
@@ -268,6 +416,22 @@ export default function ContactPage() {
           </div>
         </div>
       </div>
+
+      <style jsx>{`
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+        .animate-slideIn {
+          animation: slideIn 0.3s ease-out;
+        }
+      `}</style>
     </div>
   );
 }

@@ -18,29 +18,257 @@ import {
   faCheckCircle,
   faPaperPlane,
   faFlag,
+  faSpinner,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+
+// ==================================================================================
+// TYPE DEFINITIONS
+// ==================================================================================
+interface Project {
+  id: number;
+  project_name: string;
+  service_provider: {
+    id: number;
+    full_name: string;
+    business_name: string;
+  };
+}
+
+interface ProjectsResponse {
+  count: number;
+  results: Project[];
+}
+
+interface ReviewFormData {
+  service_provider_id: number;
+  project_id?: number;
+  rating: number;
+  review_text: string;
+  quality_rating?: number;
+  timeliness_rating?: number;
+  communication_rating?: number;
+  value_rating?: number;
+}
+
+interface ContactFormData {
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+}
 
 export default function ClientHelpSupportPage() {
+  const queryClient = useQueryClient();
+
+  // Modal states
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showContactModal, setShowContactModal] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState("");
-  const [rating, setRating] = useState(0);
-  const [reviewText, setReviewText] = useState("");
-  const [reportCategory, setReportCategory] = useState("");
-  const [reportDescription, setReportDescription] = useState("");
-  const [contactSubject, setContactSubject] = useState("");
-  const [contactMessage, setContactMessage] = useState("");
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
 
-  // Mock data for providers
-  const providers = [
-    { id: 1, name: "Michael Rodriguez - Electrician" },
-    { id: 2, name: "Sarah Johnson - Plumber" },
-  ];
+  // Review form states
+  const [selectedProject, setSelectedProject] = useState<number | null>(null);
+  const [rating, setRating] = useState(0);
+  const [reviewText, setReviewText] = useState("");
+  const [detailedRatings, setDetailedRatings] = useState({
+    quality_rating: 0,
+    timeliness_rating: 0,
+    communication_rating: 0,
+    value_rating: 0,
+  });
+  const [showDetailedRatings, setShowDetailedRatings] = useState(false);
 
-  // FAQs organized by category
+  // Report form states
+  const [reportCategory, setReportCategory] = useState("");
+  const [reportDescription, setReportDescription] = useState("");
+
+  // Contact form states
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [contactSubject, setContactSubject] = useState("");
+  const [contactMessage, setContactMessage] = useState("");
+
+  // ==================================================================================
+  // FETCH PROJECTS (for review dropdown)
+  // ==================================================================================
+  const { data: projectsData, isLoading: projectsLoading } =
+    useQuery<ProjectsResponse>({
+      queryKey: ["client-projects"],
+      queryFn: async () => {
+        const response = await api.get<ProjectsResponse>("/api/v1/projects/");
+        return response;
+      },
+      enabled: showReviewModal, // Only fetch when modal is open
+    });
+
+  // ==================================================================================
+  // MUTATIONS
+  // ==================================================================================
+
+  // Create Review Mutation
+  const createReviewMutation = useMutation({
+    mutationFn: async (data: ReviewFormData) => {
+      return api.post("/api/v1/reviews/create/", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["my-reviews"] });
+      setShowReviewModal(false);
+      resetReviewForm();
+      alert("Thank you for your review! It has been submitted successfully.");
+    },
+    onError: (error: any) => {
+      const errorMessage =
+        error.data?.error || error.message || "Failed to submit review";
+      alert(`Error: ${errorMessage}`);
+    },
+  });
+
+  // Submit Contact Form Mutation
+  const submitContactMutation = useMutation({
+    mutationFn: async (data: ContactFormData) => {
+      return api.post("/api/v1/contact/submit/", data);
+    },
+    onSuccess: () => {
+      setShowContactModal(false);
+      resetContactForm();
+      alert("Your message has been sent! We'll respond within 24-48 hours.");
+    },
+    onError: (error: any) => {
+      const errorMessage =
+        error.data?.error || error.message || "Failed to send message";
+      alert(`Error: ${errorMessage}`);
+    },
+  });
+
+  // ==================================================================================
+  // FORM HANDLERS
+  // ==================================================================================
+
+  const resetReviewForm = () => {
+    setSelectedProject(null);
+    setRating(0);
+    setReviewText("");
+    setDetailedRatings({
+      quality_rating: 0,
+      timeliness_rating: 0,
+      communication_rating: 0,
+      value_rating: 0,
+    });
+    setShowDetailedRatings(false);
+  };
+
+  const resetContactForm = () => {
+    setContactName("");
+    setContactEmail("");
+    setContactSubject("");
+    setContactMessage("");
+  };
+
+  const handleSubmitReview = () => {
+    // Validation
+    if (!selectedProject) {
+      alert("Please select a project");
+      return;
+    }
+    if (rating === 0) {
+      alert("Please provide a rating");
+      return;
+    }
+
+    const selectedProjectData = projectsData?.results.find(
+      (p) => p.id === selectedProject,
+    );
+    if (!selectedProjectData) {
+      alert("Invalid project selected");
+      return;
+    }
+
+    const reviewData: ReviewFormData = {
+      service_provider_id: selectedProjectData.service_provider.id,
+      project_id: selectedProject,
+      rating,
+      review_text: reviewText || undefined,
+    };
+
+    // Add detailed ratings if provided
+    if (showDetailedRatings) {
+      if (detailedRatings.quality_rating > 0) {
+        reviewData.quality_rating = detailedRatings.quality_rating;
+      }
+      if (detailedRatings.timeliness_rating > 0) {
+        reviewData.timeliness_rating = detailedRatings.timeliness_rating;
+      }
+      if (detailedRatings.communication_rating > 0) {
+        reviewData.communication_rating = detailedRatings.communication_rating;
+      }
+      if (detailedRatings.value_rating > 0) {
+        reviewData.value_rating = detailedRatings.value_rating;
+      }
+    }
+
+    createReviewMutation.mutate(reviewData);
+  };
+
+  const handleSubmitReport = () => {
+    // For now, just show alert - you can integrate with backend later
+    if (!reportCategory || !reportDescription) {
+      alert("Please fill in all required fields");
+      return;
+    }
+
+    console.log("Report submitted:", { reportCategory, reportDescription });
+    alert(
+      "Your report has been submitted. Our admin team will review it within 24 hours.",
+    );
+    setShowReportModal(false);
+    setReportCategory("");
+    setReportDescription("");
+  };
+
+  const handleSubmitContact = () => {
+    // Validation
+    if (!contactName || !contactEmail || !contactSubject || !contactMessage) {
+      alert("Please fill in all fields");
+      return;
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(contactEmail)) {
+      alert("Please enter a valid email address");
+      return;
+    }
+
+    const contactData: ContactFormData = {
+      name: contactName,
+      email: contactEmail,
+      subject: contactSubject,
+      message: contactMessage,
+    };
+
+    submitContactMutation.mutate(contactData);
+  };
+
+  const toggleFaq = (id: number) => {
+    setExpandedFaq(expandedFaq === id ? null : id);
+  };
+
+  const setDetailedRating = (
+    category: keyof typeof detailedRatings,
+    value: number,
+  ) => {
+    setDetailedRatings({
+      ...detailedRatings,
+      [category]: value,
+    });
+  };
+
+  // ==================================================================================
+  // FAQ DATA
+  // ==================================================================================
   const faqCategories = [
     {
       category: "Getting Started",
@@ -122,7 +350,7 @@ export default function ClientHelpSupportPage() {
           id: 10,
           question: "How do I change my password?",
           answer:
-            "Currently, password changes must be requested through your service provider who created your account. Contact them directly or email info@kaarya.com for assistance with account security.",
+            "Go to Settings → Security tab to change your password. You'll need to enter your current password and then set a new one. Make sure it's at least 8 characters long.",
         },
         {
           id: 11,
@@ -134,49 +362,43 @@ export default function ClientHelpSupportPage() {
     },
   ];
 
-  const handleSubmitReview = () => {
-    if (!selectedProvider || rating === 0) {
-      alert("Please select a provider and give a rating");
-      return;
-    }
-    console.log("Review submitted:", { selectedProvider, rating, reviewText });
-    alert("Thank you for your review! It helps improve our services.");
-    setShowReviewModal(false);
-    setSelectedProvider("");
-    setRating(0);
-    setReviewText("");
-  };
-
-  const handleSubmitReport = () => {
-    if (!reportCategory || !reportDescription) {
-      alert("Please fill in all required fields");
-      return;
-    }
-    console.log("Report submitted:", { reportCategory, reportDescription });
-    alert(
-      "Your report has been submitted. Our admin team will review it within 24 hours."
+  // ==================================================================================
+  // RENDER STAR RATINGS
+  // ==================================================================================
+  const renderStarRating = (
+    currentRating: number,
+    onRate: (rating: number) => void,
+    size: string = "text-4xl",
+  ) => {
+    return (
+      <div className="flex items-center gap-2">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <button
+            key={star}
+            type="button"
+            onClick={() => onRate(star)}
+            className={`${size} hover:scale-110 transition-transform`}
+          >
+            <FontAwesomeIcon
+              icon={faStar}
+              className={
+                star <= currentRating ? "text-yellow-500" : "text-neutral-300"
+              }
+            />
+          </button>
+        ))}
+        {currentRating > 0 && (
+          <span className="text-neutral-700 font-semibold ml-2">
+            {currentRating}.0 / 5.0
+          </span>
+        )}
+      </div>
     );
-    setShowReportModal(false);
-    setReportCategory("");
-    setReportDescription("");
   };
 
-  const handleSubmitContact = () => {
-    if (!contactSubject || !contactMessage) {
-      alert("Please fill in all fields");
-      return;
-    }
-    console.log("Contact submitted:", { contactSubject, contactMessage });
-    alert("Your message has been sent! We'll respond within 24-48 hours.");
-    setShowContactModal(false);
-    setContactSubject("");
-    setContactMessage("");
-  };
-
-  const toggleFaq = (id: number) => {
-    setExpandedFaq(expandedFaq === id ? null : id);
-  };
-
+  // ==================================================================================
+  // RENDER
+  // ==================================================================================
   return (
     <div className="max-w-7xl mx-auto space-y-8">
       {/* Quick Actions */}
@@ -370,15 +592,20 @@ export default function ClientHelpSupportPage() {
         </div>
       </div>
 
-      {/* Review Modal */}
+      {/* ==================================================================================
+          REVIEW MODAL - ENHANCED WITH API INTEGRATION
+          ================================================================================== */}
       {showReviewModal && (
         <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-yellow-50 to-orange-50 sticky top-0">
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-yellow-50 to-orange-50 sticky top-0 z-10">
               <h3 className="heading-4 text-neutral-900">Leave a Review</h3>
               <button
-                onClick={() => setShowReviewModal(false)}
+                onClick={() => {
+                  setShowReviewModal(false);
+                  resetReviewForm();
+                }}
                 className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
               >
                 <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
@@ -387,105 +614,197 @@ export default function ClientHelpSupportPage() {
 
             {/* Modal Content */}
             <div className="p-6">
-              <div className="space-y-5">
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Select Service Provider{" "}
-                    <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={selectedProvider}
-                    onChange={(e) => setSelectedProvider(e.target.value)}
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
-                  >
-                    <option value="">Choose a provider...</option>
-                    {providers.map((provider) => (
-                      <option key={provider.id} value={provider.name}>
-                        {provider.name}
-                      </option>
-                    ))}
-                  </select>
+              {projectsLoading ? (
+                <div className="text-center py-8">
+                  <FontAwesomeIcon
+                    icon={faSpinner}
+                    spin
+                    className="text-3xl text-primary-600 mb-3"
+                  />
+                  <p className="text-neutral-600">Loading your projects...</p>
                 </div>
+              ) : (
+                <div className="space-y-5">
+                  {/* Project Selection */}
+                  <div>
+                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                      Select Project <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={selectedProject || ""}
+                      onChange={(e) =>
+                        setSelectedProject(Number(e.target.value))
+                      }
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                    >
+                      <option value="">Choose a project...</option>
+                      {projectsData?.results.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.project_name} -{" "}
+                          {project.service_provider.business_name ||
+                            project.service_provider.full_name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-neutral-500 text-sm mt-1">
+                      Select the project you want to review
+                    </p>
+                  </div>
 
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-3 body-small">
-                    Rating <span className="text-red-500">*</span>
-                  </label>
-                  <div className="flex items-center gap-4">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        type="button"
-                        onClick={() => setRating(star)}
-                        className="text-4xl hover:scale-110 transition-transform"
-                      >
-                        <FontAwesomeIcon
-                          icon={faStar}
-                          className={
-                            star <= rating
-                              ? "text-yellow-500"
-                              : "text-neutral-300"
-                          }
-                        />
-                      </button>
-                    ))}
-                    {rating > 0 && (
-                      <span className="text-neutral-700 font-semibold ml-2">
-                        {rating}.0 / 5.0
-                      </span>
-                    )}
+                  {/* Overall Rating */}
+                  <div>
+                    <label className="block text-neutral-700 font-semibold mb-3 body-small">
+                      Overall Rating <span className="text-red-500">*</span>
+                    </label>
+                    {renderStarRating(rating, setRating)}
+                  </div>
+
+                  {/* Review Text */}
+                  <div>
+                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                      Your Review (Optional)
+                    </label>
+                    <textarea
+                      value={reviewText}
+                      onChange={(e) => setReviewText(e.target.value)}
+                      placeholder="Share your experience with this service provider..."
+                      rows={6}
+                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
+                    />
+                  </div>
+
+                  {/* Toggle Detailed Ratings */}
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setShowDetailedRatings(!showDetailedRatings)
+                      }
+                      className="text-primary-600 hover:text-primary-700 font-semibold text-sm flex items-center gap-2"
+                    >
+                      <FontAwesomeIcon
+                        icon={showDetailedRatings ? faChevronUp : faChevronDown}
+                      />
+                      {showDetailedRatings ? "Hide" : "Add"} Detailed Ratings
+                      (Optional)
+                    </button>
+                  </div>
+
+                  {/* Detailed Ratings */}
+                  {showDetailedRatings && (
+                    <div className="bg-neutral-50 rounded-lg p-5 space-y-4">
+                      <p className="text-neutral-700 font-semibold mb-3">
+                        Rate specific aspects (optional):
+                      </p>
+
+                      {/* Quality Rating */}
+                      <div>
+                        <label className="block text-neutral-700 font-medium mb-2 text-sm">
+                          Quality of Work
+                        </label>
+                        {renderStarRating(
+                          detailedRatings.quality_rating,
+                          (value) => setDetailedRating("quality_rating", value),
+                          "text-2xl",
+                        )}
+                      </div>
+
+                      {/* Timeliness Rating */}
+                      <div>
+                        <label className="block text-neutral-700 font-medium mb-2 text-sm">
+                          Timeliness
+                        </label>
+                        {renderStarRating(
+                          detailedRatings.timeliness_rating,
+                          (value) =>
+                            setDetailedRating("timeliness_rating", value),
+                          "text-2xl",
+                        )}
+                      </div>
+
+                      {/* Communication Rating */}
+                      <div>
+                        <label className="block text-neutral-700 font-medium mb-2 text-sm">
+                          Communication
+                        </label>
+                        {renderStarRating(
+                          detailedRatings.communication_rating,
+                          (value) =>
+                            setDetailedRating("communication_rating", value),
+                          "text-2xl",
+                        )}
+                      </div>
+
+                      {/* Value Rating */}
+                      <div>
+                        <label className="block text-neutral-700 font-medium mb-2 text-sm">
+                          Value for Money
+                        </label>
+                        {renderStarRating(
+                          detailedRatings.value_rating,
+                          (value) => setDetailedRating("value_rating", value),
+                          "text-2xl",
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Info Box */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-blue-700 text-sm">
+                      <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
+                      Your review helps other clients make informed decisions
+                      and helps providers improve their services.
+                    </p>
                   </div>
                 </div>
-
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Your Review
-                  </label>
-                  <textarea
-                    value={reviewText}
-                    onChange={(e) => setReviewText(e.target.value)}
-                    placeholder="Share your experience with this service provider..."
-                    rows={6}
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
-                  />
-                </div>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <p className="text-blue-700 text-sm">
-                    <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                    Your review helps other clients make informed decisions and
-                    helps providers improve their services.
-                  </p>
-                </div>
-              </div>
+              )}
             </div>
 
             {/* Modal Footer */}
             <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
               <button
-                onClick={() => setShowReviewModal(false)}
+                onClick={() => {
+                  setShowReviewModal(false);
+                  resetReviewForm();
+                }}
                 className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSubmitReview}
-                className="btn-primary flex items-center gap-2"
+                disabled={createReviewMutation.isPending || projectsLoading}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50"
               >
-                <FontAwesomeIcon icon={faPaperPlane} />
-                Submit Review
+                {createReviewMutation.isPending ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faSpinner}
+                      className="animate-spin"
+                    />
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon icon={faPaperPlane} />
+                    Submit Review
+                  </>
+                )}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Report Modal */}
+      {/* ==================================================================================
+          REPORT MODAL
+          ================================================================================== */}
       {showReportModal && (
         <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-red-50 to-orange-50 sticky top-0">
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-red-50 to-orange-50 sticky top-0 z-10">
               <div>
                 <h3 className="heading-4 text-neutral-900">Report an Issue</h3>
                 <p className="text-neutral-600 text-sm">
@@ -576,12 +895,14 @@ export default function ClientHelpSupportPage() {
         </div>
       )}
 
-      {/* Contact Modal */}
+      {/* ==================================================================================
+          CONTACT MODAL - ENHANCED WITH API INTEGRATION
+          ================================================================================== */}
       {showContactModal && (
         <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-primary-50 to-blue-50 sticky top-0">
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-primary-50 to-blue-50 sticky top-0 z-10">
               <div>
                 <h3 className="heading-4 text-neutral-900">Contact Support</h3>
                 <p className="text-neutral-600 text-sm">
@@ -589,7 +910,10 @@ export default function ClientHelpSupportPage() {
                 </p>
               </div>
               <button
-                onClick={() => setShowContactModal(false)}
+                onClick={() => {
+                  setShowContactModal(false);
+                  resetContactForm();
+                }}
                 className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
               >
                 <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
@@ -599,6 +923,32 @@ export default function ClientHelpSupportPage() {
             {/* Modal Content */}
             <div className="p-6">
               <div className="space-y-5">
+                <div>
+                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                    Your Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={contactName}
+                    onChange={(e) => setContactName(e.target.value)}
+                    placeholder="Enter your full name..."
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                    Your Email <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    placeholder="your.email@example.com"
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                  />
+                </div>
+
                 <div>
                   <label className="block text-neutral-700 font-semibold mb-2 body-small">
                     Subject <span className="text-red-500">*</span>
@@ -643,17 +993,33 @@ export default function ClientHelpSupportPage() {
             {/* Modal Footer */}
             <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
               <button
-                onClick={() => setShowContactModal(false)}
+                onClick={() => {
+                  setShowContactModal(false);
+                  resetContactForm();
+                }}
                 className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSubmitContact}
-                className="btn-primary flex items-center gap-2"
+                disabled={submitContactMutation.isPending}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50"
               >
-                <FontAwesomeIcon icon={faPaperPlane} />
-                Send Message
+                {submitContactMutation.isPending ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faSpinner}
+                      className="animate-spin"
+                    />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon icon={faPaperPlane} />
+                    Send Message
+                  </>
+                )}
               </button>
             </div>
           </div>

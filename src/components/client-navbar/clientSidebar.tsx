@@ -134,7 +134,7 @@ export default function ClientSidebar() {
       <aside className="fixed left-0 top-0 h-screen w-64 bg-neutral-0 border-r border-neutral-200 flex flex-col">
         {/* Logo Section */}
         <div className="p-6 border-b border-neutral-200">
-          <h1 className="text-2xl font-bold text-neutral-900">Karya</h1>
+          <h1 className="text-2xl font-bold text-neutral-900">Kaarya</h1>
           <p className="text-xs text-neutral-600 mt-1">CLIENT PORTAL</p>
         </div>
 
