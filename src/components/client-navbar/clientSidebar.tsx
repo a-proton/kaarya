@@ -37,7 +37,6 @@ const navigationItems = [
     icon: faMessage,
     label: "Messages",
     href: "/client/messages",
-    badge: 5,
   },
   {
     icon: faCreditCard,
@@ -169,11 +168,6 @@ export default function ClientSidebar() {
                     >
                       {item.label}
                     </span>
-                    {item.badge && (
-                      <span className="px-2 py-0.5 bg-primary-600 text-neutral-0 rounded-full text-xs font-semibold min-w-[20px] text-center">
-                        {item.badge}
-                      </span>
-                    )}
                   </Link>
                 </li>
               );

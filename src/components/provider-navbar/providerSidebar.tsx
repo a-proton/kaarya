@@ -14,7 +14,7 @@ import {
   faCheckCircle,
   faSignOut,
   faSpinner,
-  faIndustry,
+  faFileAlt,
   faArchive,
 } from "@fortawesome/free-solid-svg-icons";
 import Link from "next/link";
@@ -40,8 +40,10 @@ const navigationItems = [
     href: "/provider/team-attendance",
   },
   { icon: faCalendar, label: "Calendar", href: "/provider/calendar" },
-  { icon: faMessage, label: "Messages", href: "/provider/messages", badge: 8 },
+  { icon: faMessage, label: "Messages", href: "/provider/messages" },
   { icon: faDollarSign, label: "Earnings", href: "/provider/earnings" },
+  { icon: faFileAlt, label: "Reports", href: "/provider/reports" },
+
   { icon: faGear, label: "Settings", href: "/provider/settings" },
 ];
 
@@ -131,11 +133,6 @@ export default function ProviderSidebar() {
                     >
                       {item.label}
                     </span>
-                    {item.badge && (
-                      <span className="w-6 h-6 bg-primary-600 text-neutral-0 rounded-full flex items-center justify-center text-xs font-semibold">
-                        {item.badge}
-                      </span>
-                    )}
                   </Link>
                 </li>
               );
