@@ -1,11 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faFileAlt,
+  faDownload,
   faFilter,
   faCalendar,
   faProjectDiagram,
@@ -20,12 +18,11 @@ import {
   faChevronDown,
   faChevronUp,
   faTimes,
-  faPrint,
+  faExclamationTriangle,
 } from "@fortawesome/free-solid-svg-icons";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-import * as XLSX from "xlsx";
-import { saveAs } from "file-saver";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isAuthenticated } from "@/lib/auth";
 
@@ -42,11 +39,6 @@ interface ReportData {
   report_type: string;
   generated_at: string;
   summary: any;
-  projects?: any[];
-  employees?: any[];
-  clients?: any[];
-  milestones?: any[];
-  payment_details?: any[];
   [key: string]: any;
 }
 
@@ -54,7 +46,15 @@ interface ReportFilters {
   start_date?: string;
   end_date?: string;
   status?: string;
+  employee_id?: number;
+  project_id?: number;
   client_id?: number;
+}
+
+interface Client {
+  id: number;
+  name: string;
+  email: string;
 }
 
 // ========== ICON MAPPING ==========
@@ -64,6 +64,12 @@ const iconMapping: { [key: string]: any } = {
   faUsers: faUsers,
   faUserTie: faUserTie,
   faCheckCircle: faCheckCircle,
+};
+
+const formatIconMapping: { [key: string]: any } = {
+  pdf: faFilePdf,
+  excel: faFileExcel,
+  csv: faFileCsv,
 };
 
 // ========== HELPER FUNCTIONS ==========
@@ -83,59 +89,105 @@ const formatDate = (dateString: string) => {
   });
 };
 
+const formatDateTime = (dateString: string) => {
+  if (!dateString) return "N/A";
+  return new Date(dateString).toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const getApiBaseUrl = () => {
+  if (typeof window !== "undefined") {
+    return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  }
+  return "http://localhost:8000";
+};
+
 export default function ReportsPage() {
   const router = useRouter();
-  const printRef = useRef<HTMLDivElement>(null);
 
   // ========== STATE ==========
   const [selectedReport, setSelectedReport] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<ReportFilters>({
-    start_date: "2024-01-01",
-    end_date: new Date().toISOString().split("T")[0],
+    start_date: "2020-01-01",
+    end_date: "2030-12-31",
   });
   const [reportData, setReportData] = useState<ReportData | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<string | null>(null);
 
   // ========== AUTHENTICATION CHECK ==========
   useEffect(() => {
     if (!isAuthenticated()) {
+      console.log("❌ Not authenticated, redirecting...");
       router.push("/login?type=service_provider&session=expired");
+    } else {
+      console.log("✅ User is authenticated");
     }
   }, [router]);
 
   // ========== API QUERIES ==========
-  const { data: reportTypes, isLoading: typesLoading } = useQuery({
+
+  // Fetch available report types
+  const {
+    data: reportTypes,
+    isLoading: typesLoading,
+    error: typesError,
+  } = useQuery({
     queryKey: ["report-types"],
     queryFn: async () => {
+      if (!isAuthenticated()) {
+        router.push("/login?type=service_provider&session=expired");
+        throw new Error("Not authenticated");
+      }
+      console.log("🔍 Fetching report types...");
       const data = await api.get<ReportType[]>("/api/v1/reports/types/");
+      console.log("✅ Report types received:", data);
       return data;
     },
     retry: 1,
   });
 
+  // Fetch clients for dropdown
   const { data: clientsList } = useQuery({
     queryKey: ["clients-for-reports"],
     queryFn: async () => {
-      const data = await api.get<any[]>("/api/v1/reports/clients/");
+      if (!isAuthenticated()) {
+        return [];
+      }
+      console.log("🔍 Fetching clients for reports...");
+      const data = await api.get<Client[]>("/api/v1/reports/clients/");
+      console.log("✅ Clients received:", data);
       return data;
     },
     retry: 1,
   });
 
-  // ========== GENERATE REPORT ==========
-  const handleGenerateReport = async (reportId: string) => {
-    setSelectedReport(reportId);
-    setReportData(null);
-    setIsGenerating(true);
+  // Generate report mutation
+  const generateReportMutation = useMutation({
+    mutationFn: async ({
+      reportId,
+      filters,
+    }: {
+      reportId: string;
+      filters: ReportFilters;
+    }) => {
+      console.log("🔍 Generating report:", reportId, "with filters:", filters);
 
-    try {
       const queryParams = new URLSearchParams();
+
       if (filters.start_date)
         queryParams.append("start_date", filters.start_date);
       if (filters.end_date) queryParams.append("end_date", filters.end_date);
       if (filters.status) queryParams.append("status", filters.status);
+      if (filters.employee_id)
+        queryParams.append("employee_id", filters.employee_id.toString());
+      if (filters.project_id)
+        queryParams.append("project_id", filters.project_id.toString());
       if (filters.client_id)
         queryParams.append("client_id", filters.client_id.toString());
 
@@ -143,564 +195,476 @@ export default function ReportsPage() {
         `/api/v1/reports/${reportId}/?${queryParams.toString()}`,
       );
 
+      console.log("✅ Report data received:", data);
+      return data;
+    },
+    onSuccess: (data) => {
+      console.log("=== REPORT DATA RECEIVED ===");
+      console.log("Report type:", data.report_type);
+      console.log("Summary:", data.summary);
+      console.log("Full data:", JSON.stringify(data, null, 2));
+      console.log("========================");
       setReportData(data);
-    } catch (error: any) {
+    },
+    onError: (error: any) => {
+      console.error("❌ Report generation error:", error);
       alert(error.message || "Failed to generate report");
-    } finally {
-      setIsGenerating(false);
-    }
-  };
+    },
+  });
 
-  // ========== EXPORT TO PDF ==========
-  const exportToPDF = () => {
-    if (!reportData) return;
-    setIsExporting(true);
+  // Export report mutation
+  const exportReportMutation = useMutation({
+    mutationFn: async ({
+      reportId,
+      format,
+      filters,
+    }: {
+      reportId: string;
+      format: string;
+      filters: ReportFilters;
+    }) => {
+      const baseUrl = getApiBaseUrl();
+      const url = `${baseUrl}/api/v1/reports/${reportId}/export/`;
 
-    try {
-      const doc = new jsPDF();
-      const pageWidth = doc.internal.pageSize.getWidth();
+      console.log("📥 Exporting to:", url);
 
-      // Title
-      doc.setFontSize(18);
-      doc.setTextColor(30, 64, 175);
-      doc.text(reportData.report_type, pageWidth / 2, 20, { align: "center" });
+      let token = localStorage.getItem("accessToken");
 
-      // Generated date
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(
-        `Generated: ${formatDate(reportData.generated_at)}`,
-        pageWidth / 2,
-        28,
-        {
-          align: "center",
+      if (!token) {
+        throw new Error("No authentication token found. Please log in again.");
+      }
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-      );
+        body: JSON.stringify({
+          format,
+          ...filters,
+        }),
+      });
 
-      let yPos = 40;
+      // Handle 401 - try to refresh token
+      if (response.status === 401) {
+        console.log("🔄 Token expired, attempting refresh...");
 
-      // Summary Section
-      if (reportData.summary) {
-        doc.setFontSize(14);
-        doc.setTextColor(30, 64, 175);
-        doc.text("Summary", 14, yPos);
-        yPos += 8;
+        const refreshToken = localStorage.getItem("refreshToken");
+        if (!refreshToken) {
+          throw new Error("Session expired. Please log in again.");
+        }
 
-        doc.setFontSize(10);
-        doc.setTextColor(0);
-        const summary = reportData.summary;
-        Object.keys(summary).forEach((key) => {
-          const label = key
-            .replace(/_/g, " ")
-            .replace(/\b\w/g, (l) => l.toUpperCase());
-          let value = summary[key];
-          if (
-            (typeof value === "number" && key.includes("revenue")) ||
-            key.includes("income") ||
-            key.includes("expense") ||
-            key.includes("profit") ||
-            key.includes("paid")
-          ) {
-            value = formatCurrency(value);
+        try {
+          const refreshResponse = await fetch(
+            `${baseUrl}/api/v1/auth/token/refresh/`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                refresh: refreshToken,
+              }),
+            },
+          );
+
+          if (refreshResponse.ok) {
+            const refreshData = await refreshResponse.json();
+            localStorage.setItem("accessToken", refreshData.access);
+
+            // Retry the export with new token
+            const retryResponse = await fetch(url, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${refreshData.access}`,
+              },
+              body: JSON.stringify({
+                format,
+                ...filters,
+              }),
+            });
+
+            if (!retryResponse.ok) {
+              const error = await retryResponse
+                .json()
+                .catch(() => ({ error: "Export failed after token refresh" }));
+              throw new Error(error.error || "Export failed");
+            }
+
+            const contentDisposition = retryResponse.headers.get(
+              "content-disposition",
+            );
+            let filename = `report.${format === "excel" ? "xlsx" : format}`;
+            if (contentDisposition) {
+              const filenameMatch =
+                contentDisposition.match(/filename="?(.+)"?/);
+              if (filenameMatch) {
+                filename = filenameMatch[1];
+              }
+            }
+
+            const blob = await retryResponse.blob();
+            const downloadUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = downloadUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(downloadUrl);
+            document.body.removeChild(a);
+
+            return;
+          } else {
+            throw new Error("Session expired. Please log in again.");
           }
-          doc.text(`${label}: ${value}`, 14, yPos);
-          yPos += 6;
-        });
-        yPos += 5;
+        } catch (refreshError) {
+          localStorage.removeItem("accessToken");
+          localStorage.removeItem("refreshToken");
+          router.push("/login?type=service_provider&session=expired");
+          throw new Error("Session expired. Please log in again.");
+        }
       }
 
-      // Projects Table
-      if (reportData.projects && reportData.projects.length > 0) {
-        autoTable(doc, {
-          startY: yPos,
-          head: [
-            [
-              "Project",
-              "Client",
-              "Status",
-              "Total Cost",
-              "Received",
-              "Balance",
-            ],
-          ],
-          body: reportData.projects.map((p: any) => [
-            p.name || "N/A",
-            p.client || "N/A",
-            p.status || "N/A",
-            formatCurrency(p.total_cost || 0),
-            formatCurrency(p.received || 0),
-            formatCurrency(p.balance || 0),
-          ]),
-          theme: "grid",
-          headStyles: { fillColor: [30, 64, 175] },
-        });
+      if (!response.ok) {
+        const error = await response
+          .json()
+          .catch(() => ({ error: "Export failed" }));
+        throw new Error(error.error || "Export failed");
       }
 
-      // Employees Table
-      if (reportData.employees && reportData.employees.length > 0) {
-        autoTable(doc, {
-          startY: yPos,
-          head: [
-            ["Name", "Role", "Attendance Rate", "Hours Worked", "Projects"],
-          ],
-          body: reportData.employees.map((e: any) => [
-            e.name || "N/A",
-            e.role || "N/A",
-            `${e.attendance?.rate || 0}%`,
-            (e.hours_worked || 0).toFixed(2),
-            e.projects_assigned || 0,
-          ]),
-          theme: "grid",
-          headStyles: { fillColor: [30, 64, 175] },
-        });
+      // Get filename from header or use default
+      const contentDisposition = response.headers.get("content-disposition");
+      let filename = `report.${format === "excel" ? "xlsx" : format}`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
       }
 
-      // Clients Table
-      if (reportData.clients && reportData.clients.length > 0) {
-        autoTable(doc, {
-          startY: yPos,
-          head: [["Client", "Projects", "Revenue", "Paid", "Rating"]],
-          body: reportData.clients.map((c: any) => [
-            c.name || "N/A",
-            c.total_projects || 0,
-            formatCurrency(c.total_revenue || 0),
-            formatCurrency(c.total_paid || 0),
-            `${(c.average_rating || 0).toFixed(1)} ★`,
-          ]),
-          theme: "grid",
-          headStyles: { fillColor: [30, 64, 175] },
-        });
-      }
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(downloadUrl);
+      document.body.removeChild(a);
+    },
+    onSuccess: () => {
+      console.log("✅ Export successful");
+      setExportingFormat(null);
+    },
+    onError: (error: any) => {
+      console.error("❌ Export error:", error);
+      setExportingFormat(null);
+      alert(error.message || "Failed to export report");
+    },
+  });
 
-      // Milestones Table
-      if (reportData.milestones && reportData.milestones.length > 0) {
-        autoTable(doc, {
-          startY: yPos,
-          head: [["Project", "Milestone", "Status", "Progress", "Target Date"]],
-          body: reportData.milestones.map((m: any) => [
-            m.project || "N/A",
-            m.title || "N/A",
-            m.status || "N/A",
-            `${m.completion_percentage || 0}%`,
-            formatDate(m.target_date),
-          ]),
-          theme: "grid",
-          headStyles: { fillColor: [30, 64, 175] },
-        });
-      }
+  // ========== EVENT HANDLERS ==========
 
-      // Payment Details Table
-      if (reportData.payment_details && reportData.payment_details.length > 0) {
-        autoTable(doc, {
-          startY: yPos,
-          head: [["Date", "Project", "Type", "Amount", "Method"]],
-          body: reportData.payment_details.map((p: any) => [
-            formatDate(p.date),
-            p.project || "N/A",
-            p.type || "N/A",
-            formatCurrency(p.amount || 0),
-            p.method || "N/A",
-          ]),
-          theme: "grid",
-          headStyles: { fillColor: [30, 64, 175] },
-        });
-      }
-
-      doc.save(
-        `${reportData.report_type.replace(/\s+/g, "_")}_${Date.now()}.pdf`,
-      );
-    } catch (error) {
-      console.error("PDF generation error:", error);
-      alert("Failed to generate PDF");
-    } finally {
-      setIsExporting(false);
-    }
+  const handleGenerateReport = (reportId: string) => {
+    console.log("📊 Generating report:", reportId);
+    setSelectedReport(reportId);
+    setReportData(null);
+    generateReportMutation.mutate({ reportId, filters });
   };
 
-  // ========== EXPORT TO EXCEL ==========
-  const exportToExcel = () => {
-    if (!reportData) return;
-    setIsExporting(true);
-
-    try {
-      const wb = XLSX.utils.book_new();
-
-      // Summary Sheet
-      if (reportData.summary) {
-        const summaryData = Object.entries(reportData.summary).map(
-          ([key, value]) => ({
-            Metric: key
-              .replace(/_/g, " ")
-              .replace(/\b\w/g, (l) => l.toUpperCase()),
-            Value: value,
-          }),
-        );
-        const summarySheet = XLSX.utils.json_to_sheet(summaryData);
-        XLSX.utils.book_append_sheet(wb, summarySheet, "Summary");
-      }
-
-      // Projects Sheet
-      if (reportData.projects && reportData.projects.length > 0) {
-        const projectsSheet = XLSX.utils.json_to_sheet(reportData.projects);
-        XLSX.utils.book_append_sheet(wb, projectsSheet, "Projects");
-      }
-
-      // Employees Sheet
-      if (reportData.employees && reportData.employees.length > 0) {
-        const employeesSheet = XLSX.utils.json_to_sheet(reportData.employees);
-        XLSX.utils.book_append_sheet(wb, employeesSheet, "Employees");
-      }
-
-      // Clients Sheet
-      if (reportData.clients && reportData.clients.length > 0) {
-        const clientsSheet = XLSX.utils.json_to_sheet(reportData.clients);
-        XLSX.utils.book_append_sheet(wb, clientsSheet, "Clients");
-      }
-
-      // Milestones Sheet
-      if (reportData.milestones && reportData.milestones.length > 0) {
-        const milestonesSheet = XLSX.utils.json_to_sheet(reportData.milestones);
-        XLSX.utils.book_append_sheet(wb, milestonesSheet, "Milestones");
-      }
-
-      // Payment Details Sheet
-      if (reportData.payment_details && reportData.payment_details.length > 0) {
-        const paymentsSheet = XLSX.utils.json_to_sheet(
-          reportData.payment_details,
-        );
-        XLSX.utils.book_append_sheet(wb, paymentsSheet, "Payments");
-      }
-
-      const fileName = `${reportData.report_type.replace(/\s+/g, "_")}_${Date.now()}.xlsx`;
-      XLSX.writeFile(wb, fileName);
-    } catch (error) {
-      console.error("Excel generation error:", error);
-      alert("Failed to generate Excel file");
-    } finally {
-      setIsExporting(false);
-    }
+  const handleExport = (format: string) => {
+    if (!selectedReport) return;
+    console.log("📥 Exporting report in format:", format);
+    setExportingFormat(format);
+    exportReportMutation.mutate({
+      reportId: selectedReport,
+      format,
+      filters,
+    });
   };
 
-  // ========== EXPORT TO CSV ==========
-  const exportToCSV = () => {
-    if (!reportData) return;
-    setIsExporting(true);
-
-    try {
-      let csvContent = `${reportData.report_type}\nGenerated: ${formatDate(reportData.generated_at)}\n\n`;
-
-      // Summary
-      if (reportData.summary) {
-        csvContent += "SUMMARY\n";
-        Object.entries(reportData.summary).forEach(([key, value]) => {
-          csvContent += `${key.replace(/_/g, " ")},${value}\n`;
-        });
-        csvContent += "\n";
-      }
-
-      // Projects
-      if (reportData.projects && reportData.projects.length > 0) {
-        csvContent += "PROJECTS\n";
-        csvContent += "Name,Client,Status,Total Cost,Received,Balance\n";
-        reportData.projects.forEach((p: any) => {
-          csvContent += `"${p.name || "N/A"}","${p.client || "N/A"}","${p.status || "N/A"}",${p.total_cost || 0},${p.received || 0},${p.balance || 0}\n`;
-        });
-        csvContent += "\n";
-      }
-
-      // Employees
-      if (reportData.employees && reportData.employees.length > 0) {
-        csvContent += "EMPLOYEES\n";
-        csvContent += "Name,Role,Attendance Rate,Hours Worked,Projects\n";
-        reportData.employees.forEach((e: any) => {
-          csvContent += `"${e.name || "N/A"}","${e.role || "N/A"}",${e.attendance?.rate || 0}%,${e.hours_worked || 0},${e.projects_assigned || 0}\n`;
-        });
-        csvContent += "\n";
-      }
-
-      // Clients
-      if (reportData.clients && reportData.clients.length > 0) {
-        csvContent += "CLIENTS\n";
-        csvContent += "Name,Projects,Revenue,Paid,Rating\n";
-        reportData.clients.forEach((c: any) => {
-          csvContent += `"${c.name || "N/A"}",${c.total_projects || 0},${c.total_revenue || 0},${c.total_paid || 0},${c.average_rating || 0}\n`;
-        });
-      }
-
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-      saveAs(
-        blob,
-        `${reportData.report_type.replace(/\s+/g, "_")}_${Date.now()}.csv`,
-      );
-    } catch (error) {
-      console.error("CSV generation error:", error);
-      alert("Failed to generate CSV");
-    } finally {
-      setIsExporting(false);
-    }
+  const handleFilterChange = (field: string, value: any) => {
+    console.log("🔧 Filter changed:", field, "=", value);
+    setFilters((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
   };
 
-  // ========== PRINT ==========
-  const handlePrint = () => {
-    window.print();
+  const handleApplyFilters = () => {
+    console.log("✅ Applying filters:", filters);
+    if (selectedReport) {
+      generateReportMutation.mutate({ reportId: selectedReport, filters });
+    }
+    setShowFilters(false);
   };
 
-  // ========== RENDER SUMMARY CARDS ==========
-  const renderSummaryCards = () => {
-    if (!reportData?.summary) return null;
+  const handleResetFilters = () => {
+    console.log("🔄 Resetting filters");
+    setFilters({
+      start_date: "2020-01-01",
+      end_date: "2030-12-31",
+    });
+  };
 
-    const summary = reportData.summary;
-    const cards = [];
+  // ========== RENDER FUNCTIONS ==========
 
-    if (reportData.report_type === "Projects Summary") {
-      cards.push(
-        {
-          label: "Total Projects",
-          value: summary.total_projects || 0,
-          color: "blue",
-        },
-        {
-          label: "Total Revenue",
-          value: formatCurrency(summary.total_revenue || 0),
-          color: "green",
-        },
-        {
-          label: "Received",
-          value: formatCurrency(summary.total_received || 0),
-          color: "purple",
-        },
-        {
-          label: "Pending",
-          value: formatCurrency(summary.total_pending || 0),
-          color: "orange",
-        },
-      );
-    } else if (reportData.report_type === "Financial Report") {
-      cards.push(
-        {
-          label: "Total Income",
-          value: formatCurrency(summary.total_income || 0),
-          color: "green",
-        },
-        {
-          label: "Total Expenses",
-          value: formatCurrency(summary.total_expenses || 0),
-          color: "red",
-        },
-        {
-          label: "Net Profit",
-          value: formatCurrency(summary.net_profit || 0),
-          color: "blue",
-        },
-        {
-          label: "Profit Margin",
-          value: `${summary.profit_margin || 0}%`,
-          color: "purple",
-        },
-      );
-    } else if (reportData.report_type === "Employee Performance") {
-      cards.push(
-        {
-          label: "Total Employees",
-          value: summary.total_employees || 0,
-          color: "blue",
-        },
-        {
-          label: "Avg Attendance",
-          value: `${summary.avg_attendance_rate || 0}%`,
-          color: "green",
-        },
-        {
-          label: "Total Hours",
-          value: (summary.total_hours_worked || 0).toLocaleString(),
-          color: "purple",
-        },
-      );
-    } else if (reportData.report_type === "Client Analysis") {
-      cards.push(
-        {
-          label: "Total Clients",
-          value: summary.total_clients || 0,
-          color: "blue",
-        },
-        {
-          label: "Total Revenue",
-          value: formatCurrency(summary.total_revenue || 0),
-          color: "green",
-        },
-        {
-          label: "Avg Revenue/Client",
-          value: formatCurrency(summary.avg_revenue_per_client || 0),
-          color: "purple",
-        },
-      );
-    } else if (reportData.report_type === "Milestone Completion") {
-      cards.push(
-        {
-          label: "Total Milestones",
-          value: summary.total_milestones || 0,
-          color: "blue",
-        },
-        { label: "Completed", value: summary.completed || 0, color: "green" },
-        {
-          label: "Completion Rate",
-          value: `${summary.completion_rate || 0}%`,
-          color: "purple",
-        },
-      );
-    }
+  const renderSummaryCards = (summary: any) => {
+    if (!summary) return null;
 
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6">
-        {cards.map((card, idx) => (
-          <div
-            key={idx}
-            className={`bg-gradient-to-br from-${card.color}-50 to-${card.color}-100 rounded-xl p-6 border border-${card.color}-200`}
-          >
-            <div
-              className={`text-${card.color}-600 text-sm font-semibold mb-1`}
-            >
-              {card.label}
+    if (reportData?.report_type === "Projects Summary") {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border border-blue-200">
+            <div className="text-blue-600 text-sm font-semibold mb-1">
+              Total Projects
             </div>
-            <div className={`text-3xl font-bold text-${card.color}-900`}>
-              {card.value}
+            <div className="text-3xl font-bold text-blue-900">
+              {summary.total_projects || 0}
             </div>
           </div>
-        ))}
-      </div>
-    );
-  };
-
-  // ========== RENDER DATA TABLE ==========
-  const renderDataTable = () => {
-    if (!reportData) return null;
-
-    let headers: string[] = [];
-    let rows: any[][] = [];
-    let title = "";
-
-    if (reportData.projects && reportData.projects.length > 0) {
-      title = "Projects";
-      headers = [
-        "Project",
-        "Client",
-        "Status",
-        "Total Cost",
-        "Received",
-        "Balance",
-        "Completion",
-      ];
-      rows = reportData.projects.map((p: any) => [
-        p.name || "N/A",
-        p.client || "N/A",
-        p.status || "N/A",
-        formatCurrency(p.total_cost || 0),
-        formatCurrency(p.received || 0),
-        formatCurrency(p.balance || 0),
-        p.completion || "0%",
-      ]);
-    } else if (reportData.employees && reportData.employees.length > 0) {
-      title = "Employees";
-      headers = [
-        "Name",
-        "Role",
-        "Department",
-        "Attendance",
-        "Hours",
-        "Projects",
-      ];
-      rows = reportData.employees.map((e: any) => [
-        e.name || "N/A",
-        e.role || "N/A",
-        e.department || "N/A",
-        `${e.attendance?.rate || 0}%`,
-        (e.hours_worked || 0).toFixed(2),
-        e.projects_assigned || 0,
-      ]);
-    } else if (reportData.clients && reportData.clients.length > 0) {
-      title = "Clients";
-      headers = ["Client", "Email", "Projects", "Revenue", "Paid", "Rating"];
-      rows = reportData.clients.map((c: any) => [
-        c.name || "N/A",
-        c.email || "N/A",
-        c.total_projects || 0,
-        formatCurrency(c.total_revenue || 0),
-        formatCurrency(c.total_paid || 0),
-        `${(c.average_rating || 0).toFixed(1)} ★`,
-      ]);
-    } else if (reportData.milestones && reportData.milestones.length > 0) {
-      title = "Milestones";
-      headers = [
-        "Project",
-        "Milestone",
-        "Status",
-        "Progress",
-        "Target Date",
-        "Overdue",
-      ];
-      rows = reportData.milestones.map((m: any) => [
-        m.project || "N/A",
-        m.title || "N/A",
-        m.status || "N/A",
-        `${m.completion_percentage || 0}%`,
-        formatDate(m.target_date),
-        m.is_overdue ? `${m.days_delayed || 0} days` : "No",
-      ]);
-    } else if (
-      reportData.payment_details &&
-      reportData.payment_details.length > 0
-    ) {
-      title = "Payment Details";
-      headers = [
-        "Date",
-        "Project",
-        "Type",
-        "Amount",
-        "Method",
-        "Transaction ID",
-      ];
-      rows = reportData.payment_details.map((p: any) => [
-        formatDate(p.date),
-        p.project || "N/A",
-        p.type || "N/A",
-        formatCurrency(p.amount || 0),
-        p.method || "N/A",
-        p.transaction_id || "N/A",
-      ]);
+          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border border-green-200">
+            <div className="text-green-600 text-sm font-semibold mb-1">
+              Total Revenue
+            </div>
+            <div className="text-3xl font-bold text-green-900">
+              {formatCurrency(summary.total_revenue || 0)}
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200">
+            <div className="text-purple-600 text-sm font-semibold mb-1">
+              Received
+            </div>
+            <div className="text-3xl font-bold text-purple-900">
+              {formatCurrency(summary.total_received || 0)}
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-6 border border-orange-200">
+            <div className="text-orange-600 text-sm font-semibold mb-1">
+              Pending
+            </div>
+            <div className="text-3xl font-bold text-orange-900">
+              {formatCurrency(summary.total_pending || 0)}
+            </div>
+          </div>
+        </div>
+      );
     }
 
-    if (rows.length === 0) return null;
+    if (reportData?.report_type === "Financial Report") {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border border-green-200">
+            <div className="text-green-600 text-sm font-semibold mb-1">
+              Total Income
+            </div>
+            <div className="text-3xl font-bold text-green-900">
+              {formatCurrency(summary.total_income || 0)}
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-6 border border-red-200">
+            <div className="text-red-600 text-sm font-semibold mb-1">
+              Total Expenses
+            </div>
+            <div className="text-3xl font-bold text-red-900">
+              {formatCurrency(summary.total_expenses || 0)}
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border border-blue-200">
+            <div className="text-blue-600 text-sm font-semibold mb-1">
+              Net Profit
+            </div>
+            <div className="text-3xl font-bold text-blue-900">
+              {formatCurrency(summary.net_profit || 0)}
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200">
+            <div className="text-purple-600 text-sm font-semibold mb-1">
+              Profit Margin
+            </div>
+            <div className="text-3xl font-bold text-purple-900">
+              {summary.profit_margin || 0}%
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (reportData?.report_type === "Employee Performance") {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border border-blue-200">
+            <div className="text-blue-600 text-sm font-semibold mb-1">
+              Total Employees
+            </div>
+            <div className="text-3xl font-bold text-blue-900">
+              {summary.total_employees || 0}
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border border-green-200">
+            <div className="text-green-600 text-sm font-semibold mb-1">
+              Avg Attendance Rate
+            </div>
+            <div className="text-3xl font-bold text-green-900">
+              {summary.avg_attendance_rate || 0}%
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200">
+            <div className="text-purple-600 text-sm font-semibold mb-1">
+              Total Hours Worked
+            </div>
+            <div className="text-3xl font-bold text-purple-900">
+              {(summary.total_hours_worked || 0).toLocaleString()}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (reportData?.report_type === "Client Analysis") {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border border-blue-200">
+            <div className="text-blue-600 text-sm font-semibold mb-1">
+              Total Clients
+            </div>
+            <div className="text-3xl font-bold text-blue-900">
+              {summary.total_clients || 0}
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border border-green-200">
+            <div className="text-green-600 text-sm font-semibold mb-1">
+              Total Revenue
+            </div>
+            <div className="text-3xl font-bold text-green-900">
+              {formatCurrency(summary.total_revenue || 0)}
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200">
+            <div className="text-purple-600 text-sm font-semibold mb-1">
+              Avg Revenue/Client
+            </div>
+            <div className="text-3xl font-bold text-purple-900">
+              {formatCurrency(summary.avg_revenue_per_client || 0)}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (reportData?.report_type === "Milestone Completion") {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border border-blue-200">
+            <div className="text-blue-600 text-sm font-semibold mb-1">
+              Total Milestones
+            </div>
+            <div className="text-3xl font-bold text-blue-900">
+              {summary.total_milestones || 0}
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border border-green-200">
+            <div className="text-green-600 text-sm font-semibold mb-1">
+              Completed
+            </div>
+            <div className="text-3xl font-bold text-green-900">
+              {summary.completed || 0}
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200">
+            <div className="text-purple-600 text-sm font-semibold mb-1">
+              Completion Rate
+            </div>
+            <div className="text-3xl font-bold text-purple-900">
+              {summary.completion_rate || 0}%
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  const renderProjectsTable = (projects: any[]) => {
+    if (!projects || projects.length === 0) {
+      return (
+        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-8 text-center">
+          <p className="text-neutral-600">No projects found</p>
+        </div>
+      );
+    }
 
     return (
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-blue-100">
-          <h3 className="text-xl font-bold text-gray-800">{title}</h3>
+      <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
+        <div className="p-6 border-b border-neutral-200 bg-gradient-to-r from-primary-50 to-secondary-50">
+          <h3 className="heading-4">Project Details</h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-gray-100">
+            <thead className="bg-neutral-100">
               <tr>
-                {headers.map((header, idx) => (
-                  <th
-                    key={idx}
-                    className="text-left p-4 font-semibold text-gray-700"
-                  >
-                    {header}
-                  </th>
-                ))}
+                <th className="text-left p-4 font-semibold text-neutral-700">
+                  Project
+                </th>
+                <th className="text-left p-4 font-semibold text-neutral-700">
+                  Client
+                </th>
+                <th className="text-left p-4 font-semibold text-neutral-700">
+                  Status
+                </th>
+                <th className="text-right p-4 font-semibold text-neutral-700">
+                  Total Cost
+                </th>
+                <th className="text-right p-4 font-semibold text-neutral-700">
+                  Received
+                </th>
+                <th className="text-right p-4 font-semibold text-neutral-700">
+                  Balance
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Completion
+                </th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, idx) => (
+              {projects.map((project, index) => (
                 <tr
-                  key={idx}
-                  className="border-t border-gray-200 hover:bg-gray-50"
+                  key={project.id || index}
+                  className="border-t border-neutral-200 hover:bg-neutral-50"
                 >
-                  {row.map((cell, cellIdx) => (
-                    <td key={cellIdx} className="p-4 text-gray-700">
-                      {cell}
-                    </td>
-                  ))}
+                  <td className="p-4">
+                    <div className="font-semibold text-neutral-900">
+                      {project.name || "Unnamed Project"}
+                    </div>
+                    <div className="text-sm text-neutral-600">
+                      {project.milestones || "0"} milestones
+                    </div>
+                  </td>
+                  <td className="p-4 text-neutral-700">
+                    {project.client || "N/A"}
+                  </td>
+                  <td className="p-4">
+                    <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
+                      {project.status || "Unknown"}
+                    </span>
+                  </td>
+                  <td className="p-4 text-right font-semibold text-neutral-900">
+                    {formatCurrency(project.total_cost || 0)}
+                  </td>
+                  <td className="p-4 text-right text-green-600 font-semibold">
+                    {formatCurrency(project.received || 0)}
+                  </td>
+                  <td className="p-4 text-right text-orange-600 font-semibold">
+                    {formatCurrency(project.balance || 0)}
+                  </td>
+                  <td className="p-4 text-center">
+                    <span className="font-semibold text-neutral-900">
+                      {project.completion || "0%"}
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -710,67 +674,431 @@ export default function ReportsPage() {
     );
   };
 
-  // ========== LOADING STATE ==========
+  const renderEmployeeTable = (employees: any[]) => {
+    if (!employees || employees.length === 0) {
+      return (
+        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-8 text-center">
+          <p className="text-neutral-600">No employees found</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
+        <div className="p-6 border-b border-neutral-200 bg-gradient-to-r from-primary-50 to-secondary-50">
+          <h3 className="heading-4">Employee Performance</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-neutral-100">
+              <tr>
+                <th className="text-left p-4 font-semibold text-neutral-700">
+                  Employee
+                </th>
+                <th className="text-left p-4 font-semibold text-neutral-700">
+                  Role
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Total Days
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Present
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Absent
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Attendance Rate
+                </th>
+                <th className="text-right p-4 font-semibold text-neutral-700">
+                  Hours Worked
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Projects
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {employees.map((emp, index) => (
+                <tr
+                  key={emp.id || index}
+                  className="border-t border-neutral-200 hover:bg-neutral-50"
+                >
+                  <td className="p-4">
+                    <div className="font-semibold text-neutral-900">
+                      {emp.name || "Unknown"}
+                    </div>
+                    <div className="text-sm text-neutral-600">
+                      {emp.department || "N/A"}
+                    </div>
+                  </td>
+                  <td className="p-4 text-neutral-700">{emp.role || "N/A"}</td>
+                  <td className="p-4 text-center text-neutral-900">
+                    {emp.attendance?.total_days || 0}
+                  </td>
+                  <td className="p-4 text-center text-green-600 font-semibold">
+                    {emp.attendance?.present || 0}
+                  </td>
+                  <td className="p-4 text-center text-red-600 font-semibold">
+                    {emp.attendance?.absent || 0}
+                  </td>
+                  <td className="p-4 text-center">
+                    <span className="font-semibold text-neutral-900">
+                      {emp.attendance?.rate || 0}%
+                    </span>
+                  </td>
+                  <td className="p-4 text-right font-semibold text-neutral-900">
+                    {(emp.hours_worked || 0).toFixed(2)}
+                  </td>
+                  <td className="p-4 text-center text-blue-600 font-semibold">
+                    {emp.projects_assigned || 0}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderClientTable = (clients: any[]) => {
+    if (!clients || clients.length === 0) {
+      return (
+        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-8 text-center">
+          <p className="text-neutral-600">No clients found</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
+        <div className="p-6 border-b border-neutral-200 bg-gradient-to-r from-primary-50 to-secondary-50">
+          <h3 className="heading-4">Client Analysis</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-neutral-100">
+              <tr>
+                <th className="text-left p-4 font-semibold text-neutral-700">
+                  Client
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Total Projects
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Completed
+                </th>
+                <th className="text-right p-4 font-semibold text-neutral-700">
+                  Total Revenue
+                </th>
+                <th className="text-right p-4 font-semibold text-neutral-700">
+                  Total Paid
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Avg Rating
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {clients.map((client, index) => (
+                <tr
+                  key={client.id || index}
+                  className="border-t border-neutral-200 hover:bg-neutral-50"
+                >
+                  <td className="p-4">
+                    <div className="font-semibold text-neutral-900">
+                      {client.name || "Unknown"}
+                    </div>
+                    <div className="text-sm text-neutral-600">
+                      {client.email || "N/A"}
+                    </div>
+                    <div className="text-sm text-neutral-500">
+                      {client.phone || "N/A"}
+                    </div>
+                  </td>
+                  <td className="p-4 text-center text-neutral-900 font-semibold">
+                    {client.total_projects || 0}
+                  </td>
+                  <td className="p-4 text-center text-green-600 font-semibold">
+                    {client.completed_projects || 0}
+                  </td>
+                  <td className="p-4 text-right text-neutral-900 font-semibold">
+                    {formatCurrency(client.total_revenue || 0)}
+                  </td>
+                  <td className="p-4 text-right text-green-600 font-semibold">
+                    {formatCurrency(client.total_paid || 0)}
+                  </td>
+                  <td className="p-4 text-center">
+                    <div className="flex items-center justify-center gap-1">
+                      <span className="text-yellow-500">★</span>
+                      <span className="font-semibold text-neutral-900">
+                        {(client.average_rating || 0).toFixed(1)}
+                      </span>
+                      <span className="text-xs text-neutral-500">
+                        ({client.review_count || 0})
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderMilestoneTable = (milestones: any[]) => {
+    if (!milestones || milestones.length === 0) {
+      return (
+        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-8 text-center">
+          <p className="text-neutral-600">No milestones found</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
+        <div className="p-6 border-b border-neutral-200 bg-gradient-to-r from-primary-50 to-secondary-50">
+          <h3 className="heading-4">Milestone Details</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-neutral-100">
+              <tr>
+                <th className="text-left p-4 font-semibold text-neutral-700">
+                  Project
+                </th>
+                <th className="text-left p-4 font-semibold text-neutral-700">
+                  Milestone
+                </th>
+                <th className="text-left p-4 font-semibold text-neutral-700">
+                  Status
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Target Date
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Progress
+                </th>
+                <th className="text-center p-4 font-semibold text-neutral-700">
+                  Overdue
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {milestones.map((milestone, index) => (
+                <tr
+                  key={milestone.id || index}
+                  className="border-t border-neutral-200 hover:bg-neutral-50"
+                >
+                  <td className="p-4 text-neutral-900 font-semibold">
+                    {milestone.project || "N/A"}
+                  </td>
+                  <td className="p-4 text-neutral-700">
+                    {milestone.title || "N/A"}
+                  </td>
+                  <td className="p-4">
+                    <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
+                      {milestone.status || "Unknown"}
+                    </span>
+                  </td>
+                  <td className="p-4 text-center text-neutral-700">
+                    {formatDate(milestone.target_date)}
+                  </td>
+                  <td className="p-4 text-center">
+                    <span className="font-semibold text-neutral-900">
+                      {milestone.completion_percentage || 0}%
+                    </span>
+                  </td>
+                  <td className="p-4 text-center">
+                    {milestone.is_overdue ? (
+                      <span className="text-red-600 font-semibold">
+                        {milestone.days_delayed || 0} days
+                      </span>
+                    ) : (
+                      <span className="text-green-600">On track</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderReportContent = () => {
+    if (!reportData) return null;
+
+    console.log("📊 Rendering report content for:", reportData.report_type);
+
+    return (
+      <div className="space-y-6">
+        {/* Render summary cards */}
+        {renderSummaryCards(reportData.summary)}
+
+        {/* Projects Summary Report */}
+        {reportData.report_type === "Projects Summary" &&
+          reportData.projects &&
+          reportData.projects.length > 0 &&
+          renderProjectsTable(reportData.projects)}
+
+        {/* Employee Performance Report */}
+        {reportData.report_type === "Employee Performance" &&
+          reportData.employees &&
+          reportData.employees.length > 0 &&
+          renderEmployeeTable(reportData.employees)}
+
+        {/* Client Analysis Report */}
+        {reportData.report_type === "Client Analysis" &&
+          reportData.clients &&
+          reportData.clients.length > 0 &&
+          renderClientTable(reportData.clients)}
+
+        {/* Milestone Completion Report */}
+        {reportData.report_type === "Milestone Completion" &&
+          reportData.milestones &&
+          reportData.milestones.length > 0 &&
+          renderMilestoneTable(reportData.milestones)}
+
+        {/* Financial Report - Payment Details */}
+        {reportData.report_type === "Financial Report" &&
+          reportData.payment_details &&
+          reportData.payment_details.length > 0 && (
+            <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
+              <div className="p-6 border-b border-neutral-200 bg-gradient-to-r from-primary-50 to-secondary-50">
+                <h3 className="heading-4">Payment Details</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-neutral-100">
+                    <tr>
+                      <th className="text-left p-4 font-semibold text-neutral-700">
+                        Date
+                      </th>
+                      <th className="text-left p-4 font-semibold text-neutral-700">
+                        Project
+                      </th>
+                      <th className="text-left p-4 font-semibold text-neutral-700">
+                        Type
+                      </th>
+                      <th className="text-right p-4 font-semibold text-neutral-700">
+                        Amount
+                      </th>
+                      <th className="text-left p-4 font-semibold text-neutral-700">
+                        Method
+                      </th>
+                      <th className="text-left p-4 font-semibold text-neutral-700">
+                        Transaction ID
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportData.payment_details.map(
+                      (payment: any, idx: number) => (
+                        <tr
+                          key={idx}
+                          className="border-t border-neutral-200 hover:bg-neutral-50"
+                        >
+                          <td className="p-4 text-neutral-700">
+                            {formatDate(payment.date)}
+                          </td>
+                          <td className="p-4 text-neutral-900 font-semibold">
+                            {payment.project || "N/A"}
+                          </td>
+                          <td className="p-4">
+                            <span className="px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
+                              {payment.type || "Unknown"}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right font-semibold text-green-600">
+                            {formatCurrency(payment.amount || 0)}
+                          </td>
+                          <td className="p-4 text-neutral-700">
+                            {payment.method || "N/A"}
+                          </td>
+                          <td className="p-4 text-neutral-700">
+                            {payment.transaction_id || "N/A"}
+                          </td>
+                        </tr>
+                      ),
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+      </div>
+    );
+  };
+
+  // ========== LOADING & ERROR STATES ==========
+
   if (typesLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading reports...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+          <p className="text-neutral-600">Loading reports...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (typesError) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
+          <div className="flex items-center gap-3 mb-4">
+            <FontAwesomeIcon
+              icon={faExclamationTriangle}
+              className="text-red-600 text-2xl"
+            />
+            <h3 className="text-red-800 font-semibold">
+              Error Loading Reports
+            </h3>
+          </div>
+          <p className="text-red-600 mb-4">
+            {(typesError as any)?.message || "Unknown error"}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="btn-primary w-full"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
   }
 
   // ========== MAIN RENDER ==========
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-8 py-6">
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-neutral-50">
+      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-1">Reports</h1>
-            <p className="text-gray-600">
-              Generate comprehensive business reports
+            <h1 className="heading-2 text-neutral-900 mb-1">Reports</h1>
+            <p className="text-neutral-600 body-regular">
+              Generate comprehensive reports for your business
             </p>
           </div>
 
           {selectedReport && reportData && (
             <div className="flex items-center gap-3">
               <button
-                onClick={handlePrint}
-                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center gap-2"
+                onClick={() => setShowFilters(!showFilters)}
+                className="btn-secondary flex items-center gap-2"
               >
-                <FontAwesomeIcon icon={faPrint} />
-                Print
-              </button>
-              <button
-                onClick={exportToCSV}
-                disabled={isExporting}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:opacity-50"
-              >
-                <FontAwesomeIcon icon={faFileCsv} />
-                CSV
-              </button>
-              <button
-                onClick={exportToExcel}
-                disabled={isExporting}
-                className="px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-800 flex items-center gap-2 disabled:opacity-50"
-              >
-                <FontAwesomeIcon icon={faFileExcel} />
-                Excel
-              </button>
-              <button
-                onClick={exportToPDF}
-                disabled={isExporting}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2 disabled:opacity-50"
-              >
-                {isExporting ? (
-                  <FontAwesomeIcon icon={faSpinner} spin />
-                ) : (
-                  <FontAwesomeIcon icon={faFilePdf} />
-                )}
-                PDF
+                <FontAwesomeIcon icon={faFilter} />
+                Filters
+                <FontAwesomeIcon
+                  icon={showFilters ? faChevronUp : faChevronDown}
+                />
               </button>
             </div>
           )}
@@ -778,33 +1106,149 @@ export default function ReportsPage() {
       </div>
 
       <div className="p-8 max-w-7xl mx-auto">
+        {/* Filters Panel */}
+        {showFilters && selectedReport && (
+          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="heading-4">Filters</h3>
+              <button
+                onClick={() => setShowFilters(false)}
+                className="text-neutral-500 hover:text-neutral-700"
+              >
+                <FontAwesomeIcon icon={faTimes} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                  <FontAwesomeIcon
+                    icon={faCalendar}
+                    className="mr-2 text-primary-600"
+                  />
+                  Start Date
+                </label>
+                <input
+                  type="date"
+                  value={filters.start_date || ""}
+                  onChange={(e) =>
+                    handleFilterChange("start_date", e.target.value)
+                  }
+                  className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                />
+              </div>
+
+              <div>
+                <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                  <FontAwesomeIcon
+                    icon={faCalendar}
+                    className="mr-2 text-primary-600"
+                  />
+                  End Date
+                </label>
+                <input
+                  type="date"
+                  value={filters.end_date || ""}
+                  onChange={(e) =>
+                    handleFilterChange("end_date", e.target.value)
+                  }
+                  className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                />
+              </div>
+
+              {selectedReport === "projects-summary" && (
+                <div>
+                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                    Status
+                  </label>
+                  <select
+                    value={filters.status || ""}
+                    onChange={(e) =>
+                      handleFilterChange("status", e.target.value)
+                    }
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 cursor-pointer"
+                  >
+                    <option value="">All Statuses</option>
+                    <option value="pending">Pending</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                    <option value="on_hold">On Hold</option>
+                  </select>
+                </div>
+              )}
+
+              {selectedReport === "client-analysis" && clientsList && (
+                <div>
+                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                    <FontAwesomeIcon
+                      icon={faUserTie}
+                      className="mr-2 text-primary-600"
+                    />
+                    Select Client
+                  </label>
+                  <select
+                    value={filters.client_id || ""}
+                    onChange={(e) =>
+                      handleFilterChange(
+                        "client_id",
+                        e.target.value ? parseInt(e.target.value) : undefined,
+                      )
+                    }
+                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 cursor-pointer"
+                  >
+                    <option value="">All Clients</option>
+                    {clientsList.map((client) => (
+                      <option key={client.id} value={client.id}>
+                        {client.name} ({client.email})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-4">
+              <button onClick={handleApplyFilters} className="btn-primary">
+                Apply Filters
+              </button>
+              <button onClick={handleResetFilters} className="btn-secondary">
+                Reset
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Report Type Selection */}
         {!selectedReport && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {reportTypes?.map((reportType) => (
               <div
                 key={reportType.id}
+                className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 hover:shadow-lg transition-all cursor-pointer"
                 onClick={() => handleGenerateReport(reportType.id)}
-                className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-all cursor-pointer"
               >
-                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
-                  <FontAwesomeIcon
-                    icon={iconMapping[reportType.icon]}
-                    className="text-2xl text-blue-600"
-                  />
+                <div className="flex items-start justify-between mb-4">
+                  <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
+                    <FontAwesomeIcon
+                      icon={iconMapping[reportType.icon]}
+                      className="text-2xl text-primary-600"
+                    />
+                  </div>
                 </div>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">
-                  {reportType.name}
-                </h3>
-                <p className="text-gray-600 text-sm mb-4">
+
+                <h3 className="heading-4 mb-2">{reportType.name}</h3>
+                <p className="text-neutral-600 text-sm mb-4">
                   {reportType.description}
                 </p>
+
                 <div className="flex flex-wrap gap-2">
                   {reportType.available_formats.map((format) => (
                     <span
                       key={format}
-                      className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-semibold"
+                      className="px-3 py-1 bg-neutral-100 text-neutral-700 rounded-full text-xs font-semibold flex items-center gap-1"
                     >
+                      <FontAwesomeIcon icon={formatIconMapping[format]} />
                       {format.toUpperCase()}
                     </span>
                   ))}
@@ -814,57 +1258,80 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {/* Report View */}
+        {/* Selected Report View */}
         {selectedReport && (
-          <div ref={printRef}>
-            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6 print:shadow-none">
+          <div>
+            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 mb-6">
               <div className="flex items-center justify-between mb-4">
-                <button
-                  onClick={() => {
-                    setSelectedReport(null);
-                    setReportData(null);
-                  }}
-                  className="text-gray-600 hover:text-gray-900 print:hidden"
-                >
-                  ← Back to Reports
-                </button>
-                <h2 className="text-2xl font-bold text-gray-900">
-                  {reportTypes?.find((r) => r.id === selectedReport)?.name}
-                </h2>
-                <div className="w-32"></div>
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={() => {
+                      setSelectedReport(null);
+                      setReportData(null);
+                    }}
+                    className="text-neutral-600 hover:text-neutral-900"
+                  >
+                    ← Back to Reports
+                  </button>
+                  <div className="h-6 w-px bg-neutral-300"></div>
+                  <h2 className="heading-3">
+                    {reportTypes?.find((r) => r.id === selectedReport)?.name}
+                  </h2>
+                </div>
+
+                {reportData && (
+                  <div className="flex items-center gap-3">
+                    {reportTypes
+                      ?.find((r) => r.id === selectedReport)
+                      ?.available_formats.map((format) => (
+                        <button
+                          key={format}
+                          onClick={() => handleExport(format)}
+                          disabled={exportingFormat === format}
+                          className="btn-secondary flex items-center gap-2 disabled:opacity-50"
+                        >
+                          {exportingFormat === format ? (
+                            <FontAwesomeIcon icon={faSpinner} spin />
+                          ) : (
+                            <FontAwesomeIcon icon={formatIconMapping[format]} />
+                          )}
+                          Export {format.toUpperCase()}
+                        </button>
+                      ))}
+                  </div>
+                )}
               </div>
 
               {reportData && (
-                <p className="text-sm text-gray-600">
-                  Generated: {formatDate(reportData.generated_at)}
-                </p>
+                <div className="text-sm text-neutral-600">
+                  Generated: {formatDateTime(reportData.generated_at)}
+                </div>
               )}
             </div>
 
-            {isGenerating && (
-              <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                <p className="text-gray-600">Generating report...</p>
+            {generateReportMutation.isPending && (
+              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+                <p className="text-neutral-600">Generating report...</p>
               </div>
             )}
 
-            {!isGenerating && reportData && (
-              <div className="space-y-6">
-                {renderSummaryCards()}
-                {renderDataTable()}
-              </div>
-            )}
+            {!generateReportMutation.isPending &&
+              reportData &&
+              renderReportContent()}
 
-            {!isGenerating && !reportData && (
-              <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+            {!generateReportMutation.isPending && !reportData && (
+              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
                 <FontAwesomeIcon
                   icon={faFileAlt}
-                  className="text-6xl text-gray-300 mb-4"
+                  className="text-6xl text-neutral-300 mb-4"
                 />
-                <h3 className="text-xl font-bold text-gray-900 mb-2">
-                  No Data
+                <h3 className="heading-4 text-neutral-900 mb-2">
+                  No Report Generated
                 </h3>
-                <p className="text-gray-600">Failed to load report data</p>
+                <p className="text-neutral-600">
+                  Click "Apply Filters" to generate this report
+                </p>
               </div>
             )}
           </div>
@@ -873,3 +1340,4 @@ export default function ReportsPage() {
     </div>
   );
 }
+

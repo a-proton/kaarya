@@ -13,6 +13,9 @@ import {
   faSpinner,
   faExclamationTriangle,
   faCloudUpload,
+  faUserCircle,
+  faEnvelope,
+  faPhone,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -47,13 +50,14 @@ interface Message {
   is_read: boolean;
   read_at: string | null;
   created_at: string;
+  is_guest?: boolean; // ✅ NEW: Flag for guest messages
 }
 
 interface Conversation {
   id: number;
   name: string;
   initials: string;
-  type: "client" | "inquiry";
+  type: "client" | "inquiry"; // ✅ UPDATED: Now properly uses "inquiry" for guests
   avatar?: string | null;
   lastMessage: string;
   lastMessageTime: string;
@@ -72,6 +76,10 @@ interface Conversation {
   last_message_at: string;
   is_active: boolean;
   created_at: string;
+  // ✅ NEW: Guest inquiry fields
+  is_guest?: boolean;
+  guest_email?: string;
+  guest_phone?: string;
 }
 
 interface MessageCreateData {
@@ -104,15 +112,25 @@ interface MediaPreviewFile {
 // ==================================================================================
 
 const mapConversationFromBackend = (conv: any): Conversation => {
-  const name =
-    conv.client_name_display || conv.service_provider_name || "Unknown";
-  const avatar = conv.client_image || conv.service_provider_image || null;
-  const initials = name
-    .split(" ")
-    .map((n: string) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  // ✅ UPDATED: Properly detect guest inquiries
+  const isGuest = conv.type === "inquiry" || !conv.client;
+
+  const name = isGuest
+    ? conv.client_name || conv.client_name_display || "Guest User"
+    : conv.client_name_display || conv.service_provider_name || "Unknown";
+
+  const avatar = isGuest
+    ? null // Guests don't have avatars
+    : conv.client_image || conv.service_provider_image || null;
+
+  const initials =
+    name
+      .split(" ")
+      .map((n: string) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2) || "GU";
+
   const colors = [
     "bg-primary-600",
     "bg-secondary-600",
@@ -127,21 +145,25 @@ const mapConversationFromBackend = (conv: any): Conversation => {
     id: conv.id,
     name,
     initials,
-    type: "client",
+    type: isGuest ? "inquiry" : "client", // ✅ FIXED: Properly set type
     avatar,
-    lastMessage: conv.last_message?.text || "No messages yet",
+    lastMessage:
+      conv.lastMessage || conv.last_message?.text || "No messages yet",
     lastMessageTime: formatTime(conv.last_message_at || conv.created_at),
-    unreadCount: 0,
-    isOnline: Math.random() > 0.5,
+    unreadCount: conv.unreadCount || 0,
+    isOnline: false, // Guests are never online
     color,
     service_provider_name: conv.service_provider_name,
     service_provider_image: conv.service_provider_image,
-    client_name_display: conv.client_name_display,
+    client_name_display: conv.client_name_display || name,
     client_image: conv.client_image,
     last_message: conv.last_message,
     last_message_at: conv.last_message_at,
     is_active: conv.is_active,
     created_at: conv.created_at,
+    is_guest: isGuest,
+    guest_email: isGuest ? conv.client_email || conv.guest_email : undefined,
+    guest_phone: isGuest ? conv.client_phone || conv.guest_phone : undefined,
   };
 };
 
@@ -166,6 +188,7 @@ const mapMessageFromBackend = (msg: any): Message => {
     is_read: msg.is_read,
     read_at: msg.read_at,
     created_at: msg.created_at,
+    is_guest: msg.is_guest || false, // ✅ NEW: Track if message is from guest
   };
 };
 
@@ -198,6 +221,7 @@ export default function MessagesPage() {
   const [showMediaPreview, setShowMediaPreview] = useState(false);
   const [previewFile, setPreviewFile] = useState<MediaPreviewFile | null>(null);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  const [showGuestInfo, setShowGuestInfo] = useState(false); // ✅ NEW: Toggle guest info panel
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -215,7 +239,7 @@ export default function MessagesPage() {
       const response = await api.get("/api/v1/messages/conversations/");
       return response.map(mapConversationFromBackend);
     },
-    refetchInterval: 5000, // Auto-refresh every 5 seconds
+    refetchInterval: 5000,
   });
 
   const {
@@ -232,15 +256,14 @@ export default function MessagesPage() {
         next: string | null;
         previous: string | null;
       }>(`/api/v1/messages/conversations/${selectedConversationId}/messages/`);
-      // Sort messages by timestamp to ensure correct order (oldest first)
       const mappedMessages = response.results.map(mapMessageFromBackend);
       return mappedMessages.sort(
         (a, b) =>
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
       );
     },
     enabled: !!selectedConversationId,
-    refetchInterval: 3000, // Auto-refresh messages every 3 seconds
+    refetchInterval: 3000,
   });
 
   const { data: unreadData } = useQuery<{
@@ -270,14 +293,12 @@ export default function MessagesPage() {
 
       let finalMessageData = { ...data.messageData };
 
-      // Step 1: Upload media to Supabase if there's a file
       if (data.previewFile) {
         console.log("📤 Uploading media to Supabase...");
         setIsUploadingMedia(true);
 
-        // Update preview status to uploading
         setPreviewFile((prev) =>
-          prev ? { ...prev, uploadStatus: "uploading" } : null
+          prev ? { ...prev, uploadStatus: "uploading" } : null,
         );
 
         try {
@@ -288,7 +309,6 @@ export default function MessagesPage() {
           if (uploadResult.success && uploadResult.publicUrl) {
             console.log("✅ Upload successful:", uploadResult.publicUrl);
 
-            // Update preview status to uploaded
             setPreviewFile((prev) =>
               prev
                 ? {
@@ -296,10 +316,9 @@ export default function MessagesPage() {
                     uploadStatus: "uploaded",
                     uploadedUrl: uploadResult.publicUrl,
                   }
-                : null
+                : null,
             );
 
-            // Update message data with Supabase URL
             finalMessageData.file_url = uploadResult.publicUrl;
           } else {
             throw new Error(uploadResult.error || "Upload failed");
@@ -307,7 +326,6 @@ export default function MessagesPage() {
         } catch (error) {
           console.error("❌ Upload failed:", error);
 
-          // Update preview status to failed
           setPreviewFile((prev) =>
             prev
               ? {
@@ -316,29 +334,27 @@ export default function MessagesPage() {
                   error:
                     error instanceof Error ? error.message : "Upload failed",
                 }
-              : null
+              : null,
           );
 
           setIsUploadingMedia(false);
           throw new Error(
             `Media upload failed: ${
               error instanceof Error ? error.message : "Unknown error"
-            }`
+            }`,
           );
         }
 
         setIsUploadingMedia(false);
       }
 
-      // Step 2: Send message to backend with Supabase URL
       console.log("📝 Sending message to backend:", finalMessageData);
       return api.post(
         `/api/v1/messages/conversations/${selectedConversationId}/messages/send/`,
-        finalMessageData
+        finalMessageData,
       );
     },
     onSuccess: async () => {
-      // Immediately refetch to get the actual message from server
       await queryClient.invalidateQueries({
         queryKey: ["messages", selectedConversationId],
       });
@@ -354,7 +370,7 @@ export default function MessagesPage() {
       alert(
         `Failed to send message: ${
           error.message || error.data?.detail || "Unknown error"
-        }`
+        }`,
       );
     },
   });
@@ -363,7 +379,7 @@ export default function MessagesPage() {
     mutationFn: async (conversationId: number) => {
       return api.post(
         `/api/v1/messages/conversations/${conversationId}/mark-read/`,
-        {}
+        {},
       );
     },
     onSuccess: () => {
@@ -385,10 +401,9 @@ export default function MessagesPage() {
         ? previewFile.type.startsWith("image")
           ? "image"
           : previewFile.type.startsWith("video")
-          ? "video"
-          : "file"
+            ? "video"
+            : "file"
         : "text",
-      // file_url will be set after upload in mutation
     };
 
     sendMessageMutation.mutate({
@@ -401,7 +416,6 @@ export default function MessagesPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate file type
     const isImage = file.type.startsWith("image/");
     const isVideo = file.type.startsWith("video/");
 
@@ -410,7 +424,6 @@ export default function MessagesPage() {
       return;
     }
 
-    // Validate file size (5MB for images, 100MB for videos)
     const maxSize = isVideo ? 100 * 1024 * 1024 : 5 * 1024 * 1024;
     if (file.size > maxSize) {
       const maxSizeMB = isVideo ? 100 : 5;
@@ -428,7 +441,6 @@ export default function MessagesPage() {
     });
     setShowMediaPreview(true);
 
-    // Clear file input
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -445,6 +457,7 @@ export default function MessagesPage() {
 
   const handleConversationSelect = (conversationId: number) => {
     setSelectedConversationId(conversationId);
+    setShowGuestInfo(false); // Reset guest info panel
     const conversation = conversationsData.find((c) => c.id === conversationId);
     if (conversation && conversation.unreadCount > 0) {
       markConversationReadMutation.mutate(conversationId);
@@ -469,23 +482,24 @@ export default function MessagesPage() {
     );
   };
 
+  // ✅ UPDATED: Better badge labels and colors
   const getTypeBadge = (type: Conversation["type"]) => {
-    if (type === "client") return "Client";
-    return "Inquiry";
+    if (type === "inquiry") return "Guest Inquiry";
+    return "Registered Client";
   };
 
   const getTypeBadgeColor = (type: Conversation["type"]) => {
-    if (type === "client")
-      return "bg-primary-50 text-primary-700 border-primary-200";
-    return "bg-orange-50 text-orange-700 border-orange-200";
+    if (type === "inquiry")
+      return "bg-orange-50 text-orange-700 border-orange-200";
+    return "bg-primary-50 text-primary-700 border-primary-200";
   };
 
   const filteredConversations = conversationsData.filter((conv) =>
-    conv.name.toLowerCase().includes(searchQuery.toLowerCase())
+    conv.name.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
   const currentConversation = conversationsData.find(
-    (c) => c.id === selectedConversationId
+    (c) => c.id === selectedConversationId,
   );
 
   const messages = messagesData || [];
@@ -594,31 +608,114 @@ export default function MessagesPage() {
                     />
                   ) : (
                     <div
-                      className={`w-10 h-10 rounded-full ${currentConversation?.color} flex items-center justify-center text-white font-semibold`}
+                      className={`w-10 h-10 rounded-full ${
+                        currentConversation?.type === "inquiry"
+                          ? "bg-orange-500"
+                          : currentConversation?.color
+                      } flex items-center justify-center text-white font-semibold`}
                     >
                       {currentConversation?.initials}
                     </div>
                   )}
-                  {currentConversation?.isOnline && (
-                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
-                  )}
+                  {/* ✅ UPDATED: Guests never show online */}
+                  {currentConversation?.type === "client" &&
+                    currentConversation?.isOnline && (
+                      <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
+                    )}
                 </div>
                 <div>
-                  <h2 className="font-semibold text-neutral-900">
-                    {currentConversation?.name}
-                  </h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-semibold text-neutral-900">
+                      {currentConversation?.name}
+                    </h2>
+                    {/* ✅ NEW: Show inquiry badge in header */}
+                    {currentConversation?.type === "inquiry" && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-50 text-orange-700 border border-orange-200">
+                        Guest
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-neutral-500">
-                    {currentConversation?.isOnline ? "Online" : "Offline"}
+                    {currentConversation?.type === "inquiry"
+                      ? "Guest inquiry - Not registered"
+                      : currentConversation?.isOnline
+                        ? "Online"
+                        : "Offline"}
                   </p>
                 </div>
               </div>
-              <button className="p-2 hover:bg-neutral-100 rounded-lg transition-colors">
-                <FontAwesomeIcon
-                  icon={faEllipsisVertical}
-                  className="w-5 h-5 text-neutral-600"
-                />
-              </button>
+
+              {/* ✅ NEW: Show guest info button for inquiries */}
+              {currentConversation?.type === "inquiry" && (
+                <button
+                  onClick={() => setShowGuestInfo(!showGuestInfo)}
+                  className="px-4 py-2 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 transition-colors text-sm font-medium"
+                >
+                  <FontAwesomeIcon icon={faUserCircle} className="mr-2" />
+                  Guest Info
+                </button>
+              )}
             </div>
+
+            {/* ✅ NEW: Guest Information Panel */}
+            {showGuestInfo && currentConversation?.type === "inquiry" && (
+              <div className="bg-orange-50 border-b border-orange-200 px-6 py-4 flex-shrink-0">
+                <h3 className="font-semibold text-orange-900 mb-3 flex items-center gap-2">
+                  <FontAwesomeIcon icon={faUserCircle} />
+                  Guest Contact Information
+                </h3>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm">
+                    <FontAwesomeIcon
+                      icon={faUserCircle}
+                      className="text-orange-600 w-4"
+                    />
+                    <span className="text-orange-800 font-medium">Name:</span>
+                    <span className="text-orange-900">
+                      {currentConversation.name}
+                    </span>
+                  </div>
+                  {currentConversation.guest_email && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <FontAwesomeIcon
+                        icon={faEnvelope}
+                        className="text-orange-600 w-4"
+                      />
+                      <span className="text-orange-800 font-medium">
+                        Email:
+                      </span>
+                      <a
+                        href={`mailto:${currentConversation.guest_email}`}
+                        className="text-orange-900 hover:underline"
+                      >
+                        {currentConversation.guest_email}
+                      </a>
+                    </div>
+                  )}
+                  {currentConversation.guest_phone && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <FontAwesomeIcon
+                        icon={faPhone}
+                        className="text-orange-600 w-4"
+                      />
+                      <span className="text-orange-800 font-medium">
+                        Phone:
+                      </span>
+                      <a
+                        href={`tel:${currentConversation.guest_phone}`}
+                        className="text-orange-900 hover:underline"
+                      >
+                        {currentConversation.guest_phone}
+                      </a>
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-orange-700 mt-3 italic">
+                  💡 This user hasn't registered yet. They'll receive your
+                  replies via email.
+                </p>
+              </div>
+            )}
 
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
@@ -646,7 +743,9 @@ export default function MessagesPage() {
                     No messages yet
                   </p>
                   <p className="text-neutral-500 text-sm">
-                    Start the conversation by sending a message
+                    {currentConversation?.type === "inquiry"
+                      ? "Reply to this guest inquiry to start the conversation"
+                      : "Start the conversation by sending a message"}
                   </p>
                 </div>
               ) : (
@@ -660,7 +759,6 @@ export default function MessagesPage() {
                           isMine ? "justify-end" : "justify-start"
                         }`}
                       >
-                        {/* Message Bubble */}
                         <div
                           className={`max-w-[70%] ${
                             isMine ? "items-end" : "items-start"
@@ -748,7 +846,6 @@ export default function MessagesPage() {
                             </div>
                           )}
 
-                          {/* Timestamp and Status */}
                           <div
                             className={`flex items-center gap-1 mt-1 ${
                               isMine ? "justify-end" : "justify-start"
@@ -792,7 +889,6 @@ export default function MessagesPage() {
                       </div>
                     )}
 
-                    {/* Upload Status Overlay */}
                     {previewFile.uploadStatus &&
                       previewFile.uploadStatus !== "pending" && (
                         <div className="absolute inset-0 bg-neutral-900/70 rounded flex items-center justify-center">
@@ -849,7 +945,6 @@ export default function MessagesPage() {
             {/* Message Input */}
             <div className="bg-white border-t border-neutral-200 px-6 py-4 flex-shrink-0">
               <div className="flex items-end gap-3">
-                {/* Attachment Button */}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -866,7 +961,6 @@ export default function MessagesPage() {
                   <FontAwesomeIcon icon={faPlus} className="w-5 h-5" />
                 </button>
 
-                {/* Text Input */}
                 <div className="flex-1">
                   <textarea
                     value={messageInput}
@@ -883,13 +977,16 @@ export default function MessagesPage() {
                       }
                     }}
                     disabled={sendMessageMutation.isPending || isUploadingMedia}
-                    placeholder="Type a message..."
+                    placeholder={
+                      currentConversation?.type === "inquiry"
+                        ? "Reply to guest inquiry..."
+                        : "Type a message..."
+                    }
                     className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50 resize-none"
                     rows={1}
                   />
                 </div>
 
-                {/* Send Button */}
                 <button
                   onClick={handleSendMessage}
                   disabled={
@@ -923,7 +1020,6 @@ export default function MessagesPage() {
             </div>
           </div>
         ) : (
-          /* Empty State - No conversation selected */
           <div className="flex-1 hidden lg:flex items-center justify-center bg-neutral-50">
             <div className="text-center">
               <div className="w-24 h-24 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -944,7 +1040,6 @@ export default function MessagesPage() {
 
         {/* Sidebar - Conversations List (RIGHT SIDE) */}
         <div className="w-full lg:w-[400px] bg-white flex flex-col border-l border-neutral-200 overflow-hidden">
-          {/* Sidebar Header */}
           <div className="px-6 py-4 border-b border-neutral-200 flex-shrink-0">
             <div className="flex items-center justify-between mb-4">
               <h2 className="heading-3 text-neutral-900">Conversations</h2>
@@ -955,7 +1050,6 @@ export default function MessagesPage() {
               )}
             </div>
 
-            {/* Search */}
             <div className="relative">
               <FontAwesomeIcon
                 icon={faSearch}
@@ -971,7 +1065,6 @@ export default function MessagesPage() {
             </div>
           </div>
 
-          {/* Conversations List */}
           <div className="flex-1 overflow-y-auto">
             {filteredConversations.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-6">
@@ -1000,7 +1093,6 @@ export default function MessagesPage() {
                   }`}
                 >
                   <div className="flex items-start gap-3">
-                    {/* Avatar */}
                     <div className="relative flex-shrink-0">
                       {conversation.avatar ? (
                         <img
@@ -1010,17 +1102,21 @@ export default function MessagesPage() {
                         />
                       ) : (
                         <div
-                          className={`w-12 h-12 rounded-full ${conversation.color} flex items-center justify-center text-white font-semibold`}
+                          className={`w-12 h-12 rounded-full ${
+                            conversation.type === "inquiry"
+                              ? "bg-orange-500"
+                              : conversation.color
+                          } flex items-center justify-center text-white font-semibold`}
                         >
                           {conversation.initials}
                         </div>
                       )}
-                      {conversation.isOnline && (
-                        <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
-                      )}
+                      {conversation.type === "client" &&
+                        conversation.isOnline && (
+                          <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
+                        )}
                     </div>
 
-                    {/* Content */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between mb-1">
                         <h3 className="font-semibold text-neutral-900 truncate">
@@ -1033,7 +1129,7 @@ export default function MessagesPage() {
                       <p className="text-sm text-neutral-600 truncate mb-2">
                         {conversation.lastMessage}
                       </p>
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-2">
                         {conversation.unreadCount > 0 && (
                           <span className="bg-primary-600 text-white px-2 py-0.5 rounded-full text-xs font-semibold">
                             {conversation.unreadCount}
@@ -1041,8 +1137,8 @@ export default function MessagesPage() {
                         )}
                         <span
                           className={`px-2 py-0.5 rounded-full text-xs font-medium border ${getTypeBadgeColor(
-                            conversation.type
-                          )}`}
+                            conversation.type,
+                          )} ml-auto`}
                         >
                           {getTypeBadge(conversation.type)}
                         </span>
