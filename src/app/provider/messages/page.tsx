@@ -657,7 +657,7 @@ export default function MessagesPage() {
               )}
             </div>
 
-            {/* ✅ NEW: Guest Information Panel */}
+            {/* ✅ UPDATED: Guest Information Panel */}
             {showGuestInfo && currentConversation?.type === "inquiry" && (
               <div className="bg-orange-50 border-b border-orange-200 px-6 py-4 flex-shrink-0">
                 <h3 className="font-semibold text-orange-900 mb-3 flex items-center gap-2">
@@ -710,9 +710,30 @@ export default function MessagesPage() {
                     </div>
                   )}
                 </div>
+
+                {/* ✅ Email notification info */}
+                <div className="mt-4 bg-white border border-orange-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <FontAwesomeIcon
+                      icon={faEnvelope}
+                      className="text-orange-600 mt-1"
+                    />
+                    <div>
+                      <p className="text-sm font-semibold text-orange-900 mb-1">
+                        📧 Email Notifications Active
+                      </p>
+                      <p className="text-xs text-orange-700">
+                        This guest will receive your replies via email at{" "}
+                        <strong>{currentConversation.guest_email}</strong>. They
+                        can respond by contacting you directly.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 <p className="text-xs text-orange-700 mt-3 italic">
-                  💡 This user hasn't registered yet. They'll receive your
-                  replies via email.
+                  💡 This user submitted a guest inquiry and hasn't registered
+                  yet.
                 </p>
               </div>
             )}
