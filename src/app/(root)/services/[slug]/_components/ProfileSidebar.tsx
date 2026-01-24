@@ -289,9 +289,14 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
       );
 
       if (response.ok) {
+        // UPDATED: Better success message
         alert(
-          "Booking request sent successfully! The provider will review and confirm your appointment.",
+          `✅ Booking request sent successfully!\n\n` +
+            `📧 We will send a confirmation to ${bookingForm.client_email}\n\n` +
+            `The provider will review and confirm your appointment. ` +
+            `You'll receive another email once it's confirmed.`,
         );
+
         setShowBookingModal(false);
         setBookingForm({
           client_name: "",

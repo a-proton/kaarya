@@ -411,12 +411,19 @@ export default function CalendarPage() {
         notes: notes,
       });
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["appointments"] });
       queryClient.invalidateQueries({ queryKey: ["appointment-counts"] });
       setShowConfirmAppointmentModal(false);
       setSelectedAppointment(null);
       setAppointmentActionNotes("");
+
+      // NEW: Show success message with email status
+      const emailStatus = data.confirmation_email_sent
+        ? "Confirmation email sent to client!"
+        : "Confirmed (email notification failed)";
+
+      alert(`✅ Appointment confirmed successfully!\n📧 ${emailStatus}`);
     },
     onError: (error: any) => {
       alert(

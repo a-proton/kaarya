@@ -11,6 +11,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getUserProfile, clearTokens, getRefreshToken } from "@/lib/auth";
 import { api } from "@/lib/api";
+import Link from "next/link";
 
 export default function ClientTopbar() {
   const router = useRouter();
@@ -139,14 +140,17 @@ export default function ClientTopbar() {
             </div>
 
             {/* Notifications */}
-            <button className="relative w-10 h-10 bg-neutral-0 border border-neutral-200 rounded-lg flex items-center justify-center hover:bg-neutral-50 transition-colors">
+            <Link
+              href={"/client/notifications"}
+              className="relative w-10 h-10 bg-neutral-0 border border-neutral-200 rounded-lg flex items-center justify-center hover:bg-neutral-50 transition-colors"
+            >
               <FontAwesomeIcon icon={faBell} className="text-neutral-600" />
               {notificationCount > 0 && (
                 <span className="absolute -top-1 -right-1 w-5 h-5 bg-primary-600 text-neutral-0 rounded-full text-xs flex items-center justify-center font-semibold">
                   {notificationCount}
                 </span>
               )}
-            </button>
+            </Link>
 
             {/* Profile */}
             <button
