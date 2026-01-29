@@ -4,6 +4,8 @@ import { Poppins } from "next/font/google";
 import "./globals.css";
 import { config } from "@fortawesome/fontawesome-svg-core";
 import "@fortawesome/fontawesome-svg-core/styles.css";
+import Chatbot from "../components/Chatbot";
+
 config.autoAddCss = false;
 
 const poppins = Poppins({
@@ -12,7 +14,7 @@ const poppins = Poppins({
   variable: "--font-poppins",
 });
 
-export const metadata: Metadata = {   
+export const metadata: Metadata = {
   title: "Kaarya - Service Provider Platform",
   description: "Connect with verified service providers in your area",
 };
@@ -24,7 +26,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={poppins.variable}>{children}</body>
+      <body className={poppins.variable}>
+        {children}
+        {/* Global Chatbot - Available on all pages */}
+        <Chatbot />
+      </body>
     </html>
   );
 }
