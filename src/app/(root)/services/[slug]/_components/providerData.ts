@@ -204,7 +204,7 @@ export async function getProvidersForListing() {
 
   return providers.map((provider) => ({
     id: provider.id,
-    slug: provider.slug, // ✅ Make sure slug is included
+    slug: provider.slug,  
     name: provider.name,
     initials: provider.initials,
     title: provider.title,
