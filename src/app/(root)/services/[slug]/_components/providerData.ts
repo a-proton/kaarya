@@ -93,7 +93,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 async function publicApiFetch(endpoint: string): Promise<any> {
   const url = `${API_BASE_URL}${endpoint}`;
 
-  console.log("🔍 Fetching from:", url); // ✅ Debug log
+  console.log("🔍 Fetching from:", url);
 
   try {
     const response = await fetch(url, {
@@ -112,7 +112,7 @@ async function publicApiFetch(endpoint: string): Promise<any> {
     }
 
     const data = await response.json();
-    console.log("✅ API Response:", data); // ✅ Debug log
+    console.log("✅ API Response received");
     return data;
   } catch (error) {
     console.error(`❌ Failed to fetch ${endpoint}:`, error);
@@ -152,10 +152,13 @@ export async function getAllProviders(): Promise<Provider[]> {
 
   try {
     const response = await publicApiFetch("/api/v1/providers/search/");
-    console.log("📦 Raw API response:", response);
 
+    // ✅ FIXED: Log count instead of individual items
+    console.log(
+      `🔄 Transforming ${response.results?.length || 0} providers...`,
+    );
     const providers = (response.results || []).map(transformBackendProvider);
-    console.log("✅ Transformed providers:", providers);
+    console.log(`✅ Transformed ${providers.length} providers`);
 
     // Update cache
     cachedProviders = providers;
@@ -175,7 +178,7 @@ export async function getProviderBySlug(
 
   try {
     const response = await publicApiFetch(`/api/v1/providers/slug/${slug}/`);
-    console.log("📦 Provider by slug response:", response);
+    console.log("✅ Provider fetched successfully");
 
     return transformBackendProvider(response);
   } catch (error) {
@@ -200,11 +203,11 @@ export async function getProvidersForListing() {
   console.log("📋 getProvidersForListing called");
 
   const providers = await getAllProviders();
-  console.log("📦 Providers for listing:", providers);
+  console.log(`📦 Preparing ${providers.length} providers for listing`);
 
   return providers.map((provider) => ({
     id: provider.id,
-    slug: provider.slug,  
+    slug: provider.slug,
     name: provider.name,
     initials: provider.initials,
     title: provider.title,
@@ -245,9 +248,14 @@ export async function searchProviders(filters: {
       : `/api/v1/providers/search/`;
 
     const response = await publicApiFetch(endpoint);
-    console.log("📦 Search response:", response);
 
-    return (response.results || []).map(transformBackendProvider);
+    // ✅ FIXED: Log count instead of individual items
+    const results = response.results || [];
+    console.log(`🔄 Transforming ${results.length} search results...`);
+    const providers = results.map(transformBackendProvider);
+    console.log(`✅ Transformed ${providers.length} providers`);
+
+    return providers;
   } catch (error) {
     console.error("❌ Failed to search providers:", error);
     return [];
@@ -259,14 +267,14 @@ export async function searchProviders(filters: {
 // ==================================================================================
 
 function transformBackendProvider(data: any): Provider {
-  console.log("🔄 Transforming provider data:", data);
+  // ✅ REMOVED INDIVIDUAL LOGGING - Only log when there's an error
 
   // ✅ Generate slug if missing
   const slug = data.slug || `provider-${data.id}`;
 
   const transformed = {
     id: data.id,
-    slug: slug, // ✅ Ensure slug is set
+    slug: slug,
     name: data.name || data.full_name || "Unknown Provider",
     initials:
       data.initials || generateInitials(data.name || data.full_name || "??"),
@@ -339,7 +347,6 @@ function transformBackendProvider(data: any): Provider {
     successRate: data.successRate || data.jobSuccess || "0%",
   };
 
-  console.log("✅ Transformed provider:", transformed);
   return transformed;
 }
 

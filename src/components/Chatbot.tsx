@@ -11,6 +11,7 @@ import {
   faUser,
   faSpinner,
   faExternalLinkAlt,
+  faInfoCircle,
 } from "@fortawesome/free-solid-svg-icons";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -36,6 +37,7 @@ export default function Chatbot() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | undefined>();
+  const [showScoreInfo, setShowScoreInfo] = useState(false);
   const [userLocation, setUserLocation] = useState<UserLocation>({
     latitude: null,
     longitude: null,
@@ -281,9 +283,41 @@ export default function Chatbot() {
                     {/* Recommendations */}
                     {msg.recommendations && msg.recommendations.length > 0 && (
                       <div className="mt-3 space-y-2">
-                        <p className="text-xs font-semibold text-primary-600 mb-2">
-                          ✨ Recommended Providers:
-                        </p>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs font-semibold text-primary-600">
+                            ✨ Recommended Providers:
+                          </p>
+                          <button
+                            onClick={() => setShowScoreInfo(!showScoreInfo)}
+                            className="text-xs text-primary-500 hover:text-primary-700 flex items-center gap-1"
+                          >
+                            <FontAwesomeIcon
+                              icon={faInfoCircle}
+                              className="w-3 h-3"
+                            />
+                            {showScoreInfo ? "Hide" : "Info"}
+                          </button>
+                        </div>
+
+                        {/* Score Info Tooltip */}
+                        {showScoreInfo && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 mb-2 text-xs">
+                            <p className="font-semibold text-blue-800 mb-1">
+                              How we rank providers:
+                            </p>
+                            <ul className="text-blue-700 space-y-0.5 text-xs">
+                              <li>
+                                • <strong>Match:</strong> How well they fit your
+                                request
+                              </li>
+                              <li>
+                                • <strong>Score:</strong> Overall ranking
+                                (location + ratings + trust)
+                              </li>
+                            </ul>
+                          </div>
+                        )}
+
                         {msg.recommendations.map((rec, idx) => {
                           const slug =
                             rec.slug || `provider-${rec.provider_id || rec.id}`;
@@ -332,28 +366,60 @@ export default function Chatbot() {
                                     Click to view full profile →
                                   </p>
                                 </div>
+
+                                {/* ✅ UPDATED: Show Both Scores */}
+                                <div className="ml-2 flex flex-col gap-2">
+                                  {/* Match Score */}
+                                  {rec.semantic_score && (
+                                    <div className="flex flex-col items-end bg-blue-50 px-2 py-1 rounded">
+                                      <span className="text-xs font-bold text-blue-600">
+                                        {(rec.semantic_score * 100).toFixed(0)}%
+                                      </span>
+                                      <span className="text-xs text-blue-400">
+                                        match
+                                      </span>
+                                    </div>
+                                  )}
+
+                                  {/* Final Score */}
+                                  {rec.final_score && (
+                                    <div className="flex flex-col items-end bg-green-50 px-2 py-1 rounded">
+                                      <span className="text-xs font-bold text-green-600">
+                                        {(rec.final_score * 100).toFixed(0)}%
+                                      </span>
+                                      <span className="text-xs text-green-400">
+                                        score
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* ✅ UPDATED: Two Progress Bars */}
+                              <div className="mt-2 space-y-1">
+                                {/* Match Bar */}
                                 {rec.semantic_score && (
-                                  <div className="ml-2 flex flex-col items-end">
-                                    <span className="text-xs font-bold text-primary-600">
-                                      {(rec.semantic_score * 100).toFixed(0)}%
-                                    </span>
-                                    <span className="text-xs text-neutral-400">
-                                      match
-                                    </span>
+                                  <div className="h-1 bg-neutral-200 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-full"
+                                      style={{
+                                        width: `${rec.semantic_score * 100}%`,
+                                      }}
+                                    />
+                                  </div>
+                                )}
+                                {/* Score Bar */}
+                                {rec.final_score && (
+                                  <div className="h-1 bg-neutral-200 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-gradient-to-r from-green-400 to-green-600 rounded-full"
+                                      style={{
+                                        width: `${rec.final_score * 100}%`,
+                                      }}
+                                    />
                                   </div>
                                 )}
                               </div>
-
-                              {rec.semantic_score && (
-                                <div className="mt-2 h-1.5 bg-neutral-200 rounded-full overflow-hidden">
-                                  <div
-                                    className="h-full bg-gradient-to-r from-primary-400 to-primary-600 rounded-full"
-                                    style={{
-                                      width: `${rec.semantic_score * 100}%`,
-                                    }}
-                                  />
-                                </div>
-                              )}
                             </Link>
                           );
                         })}
