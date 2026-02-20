@@ -31,19 +31,13 @@ export default function ProviderTopbar() {
 
   const getUserInitials = () => {
     if (!user) return "U";
-
-    // Use stored initials if available
-    if (user.initials) {
-      return user.initials;
-    }
-
+    if (user.initials) return user.initials;
     if (user.full_name) {
       const names = user.full_name.split(" ");
       return names.length > 1
         ? `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase()
         : names[0].substring(0, 2).toUpperCase();
     }
-
     return user.email?.[0]?.toUpperCase() || "U";
   };
 
@@ -56,129 +50,243 @@ export default function ProviderTopbar() {
 
   const getFirstName = () => {
     if (!user) return "there";
-
-    if (user.full_name) {
-      return user.full_name.split(" ")[0];
-    }
-
-    if (user.business_name) {
-      return user.business_name.split(" ")[0];
-    }
-
+    if (user.full_name) return user.full_name.split(" ")[0];
+    if (user.business_name) return user.business_name.split(" ")[0];
     return user.email?.split("@")[0] || "there";
   };
 
+  const today = new Date()
+    .toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    })
+    .toUpperCase();
+
   return (
     <>
-      <div className="sticky top-0 z-50 bg-neutral-0 border-b border-neutral-200 px-8 py-4">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-bold text-neutral-900">
-            {userLoading ? "Loading..." : `${getGreeting()}, ${getFirstName()}`}
+      <header
+        className="sticky top-0 z-50 flex items-center justify-between px-8 h-16"
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+        }}
+      >
+        {/* Left: Greeting */}
+        <div className="flex-1 min-w-0">
+          <h1
+            className="font-bold leading-tight truncate"
+            style={{
+              fontSize: "1.2rem",
+              color: "var(--color-neutral-900)",
+            }}
+          >
+            {userLoading ? "Loading…" : `${getGreeting()}, ${getFirstName()}`}
           </h1>
-          <div className="flex items-center gap-4">
-            {/* Search */}
-            <div className="relative">
-              <FontAwesomeIcon
-                icon={faSearch}
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
-              />
-              <input
-                type="text"
-                placeholder="Search projects, clients, or tasks..."
-                className="pl-12 pr-4 py-2.5 bg-neutral-0 border border-neutral-200 rounded-lg w-80 focus:outline-none focus:border-primary-500 transition-colors"
-              />
-            </div>
-            {/* Notifications */}
-            <Link
-              href={"/provider/notifications"}
-              className="relative w-10 h-10 bg-neutral-0 border border-neutral-200 rounded-lg flex items-center justify-center hover:bg-neutral-50 transition-colors"
-            >
-              <FontAwesomeIcon icon={faBell} className="text-neutral-600" />
-              {notificationCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-5 h-5 bg-primary-600 text-neutral-0 rounded-full text-xs flex items-center justify-center font-semibold">
-                  {notificationCount}
-                </span>
-              )}
-            </Link>
-            {/* Profile */}
-            <button
-              onClick={() => setShowLogoutModal(true)}
-              disabled={userLoading}
-              className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-neutral-0 font-semibold cursor-pointer hover:bg-primary-700 transition-colors disabled:opacity-50"
-              title={user?.full_name || user?.email || "Profile"}
-            >
-              {user?.profile_image ? (
-                <img
-                  src={user.profile_image}
-                  alt="Profile"
-                  className="w-full h-full rounded-full object-cover"
-                />
-              ) : (
-                <span className="text-sm">{getUserInitials()}</span>
-              )}
-            </button>
-          </div>
+          <p
+            className="font-semibold tracking-widest leading-none truncate mt-0.5"
+            style={{
+              fontSize: "0.6rem",
+              color: "var(--color-neutral-400)",
+              letterSpacing: "0.1em",
+            }}
+          >
+            {today}
+          </p>
         </div>
-      </div>
 
-      {/* Logout Confirmation Modal */}
+        {/* Right: Controls */}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {/* Search */}
+          <div className="relative">
+            <FontAwesomeIcon
+              icon={faSearch}
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{
+                color: "var(--color-neutral-400)",
+                fontSize: "0.8rem",
+              }}
+            />
+            <input
+              type="text"
+              placeholder="Search..."
+              style={{
+                paddingLeft: "2.25rem",
+                paddingRight: "1rem",
+                paddingTop: "0.5rem",
+                paddingBottom: "0.5rem",
+                width: "16rem",
+                fontSize: "0.875rem",
+                fontFamily: "var(--font-sans)",
+                color: "var(--color-neutral-900)",
+                backgroundColor: "var(--color-neutral-0)",
+                border: "1px solid var(--color-neutral-200)",
+                borderRadius: "0.625rem",
+                outline: "none",
+              }}
+              onFocus={(e) => {
+                e.target.style.borderColor = "var(--color-primary)";
+                e.target.style.boxShadow = "0 0 0 3px rgba(26, 177, 137, 0.15)";
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = "var(--color-neutral-200)";
+                e.target.style.boxShadow = "none";
+              }}
+            />
+          </div>
+
+          {/* Notifications */}
+          <Link
+            href="/provider/notifications"
+            className="relative flex items-center justify-center rounded-xl transition-colors"
+            aria-label="Notifications"
+            style={{
+              width: "2.5rem",
+              height: "2.5rem",
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                "var(--color-neutral-100)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                "var(--color-neutral-0)";
+            }}
+          >
+            <FontAwesomeIcon
+              icon={faBell}
+              style={{
+                color: "var(--color-neutral-500)",
+                fontSize: "0.9rem",
+              }}
+            />
+            {notificationCount > 0 && (
+              <span
+                className="absolute flex items-center justify-center font-bold text-white rounded-full"
+                style={{
+                  top: "-5px",
+                  right: "-5px",
+                  width: "1.1rem",
+                  height: "1.1rem",
+                  fontSize: "0.55rem",
+                  backgroundColor: "var(--color-primary)",
+                }}
+              >
+                {notificationCount}
+              </span>
+            )}
+          </Link>
+
+          {/* Avatar */}
+          <button
+            onClick={() => setShowLogoutModal(true)}
+            disabled={userLoading}
+            className="rounded-full flex items-center justify-center font-bold transition-opacity disabled:opacity-50"
+            style={{
+              width: "2.5rem",
+              height: "2.5rem",
+              backgroundColor: "var(--color-primary)",
+              color: "white",
+              fontSize: "0.8125rem",
+              cursor: "pointer",
+              border: "none",
+              overflow: "hidden",
+            }}
+            title={user?.full_name || user?.email || "Profile"}
+          >
+            {user?.profile_image ? (
+              <img
+                src={user.profile_image}
+                alt="Profile"
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            ) : (
+              getUserInitials()
+            )}
+          </button>
+        </div>
+      </header>
+
+      {/* Logout Modal */}
       {showLogoutModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-[100]">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-md w-full mx-4">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-neutral-200">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+        <div
+          className="fixed inset-0 flex items-center justify-center z-[100]"
+          style={{ backgroundColor: "rgba(0,0,0,0.3)" }}
+        >
+          <div
+            className="w-full max-w-sm mx-4 rounded-2xl overflow-hidden"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 20px 50px rgba(0,0,0,0.15)",
+              border: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            <div className="p-6">
+              <div className="flex items-start gap-4 mb-6">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: "#fef2f2" }}
+                >
                   <FontAwesomeIcon
                     icon={faSignOut}
-                    className="text-red-600 text-xl"
+                    style={{ color: "#ef4444", width: "1rem" }}
                   />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-neutral-900">Logout</h3>
-                  <p className="text-neutral-600 text-sm">
-                    Are you sure you want to logout?
+                  <h3
+                    className="font-semibold mb-1"
+                    style={{
+                      fontSize: "1rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    Sign out
+                  </h3>
+                  <p
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    You&apos;ll be redirected to the login page.
                   </p>
                 </div>
               </div>
-            </div>
-            {/* Modal Content */}
-            <div className="p-6">
-              <p className="text-neutral-700">
-                You will be logged out of your account and redirected to the
-                login page.
-              </p>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
-              <button
-                onClick={() => setShowLogoutModal(false)}
-                disabled={isLoggingOut}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleLogout}
-                disabled={isLoggingOut}
-                className="px-5 py-2.5 bg-red-600 text-neutral-0 rounded-lg hover:bg-red-700 transition-colors font-semibold flex items-center gap-2 disabled:opacity-50"
-              >
-                {isLoggingOut ? (
-                  <>
-                    <FontAwesomeIcon
-                      icon={faSpinner}
-                      className="animate-spin"
-                    />
-                    Logging out...
-                  </>
-                ) : (
-                  <>
-                    <FontAwesomeIcon icon={faSignOut} />
-                    Logout
-                  </>
-                )}
-              </button>
+              <div className="flex items-center gap-3 justify-end">
+                <button
+                  onClick={() => setShowLogoutModal(false)}
+                  disabled={isLoggingOut}
+                  className="btn btn-ghost btn-md"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleLogout}
+                  disabled={isLoggingOut}
+                  className="btn btn-danger btn-md"
+                >
+                  {isLoggingOut ? (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faSpinner}
+                        className="animate-spin"
+                        style={{ width: "0.875rem" }}
+                      />
+                      Signing out…
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faSignOut}
+                        style={{ width: "0.875rem" }}
+                      />
+                      Sign out
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

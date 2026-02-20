@@ -2,41 +2,38 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
 import { getAccessToken, clearTokens } from "@/lib/auth";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faSearch,
-  faBell,
   faPlus,
   faArrowUp,
   faArrowRight,
   faMessage,
-  faStar,
   faCalendar,
   faCheckCircle,
   faFolder,
-  faListCheck,
   faLightbulb,
-  faCircle,
   faCalendarDays,
   faVideo,
   faSpinner,
   faExclamationTriangle,
   faArrowDown,
   faXmark,
+  faChartLine,
+  faCircleCheck,
+  faRocket,
 } from "@fortawesome/free-solid-svg-icons";
 import Link from "next/link";
 
-// API fetch function
+/* ─────────────────────────────────────────── */
+/* API                                         */
+/* ─────────────────────────────────────────── */
 const fetchDashboardData = async () => {
   const baseUrl =
     process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
   const token = getAccessToken();
 
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
+  if (!token) throw new Error("No authentication token found");
 
   const response = await fetch(`${baseUrl}/api/v1/provider/dashboard/`, {
     headers: {
@@ -48,7 +45,6 @@ const fetchDashboardData = async () => {
 
   if (!response.ok) {
     if (response.status === 401) {
-      // Token expired or invalid - clear tokens and will redirect via ProtectedRoute
       clearTokens();
       throw new Error("Session expired. Please login again.");
     }
@@ -58,22 +54,330 @@ const fetchDashboardData = async () => {
   return response.json();
 };
 
-export default function ProviderDashboard() {
-  const router = useRouter();
-  const [showOptimizationTip, setShowOptimizationTip] = useState(true);
-  const [showSuccessBanner, setShowSuccessBanner] = useState(true);
+/* ─────────────────────────────────────────── */
+/* Mini bar chart                              */
+/* ─────────────────────────────────────────── */
+function MiniBarChart({ data }: { data: number[] }) {
+  const max = Math.max(...data, 1);
+  return (
+    <div className="flex items-end gap-0.5" style={{ height: "2.25rem" }}>
+      {data.map((value, i) => {
+        const pct = (value / max) * 100;
+        const isLast = i === data.length - 1;
+        return (
+          <div
+            key={i}
+            className="flex-1 rounded-sm"
+            style={{
+              height: `${Math.max(pct, 10)}%`,
+              backgroundColor: isLast
+                ? "var(--color-primary)"
+                : "var(--color-primary-light)",
+              transition: "height 0.4s ease",
+            }}
+            title={`$${value}`}
+          />
+        );
+      })}
+    </div>
+  );
+}
 
-  // TanStack Query hook
+/* ─────────────────────────────────────────── */
+/* Stat card                                   */
+/* ─────────────────────────────────────────── */
+interface StatCardProps {
+  label: string;
+  value: string | number;
+  growth?: number;
+  sublabel?: string;
+  pendingCount?: number;
+  href: string;
+  hrefLabel: string;
+  chart?: number[];
+}
+
+function StatCard({
+  label,
+  value,
+  growth,
+  sublabel,
+  pendingCount,
+  href,
+  hrefLabel,
+  chart,
+}: StatCardProps) {
+  return (
+    <div
+      className="rounded-2xl flex flex-col transition-shadow"
+      style={{
+        backgroundColor: "var(--color-neutral-0)",
+        border: "1px solid var(--color-neutral-200)",
+        padding: "1.25rem 1.375rem 1.125rem",
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLDivElement).style.boxShadow =
+          "0 8px 24px rgba(0,0,0,0.07)";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLDivElement).style.boxShadow = "none";
+      }}
+    >
+      {/* Label */}
+      <p
+        className="font-semibold tracking-widest mb-3"
+        style={{
+          fontSize: "0.6rem",
+          color: "var(--color-neutral-400)",
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </p>
+
+      {/* Value */}
+      <p
+        className="font-bold leading-none mb-2"
+        style={{ fontSize: "1.875rem", color: "var(--color-neutral-900)" }}
+      >
+        {value}
+      </p>
+
+      {/* Growth */}
+      {growth !== undefined && (
+        <div
+          className="flex items-center gap-1.5 font-semibold mb-2"
+          style={{
+            fontSize: "0.75rem",
+            color:
+              growth >= 0
+                ? "var(--color-accent-green-dark)"
+                : "var(--color-accent-red)",
+          }}
+        >
+          <FontAwesomeIcon
+            icon={growth >= 0 ? faArrowUp : faArrowDown}
+            style={{ width: "0.6rem" }}
+          />
+          {growth >= 0 ? "+" : ""}
+          {growth}%
+        </div>
+      )}
+
+      {/* Sublabel */}
+      {sublabel && (
+        <p
+          className="mb-2"
+          style={{ fontSize: "0.75rem", color: "var(--color-neutral-500)" }}
+        >
+          {sublabel}
+        </p>
+      )}
+
+      {/* Pending badge */}
+      {pendingCount !== undefined && pendingCount > 0 && (
+        <span
+          className="self-start rounded-full font-semibold mb-2"
+          style={{
+            fontSize: "0.65rem",
+            padding: "0.2rem 0.6rem",
+            backgroundColor: "#fef2f2",
+            color: "#ef4444",
+          }}
+        >
+          {pendingCount} pending
+        </span>
+      )}
+
+      {/* Chart */}
+      {chart && (
+        <div className="mb-2">
+          <MiniBarChart data={chart} />
+        </div>
+      )}
+
+      {/* Link */}
+      <div className="mt-auto pt-2">
+        <Link
+          href={href}
+          className="inline-flex items-center gap-1.5 font-semibold transition-opacity hover:opacity-70"
+          style={{
+            fontSize: "0.8rem",
+            color: "var(--color-primary)",
+            textDecoration: "none",
+          }}
+        >
+          {hrefLabel}
+          <FontAwesomeIcon icon={faArrowRight} style={{ width: "0.6rem" }} />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────── */
+/* Section header                              */
+/* ─────────────────────────────────────────── */
+function SectionHeader({
+  title,
+  href,
+  hrefLabel = "View all",
+}: {
+  title: string;
+  href: string;
+  hrefLabel?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between mb-5">
+      <h2
+        className="font-semibold"
+        style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+      >
+        {title}
+      </h2>
+      <Link
+        href={href}
+        className="font-semibold transition-opacity hover:opacity-70"
+        style={{
+          fontSize: "0.8rem",
+          color: "var(--color-primary)",
+          textDecoration: "none",
+        }}
+      >
+        {hrefLabel}
+      </Link>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────── */
+/* Loading                                     */
+/* ─────────────────────────────────────────── */
+function LoadingScreen() {
+  return (
+    <div
+      className="min-h-screen flex items-center justify-center"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      <div className="text-center">
+        <FontAwesomeIcon
+          icon={faSpinner}
+          className="animate-spin mb-4"
+          style={{
+            fontSize: "2rem",
+            color: "var(--color-primary)",
+          }}
+        />
+        <p
+          className="font-medium"
+          style={{ fontSize: "0.9rem", color: "var(--color-neutral-500)" }}
+        >
+          Loading your dashboard…
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────── */
+/* Error                                       */
+/* ─────────────────────────────────────────── */
+function ErrorScreen({
+  isAuth,
+  message,
+  onRetry,
+}: {
+  isAuth: boolean;
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6">
+      <div
+        className="rounded-2xl p-8 text-center max-w-md w-full"
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          border: `1px solid ${isAuth ? "#fde68a" : "#fecaca"}`,
+        }}
+      >
+        <div
+          className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+          style={{ backgroundColor: isAuth ? "#fef3c7" : "#fef2f2" }}
+        >
+          <FontAwesomeIcon
+            icon={faExclamationTriangle}
+            style={{
+              width: "1.25rem",
+              color: isAuth ? "#f59e0b" : "#ef4444",
+            }}
+          />
+        </div>
+        <h2
+          className="font-semibold mb-2"
+          style={{ fontSize: "1.1rem", color: "var(--color-neutral-900)" }}
+        >
+          {isAuth ? "Session Expired" : "Something went wrong"}
+        </h2>
+        <p
+          className="mb-5"
+          style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+        >
+          {message}
+        </p>
+        {!isAuth && (
+          <button onClick={onRetry} className="btn btn-primary btn-md mx-auto">
+            Try again
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────── */
+/* Types                                       */
+/* ─────────────────────────────────────────── */
+interface Activity {
+  title: string;
+  description: string;
+  time: string;
+}
+
+interface Project {
+  client_initials?: string;
+  client?: string;
+  name: string;
+  progress: number;
+  status: string;
+  due_date?: string;
+  next_task?: string;
+  id: string;
+}
+
+interface ScheduleItem {
+  time: string;
+  title: string;
+  location?: string;
+  type?: string;
+}
+
+/* ─────────────────────────────────────────── */
+/* Dashboard                                   */
+/* ─────────────────────────────────────────── */
+export default function ProviderDashboard() {
+  const [showSuccessBanner, setShowSuccessBanner] = useState(true);
+  const [showOptimizationTip, setShowOptimizationTip] = useState(true);
+
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["providerDashboard"],
     queryFn: fetchDashboardData,
-    refetchInterval: 30000, // Refetch every 30 seconds
+    refetchInterval: 30000,
     staleTime: 10000,
-    retry: (failureCount, error) => {
-      // Don't retry on auth errors
+    retry: (failureCount, err: Error) => {
       if (
-        error.message.includes("Session expired") ||
-        error.message.includes("No authentication token")
+        err.message.includes("Session expired") ||
+        err.message.includes("No authentication token")
       ) {
         return false;
       }
@@ -81,69 +385,22 @@ export default function ProviderDashboard() {
     },
   });
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <FontAwesomeIcon
-            icon={faSpinner}
-            className="text-5xl text-primary-600 animate-spin mb-4"
-          />
-          <p className="text-xl text-neutral-600 font-medium">
-            Loading your dashboard...
-          </p>
-        </div>
-      </div>
-    );
-  }
+  if (isLoading) return <LoadingScreen />;
 
   if (isError) {
-    // Check if it's an auth error
     const isAuthError =
-      error?.message?.includes("Session expired") ||
-      error?.message?.includes("No authentication token");
-
-    if (isAuthError) {
-      // Let ProtectedRoute handle the redirect
-      return (
-        <div className="min-h-screen flex items-center justify-center p-4">
-          <div className="text-center bg-yellow-50 border border-yellow-200 rounded-xl p-8 max-w-lg">
-            <FontAwesomeIcon
-              icon={faExclamationTriangle}
-              className="text-5xl text-yellow-600 mb-4"
-            />
-            <h2 className="text-2xl font-bold text-yellow-900 mb-2">
-              Session Expired
-            </h2>
-            <p className="text-yellow-700 mb-4">
-              Your session has expired. Redirecting to login...
-            </p>
-          </div>
-        </div>
-      );
-    }
-
+      (error as Error)?.message?.includes("Session expired") ||
+      (error as Error)?.message?.includes("No authentication token");
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-lg">
-          <FontAwesomeIcon
-            icon={faExclamationTriangle}
-            className="text-5xl text-red-600 mb-4"
-          />
-          <h2 className="text-2xl font-bold text-red-900 mb-2">
-            Error Loading Dashboard
-          </h2>
-          <p className="text-red-700 mb-4">
-            {error?.message || "Something went wrong"}
-          </p>
-          <button
-            onClick={() => refetch()}
-            className="px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition-colors"
-          >
-            Try Again
-          </button>
-        </div>
-      </div>
+      <ErrorScreen
+        isAuth={isAuthError}
+        message={
+          isAuthError
+            ? "Your session has expired. Redirecting to login…"
+            : ((error as Error)?.message ?? "Something went wrong")
+        }
+        onRetry={refetch}
+      />
     );
   }
 
@@ -158,457 +415,718 @@ export default function ProviderDashboard() {
   } = data;
 
   return (
-    <div className="min-h-screen p-4 md:p-8">
-      {/* Header */}
-      <div className="mb-6 md:mb-8">
-        {/* Success Banner - Dismissible */}
-        {showSuccessBanner && (
-          <div className="bg-gradient-to-r from-green-50 to-green-100 border border-green-200 rounded-xl p-4 md:p-6 mb-6">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3 md:gap-4 flex-1">
-                <div className="text-3xl md:text-4xl">🎉</div>
-                <div className="flex-1">
-                  <h3 className="text-lg md:text-xl font-bold text-neutral-900 mb-1">
-                    Congratulations! Your profile is now live.
-                  </h3>
-                  <p className="text-sm md:text-base text-neutral-600">
-                    Start connecting with clients and grow your business on
-                    Karya
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
-                <button className="hidden md:block px-6 py-2 bg-neutral-0 text-neutral-900 rounded-lg font-medium hover:bg-neutral-50 transition-colors">
-                  Get Started
-                </button>
-                <button
-                  onClick={() => setShowSuccessBanner(false)}
-                  className="w-8 h-8 hover:bg-green-200 rounded-lg flex items-center justify-center transition-colors"
-                  aria-label="Dismiss banner"
-                >
-                  <FontAwesomeIcon
-                    icon={faXmark}
-                    className="text-neutral-600 hover:cursor-pointer"
-                  />
-                </button>
-              </div>
+    <div
+      className="min-h-screen"
+      style={{
+        backgroundColor: "var(--color-neutral-50)",
+        padding: "1.75rem 2rem",
+      }}
+    >
+      {/* ── Success Banner ── */}
+      {showSuccessBanner && (
+        <div
+          className="rounded-2xl mb-6 overflow-hidden"
+          style={{
+            backgroundColor: "var(--color-neutral-0)",
+            border: "1px solid var(--color-neutral-200)",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.05)",
+          }}
+        >
+          <div
+            className="h-1 w-full"
+            style={{ backgroundColor: "var(--color-primary)" }}
+          />
+          <div className="flex items-center gap-5 px-6 py-4">
+            {/* Icon */}
+            <div
+              className="w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: "var(--color-primary-light)" }}
+            >
+              <FontAwesomeIcon
+                icon={faRocket}
+                style={{
+                  color: "var(--color-primary)",
+                  width: "1.1rem",
+                }}
+              />
             </div>
-          </div>
-        )}
-      </div>
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 md:gap-6 mb-6">
-        {/* Left Column - 2/3 width */}
-        <div className="xl:col-span-2 space-y-4 md:space-y-6">
-          {/* Welcome Card */}
-          <div className="bg-gradient-to-br from-primary-600 to-primary-700 rounded-xl p-6 md:p-8 text-neutral-0 shadow-lg">
-            <p className="text-sm md:text-base mb-2 opacity-90">
-              Welcome back!
-            </p>
-            <h2 className="text-2xl md:text-3xl font-bold mb-4">
-              Your dashboard is looking great
-            </h2>
-            <p className="text-sm md:text-base mb-6 opacity-90">
-              You have {projects.active_count} active project
-              {projects.active_count !== 1 ? "s" : ""} and {leads.total_new} new
-              lead{leads.total_new !== 1 ? "s" : ""} waiting for your response.
-              <br className="hidden md:block" />
-              Keep up the excellent work!
-            </p>
-            <button className="px-4 md:px-6 py-2 md:py-3 bg-neutral-0 text-primary-600 rounded-lg font-semibold hover:bg-neutral-50 transition-colors text-sm md:text-base">
-              Quick Start Guide
+            {/* Text */}
+            <div className="flex-1 min-w-0">
+              <p
+                className="font-semibold leading-tight"
+                style={{
+                  fontSize: "0.9375rem",
+                  color: "var(--color-neutral-900)",
+                }}
+              >
+                🎉 Congratulations! Your profile is now live.
+              </p>
+              <p
+                className="mt-0.5 leading-tight"
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
+                Clients can now discover and contact you. Start connecting and
+                grow your business on Karya.
+              </p>
+            </div>
+
+            {/* CTA */}
+            <Link
+              href="/provider/leads"
+              className="hidden md:flex items-center gap-2 rounded-xl font-semibold flex-shrink-0 transition-colors"
+              style={{
+                padding: "0.55rem 1.1rem",
+                fontSize: "0.8rem",
+                backgroundColor: "var(--color-primary)",
+                color: "white",
+                textDecoration: "none",
+                whiteSpace: "nowrap",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                  "var(--color-primary)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                  "var(--color-primary)";
+              }}
+            >
+              Get Started
+              <FontAwesomeIcon
+                icon={faArrowRight}
+                style={{ width: "0.65rem" }}
+              />
+            </Link>
+
+            {/* Dismiss */}
+            <button
+              onClick={() => setShowSuccessBanner(false)}
+              aria-label="Dismiss"
+              className="flex items-center justify-center rounded-lg flex-shrink-0 transition-colors"
+              style={{
+                width: "1.875rem",
+                height: "1.875rem",
+                backgroundColor: "transparent",
+                color: "var(--color-neutral-400)",
+                border: "1px solid var(--color-neutral-200)",
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "var(--color-neutral-100)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "transparent";
+              }}
+            >
+              <FontAwesomeIcon icon={faXmark} style={{ width: "0.75rem" }} />
             </button>
           </div>
+        </div>
+      )}
 
-          {/* Stats Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-            {/* Profile Views */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-4 md:p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center gap-2 text-neutral-600 text-xs md:text-sm mb-3">
-                <FontAwesomeIcon icon={faCircle} className="text-xs" />
-                Profile Views
-              </div>
-              <p className="text-2xl md:text-3xl font-bold text-neutral-900 mb-2">
-                {profile_stats.views.toLocaleString()}
-              </p>
-              <div
-                className={`flex items-center gap-2 text-sm ${
-                  profile_stats.views_growth >= 0
-                    ? "text-green-600"
-                    : "text-red-600"
-                }`}
-              >
-                <FontAwesomeIcon
-                  icon={
-                    profile_stats.views_growth >= 0 ? faArrowUp : faArrowDown
-                  }
-                  className="text-xs"
-                />
-                <span>
-                  {profile_stats.views_growth >= 0 ? "+" : ""}
-                  {profile_stats.views_growth}%
-                </span>
-              </div>
-              <Link
-                href="/provider/analytics"
-                className="text-primary-600 text-sm font-medium mt-4 hover:text-primary-700 flex items-center gap-1"
-              >
-                View Analytics{" "}
-                <FontAwesomeIcon icon={faArrowRight} className="text-xs" />
-              </Link>
-            </div>
+      {/* ── Page heading ── */}
+      <div className="mb-6">
+        <p
+          className="font-medium mb-0.5"
+          style={{ fontSize: "0.8rem", color: "var(--color-neutral-500)" }}
+        >
+          Overview
+        </p>
+        <h1
+          className="font-bold leading-tight"
+          style={{ fontSize: "1.625rem", color: "var(--color-neutral-900)" }}
+        >
+          {projects.active_count} active project
+          {projects.active_count !== 1 ? "s" : ""}
+          {leads.total_new > 0 && (
+            <span style={{ color: "var(--color-neutral-400)" }}>
+              {" · "}
+              {leads.total_new} new lead{leads.total_new !== 1 ? "s" : ""}
+            </span>
+          )}
+        </h1>
+      </div>
 
-            {/* New Leads */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-4 md:p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center gap-3 mb-3">
-                <FontAwesomeIcon
-                  icon={faFolder}
-                  className="text-primary-600 text-xl"
-                />
-              </div>
-              <p className="text-2xl md:text-3xl font-bold text-neutral-900 mb-1">
-                {leads.total_new}
-              </p>
-              <p className="text-neutral-600 text-sm md:text-base mb-2">
-                New Leads
-              </p>
-              <p className="text-neutral-500 text-xs md:text-sm">
-                {leads.responded} responded to
-              </p>
-              {leads.pending > 0 && (
-                <span className="inline-block mt-2 px-2 py-1 bg-red-100 text-red-600 text-xs font-semibold rounded-full">
-                  {leads.pending} pending
-                </span>
-              )}
-              <Link
-                href="/provider/leads"
-                className="text-primary-600 text-sm font-medium mt-4 hover:text-primary-700 flex items-center gap-1"
-              >
-                View All{" "}
-                <FontAwesomeIcon icon={faArrowRight} className="text-xs" />
-              </Link>
-            </div>
-
-            {/* Active Projects */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-4 md:p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center gap-3 mb-3">
-                <FontAwesomeIcon
-                  icon={faListCheck}
-                  className="text-primary-600 text-xl"
-                />
-              </div>
-              <p className="text-2xl md:text-3xl font-bold text-neutral-900 mb-1">
-                {projects.active_count}
-              </p>
-              <p className="text-neutral-600 text-sm md:text-base mb-2">
-                Active Projects
-              </p>
-              <p className="text-neutral-500 text-xs md:text-sm">
-                {projects.on_track} on track
-                {projects.needs_attention > 0 &&
-                  `, ${projects.needs_attention} needs attention`}
-              </p>
-              <Link
-                href="/provider/projects"
-                className="text-primary-600 text-sm font-medium mt-4 hover:text-primary-700 flex items-center gap-1"
-              >
-                Go to Projects{" "}
-                <FontAwesomeIcon icon={faArrowRight} className="text-xs" />
-              </Link>
-            </div>
-
-            {/* This Month's Earnings */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-4 md:p-6 hover:shadow-lg transition-shadow">
-              <p className="text-neutral-600 text-xs md:text-sm mb-3">
-                This Month&apos;s Earnings
-              </p>
-              <p className="text-2xl md:text-3xl font-bold text-primary-600 mb-2">
-                ${earnings.this_month.toLocaleString()}
-              </p>
-              <div
-                className={`flex items-center gap-2 text-sm mb-4 ${
-                  earnings.growth_percentage >= 0
-                    ? "text-green-600"
-                    : "text-red-600"
-                }`}
-              >
-                <FontAwesomeIcon
-                  icon={
-                    earnings.growth_percentage >= 0 ? faArrowUp : faArrowDown
-                  }
-                  className="text-xs"
-                />
-                <span>
-                  {earnings.growth_percentage >= 0 ? "+" : ""}
-                  {earnings.growth_percentage}% vs last month
-                </span>
-              </div>
-              {/* Mini Chart */}
-              <div className="flex items-end gap-1 h-8 mb-2">
-                {earnings.chart_data.map((value, i) => {
-                  const maxValue = Math.max(...earnings.chart_data, 1);
-                  const height = (value / maxValue) * 100;
-                  return (
-                    <div
-                      key={i}
-                      className="flex-1 bg-primary-600 rounded-t hover:bg-primary-700 transition-colors"
-                      style={{ height: `${height || 10}%` }}
-                      title={`$${value}`}
-                    />
-                  );
-                })}
-              </div>
-              <Link
-                href="/provider/earnings"
-                className="text-primary-600 text-sm font-medium hover:text-primary-700 flex items-center gap-1"
-              >
-                View Details{" "}
-                <FontAwesomeIcon icon={faArrowRight} className="text-xs" />
-              </Link>
-            </div>
+      {/* ── Main grid ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+        {/* Left: 2/3 */}
+        <div className="xl:col-span-2 space-y-5">
+          {/* Stat cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatCard
+              label="Profile Views"
+              value={profile_stats.views.toLocaleString()}
+              growth={profile_stats.views_growth}
+              href="/provider/analytics"
+              hrefLabel="Analytics"
+            />
+            <StatCard
+              label="New Leads"
+              value={leads.total_new}
+              sublabel={`${leads.responded} responded`}
+              pendingCount={leads.pending}
+              href="/provider/leads"
+              hrefLabel="View leads"
+            />
+            <StatCard
+              label="Active Projects"
+              value={projects.active_count}
+              sublabel={`${projects.on_track} on track${projects.needs_attention > 0 ? `, ${projects.needs_attention} needs attention` : ""}`}
+              href="/provider/projects"
+              hrefLabel="View projects"
+            />
+            <StatCard
+              label="This Month"
+              value={`$${earnings.this_month.toLocaleString()}`}
+              growth={earnings.growth_percentage}
+              chart={earnings.chart_data}
+              href="/provider/earnings"
+              hrefLabel="Earnings"
+            />
           </div>
 
           {/* Recent Activity */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-4 md:p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg md:text-xl font-bold text-neutral-900">
-                Recent Activity
-              </h3>
-              <Link
-                href="/provider/activity"
-                className="text-primary-600 text-sm font-medium hover:text-primary-700"
-              >
-                View All
-              </Link>
-            </div>
+          <div
+            className="rounded-2xl"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              padding: "1.375rem 1.5rem",
+            }}
+          >
+            <SectionHeader title="Recent Activity" href="/provider/activity" />
             {recent_activity.length > 0 ? (
-              <div className="space-y-4">
-                {recent_activity.map((activity, index) => (
+              <div>
+                {recent_activity.map((activity: Activity, index: number) => (
                   <div
                     key={index}
-                    className="flex items-start gap-3 md:gap-4 pb-4 border-b border-neutral-100 last:border-0"
+                    className="flex items-start gap-3 py-3"
+                    style={{
+                      borderBottom:
+                        index < recent_activity.length - 1
+                          ? "1px solid var(--color-neutral-100)"
+                          : "none",
+                    }}
                   >
-                    <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
+                    <div
+                      className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                      style={{ backgroundColor: "var(--color-primary-light)" }}
+                    >
                       <FontAwesomeIcon
-                        icon={faCheckCircle}
-                        className="text-primary-600"
+                        icon={faCircleCheck}
+                        style={{
+                          width: "0.75rem",
+                          color: "var(--color-primary)",
+                        }}
                       />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-neutral-900 font-medium mb-1 text-sm md:text-base">
+                      <p
+                        className="font-medium leading-snug"
+                        style={{
+                          fontSize: "0.875rem",
+                          color: "var(--color-neutral-900)",
+                        }}
+                      >
                         {activity.title}
                       </p>
-                      <p className="text-neutral-600 text-xs md:text-sm">
+                      <p
+                        className="mt-0.5"
+                        style={{
+                          fontSize: "0.78rem",
+                          color: "var(--color-neutral-500)",
+                        }}
+                      >
                         {activity.description}
                       </p>
                     </div>
-                    <span className="text-neutral-500 text-xs md:text-sm flex-shrink-0">
+                    <span
+                      className="flex-shrink-0 mt-0.5"
+                      style={{
+                        fontSize: "0.75rem",
+                        color: "var(--color-neutral-400)",
+                      }}
+                    >
                       {activity.time}
                     </span>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="text-center py-12">
+              <div className="text-center py-10">
                 <FontAwesomeIcon
                   icon={faCheckCircle}
-                  className="text-5xl text-neutral-300 mb-4"
+                  style={{
+                    fontSize: "2rem",
+                    color: "var(--color-neutral-300)",
+                    marginBottom: "0.75rem",
+                  }}
                 />
-                <p className="text-neutral-500">
-                  No recent activity to display
+                <p
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
+                  No recent activity
                 </p>
               </div>
             )}
           </div>
 
           {/* Active Projects */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-4 md:p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg md:text-xl font-bold text-neutral-900">
-                Active Projects
-              </h3>
-              <Link
-                href="/provider/projects"
-                className="text-primary-600 text-sm font-medium hover:text-primary-700"
-              >
-                View All Projects
-              </Link>
-            </div>
+          <div
+            className="rounded-2xl"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              padding: "1.375rem 1.5rem",
+            }}
+          >
+            <SectionHeader
+              title="Active Projects"
+              href="/provider/projects"
+              hrefLabel="View all projects"
+            />
             {projects.active_projects.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                {projects.active_projects.map((project, index) => (
-                  <div
-                    key={index}
-                    className="border border-neutral-200 rounded-lg p-4 md:p-6 hover:border-primary-500 hover:shadow-md transition-all"
-                  >
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-semibold text-sm">
-                        {project.client_initials ||
-                          project.client?.substring(0, 2).toUpperCase()}
-                      </div>
-                      <p className="text-neutral-600 text-xs md:text-sm">
-                        {project.client}
-                      </p>
-                    </div>
-                    <h4 className="text-base md:text-lg font-bold text-neutral-900 mb-3">
-                      {project.name}
-                    </h4>
-                    {/* Progress Bar */}
-                    <div className="mb-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-neutral-600 text-xs md:text-sm">
-                          {project.progress}% Complete
-                        </span>
-                      </div>
-                      <div className="w-full h-2 bg-neutral-100 rounded-full overflow-hidden">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {projects.active_projects.map(
+                  (project: Project, index: number) => (
+                    <div
+                      key={index}
+                      className="rounded-xl p-4 flex flex-col transition-shadow"
+                      style={{
+                        border: "1px solid var(--color-neutral-200)",
+                        backgroundColor: "var(--color-neutral-0)",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLDivElement).style.boxShadow =
+                          "0 6px 20px rgba(0,0,0,0.07)";
+                        (e.currentTarget as HTMLDivElement).style.borderColor =
+                          "var(--color-neutral-300)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLDivElement).style.boxShadow =
+                          "none";
+                        (e.currentTarget as HTMLDivElement).style.borderColor =
+                          "var(--color-neutral-200)";
+                      }}
+                    >
+                      {/* Client */}
+                      <div className="flex items-center gap-2 mb-3">
                         <div
-                          className="h-full bg-primary-600 rounded-full transition-all"
-                          style={{ width: `${project.progress}%` }}
-                        />
+                          className="rounded-full flex items-center justify-center flex-shrink-0 font-bold"
+                          style={{
+                            width: "1.875rem",
+                            height: "1.875rem",
+                            backgroundColor: "var(--color-primary)",
+                            color: "white",
+                            fontSize: "0.65rem",
+                          }}
+                        >
+                          {project.client_initials ||
+                            project.client?.substring(0, 2).toUpperCase()}
+                        </div>
+                        <p
+                          className="truncate"
+                          style={{
+                            fontSize: "0.75rem",
+                            color: "var(--color-neutral-500)",
+                          }}
+                        >
+                          {project.client}
+                        </p>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 mb-3">
+
+                      {/* Name */}
+                      <h3
+                        className="font-semibold leading-snug mb-3"
+                        style={{
+                          fontSize: "0.875rem",
+                          color: "var(--color-neutral-900)",
+                        }}
+                      >
+                        {project.name}
+                      </h3>
+
+                      {/* Progress */}
+                      <div className="mb-3">
+                        <div className="flex justify-between mb-1.5">
+                          <span
+                            style={{
+                              fontSize: "0.7rem",
+                              color: "var(--color-neutral-500)",
+                            }}
+                          >
+                            Progress
+                          </span>
+                          <span
+                            className="font-semibold"
+                            style={{
+                              fontSize: "0.7rem",
+                              color: "var(--color-neutral-700)",
+                            }}
+                          >
+                            {project.progress}%
+                          </span>
+                        </div>
+                        <div
+                          className="rounded-full overflow-hidden"
+                          style={{
+                            height: "0.3rem",
+                            backgroundColor: "var(--color-neutral-150)",
+                          }}
+                        >
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${project.progress}%`,
+                              backgroundColor: "var(--color-primary)",
+                              transition: "width 0.5s ease",
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Status badge */}
                       <span
-                        className={`px-3 py-1 text-neutral-0 rounded-full text-xs font-medium ${
-                          project.status === "on-track"
-                            ? "bg-green-600"
-                            : "bg-yellow-600"
-                        }`}
+                        className="self-start rounded-full font-semibold mb-3"
+                        style={{
+                          fontSize: "0.65rem",
+                          padding: "0.2rem 0.6rem",
+                          backgroundColor:
+                            project.status === "on-track"
+                              ? "#f0fdf4"
+                              : "#fef3c7",
+                          color:
+                            project.status === "on-track"
+                              ? "#166534"
+                              : "#92400e",
+                        }}
                       >
                         {project.status === "on-track"
-                          ? "On Track"
-                          : "Needs Attention"}
+                          ? "On track"
+                          : "Needs attention"}
                       </span>
-                    </div>
-                    {project.due_date && (
-                      <div className="flex items-center gap-2 text-neutral-600 text-xs md:text-sm mb-2">
-                        <FontAwesomeIcon
-                          icon={faCalendar}
-                          className="text-xs"
-                        />
-                        <span>Due {project.due_date}</span>
+
+                      {/* Due date */}
+                      {project.due_date && (
+                        <div
+                          className="flex items-center gap-1.5 mb-1"
+                          style={{
+                            fontSize: "0.75rem",
+                            color: "var(--color-neutral-400)",
+                          }}
+                        >
+                          <FontAwesomeIcon
+                            icon={faCalendar}
+                            style={{ width: "0.7rem" }}
+                          />
+                          Due {project.due_date}
+                        </div>
+                      )}
+
+                      {/* Next task */}
+                      {project.next_task && (
+                        <p
+                          className="mb-3"
+                          style={{
+                            fontSize: "0.75rem",
+                            color: "var(--color-neutral-500)",
+                          }}
+                        >
+                          Next: {project.next_task}
+                        </p>
+                      )}
+
+                      <div className="mt-auto pt-2">
+                        <Link
+                          href={`/provider/projects/${project.id}`}
+                          className="inline-flex items-center gap-1.5 font-semibold hover:opacity-70 transition-opacity"
+                          style={{
+                            fontSize: "0.8rem",
+                            color: "var(--color-primary)",
+                            textDecoration: "none",
+                          }}
+                        >
+                          Open project
+                          <FontAwesomeIcon
+                            icon={faArrowRight}
+                            style={{ width: "0.6rem" }}
+                          />
+                        </Link>
                       </div>
-                    )}
-                    {project.next_task && (
-                      <p className="text-neutral-600 text-xs md:text-sm mb-4">
-                        Next: {project.next_task}
-                      </p>
-                    )}
-                    <Link
-                      href={`/provider/projects/${project.id}`}
-                      className="text-primary-600 font-medium text-sm hover:text-primary-700 flex items-center gap-2"
-                    >
-                      View Project{" "}
-                      <FontAwesomeIcon
-                        icon={faArrowRight}
-                        className="text-xs"
-                      />
-                    </Link>
-                  </div>
-                ))}
+                    </div>
+                  ),
+                )}
               </div>
             ) : (
-              <div className="text-center py-12">
+              <div className="text-center py-10">
                 <FontAwesomeIcon
                   icon={faFolder}
-                  className="text-5xl text-neutral-300 mb-4"
+                  style={{
+                    fontSize: "2rem",
+                    color: "var(--color-neutral-300)",
+                    marginBottom: "0.75rem",
+                  }}
                 />
-                <p className="text-neutral-600 mb-4">No active projects</p>
-                <Link
-                  href="/provider/leads"
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-semibold"
+                <p
+                  className="mb-4"
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--color-neutral-400)",
+                  }}
                 >
-                  View Leads
-                  <FontAwesomeIcon icon={faArrowRight} />
+                  No active projects yet
+                </p>
+                <Link href="/provider/leads" className="btn btn-primary btn-sm">
+                  Browse leads
+                  <FontAwesomeIcon
+                    icon={faArrowRight}
+                    style={{ width: "0.65rem" }}
+                  />
                 </Link>
               </div>
             )}
           </div>
         </div>
 
-        {/* Right Column - 1/3 width */}
-        <div className="space-y-4 md:space-y-6">
+        {/* Right: 1/3 */}
+        <div className="space-y-4">
           {/* Quick Actions */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-4 md:p-6">
-            <h3 className="text-base md:text-lg font-bold text-neutral-900 mb-4">
-              Quick Actions
-            </h3>
-            <div className="space-y-3">
+          <div
+            className="rounded-2xl"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              padding: "1.375rem 1.25rem",
+            }}
+          >
+            <h2
+              className="font-semibold mb-4"
+              style={{
+                fontSize: "1rem",
+                color: "var(--color-neutral-900)",
+              }}
+            >
+              Quick actions
+            </h2>
+            <div className="space-y-2">
+              {/* Primary CTA */}
               <Link
                 href="/provider/projects/new"
-                className="w-full px-4 md:px-6 py-2 md:py-3 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 transition-colors flex items-center justify-center gap-2 text-sm md:text-base"
+                className="flex items-center justify-center gap-2 w-full rounded-xl font-semibold transition-colors"
+                style={{
+                  padding: "0.7rem 1rem",
+                  backgroundColor: "var(--color-primary)",
+                  color: "white",
+                  fontSize: "0.875rem",
+                  textDecoration: "none",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                    "var(--color-primary)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                    "var(--color-primary)";
+                }}
               >
-                <FontAwesomeIcon icon={faPlus} />
+                <FontAwesomeIcon icon={faPlus} style={{ width: "0.8rem" }} />
                 Create New Project
               </Link>
+
+              {/* Secondary CTA */}
               <Link
                 href="/provider/availability"
-                className="w-full px-4 md:px-6 py-2 md:py-3 bg-neutral-0 text-primary-600 border-2 border-primary-600 rounded-lg font-medium hover:bg-neutral-50 transition-colors flex items-center justify-center gap-2 text-sm md:text-base"
+                className="flex items-center justify-center gap-2 w-full rounded-xl font-semibold transition-colors"
+                style={{
+                  padding: "0.7rem 1rem",
+                  backgroundColor: "transparent",
+                  color: "var(--color-primary)",
+                  border: "1.5px solid var(--color-primary)",
+                  fontSize: "0.875rem",
+                  textDecoration: "none",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                    "var(--color-primary-light)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                    "transparent";
+                }}
               >
-                <FontAwesomeIcon icon={faCalendarDays} />
+                <FontAwesomeIcon
+                  icon={faCalendarDays}
+                  style={{ width: "0.8rem" }}
+                />
                 Update Availability
               </Link>
-              <Link
-                href="/provider/leads"
-                className="w-full px-4 md:px-6 py-2 md:py-3 bg-neutral-0 text-neutral-700 border border-neutral-200 rounded-lg font-medium hover:bg-neutral-50 transition-colors flex items-center justify-center gap-2 text-sm md:text-base"
-              >
-                <FontAwesomeIcon icon={faMessage} />
-                Respond to Leads
-                {leads.pending > 0 && (
-                  <span className="ml-auto w-6 h-6 bg-primary-600 text-neutral-0 rounded-full flex items-center justify-center text-xs font-semibold">
-                    {leads.pending}
-                  </span>
-                )}
-              </Link>
-              <Link
-                href="/provider/portfolio"
-                className="w-full px-4 md:px-6 py-2 md:py-3 bg-neutral-0 text-neutral-700 border border-neutral-200 rounded-lg font-medium hover:bg-neutral-50 transition-colors flex items-center justify-center gap-2 text-sm md:text-base"
-              >
-                <FontAwesomeIcon icon={faFolder} />
-                Post Portfolio Update
-              </Link>
+
+              {/* Ghost actions */}
+              {[
+                {
+                  href: "/provider/leads",
+                  icon: faMessage,
+                  label: "Respond to Leads",
+                  badge: leads.pending > 0 ? leads.pending : null,
+                },
+                {
+                  href: "/provider/portfolio",
+                  icon: faFolder,
+                  label: "Portfolio Update",
+                  badge: null,
+                },
+                {
+                  href: "/provider/analytics",
+                  icon: faChartLine,
+                  label: "View Analytics",
+                  badge: null,
+                },
+              ].map(({ href, icon, label, badge }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className="flex items-center gap-2.5 w-full rounded-xl font-medium transition-colors"
+                  style={{
+                    padding: "0.6rem 0.875rem",
+                    backgroundColor: "transparent",
+                    color: "var(--color-neutral-700)",
+                    border: "1px solid var(--color-neutral-200)",
+                    fontSize: "0.875rem",
+                    textDecoration: "none",
+                  }}
+                  onMouseEnter={(e) => {
+                    (
+                      e.currentTarget as HTMLAnchorElement
+                    ).style.backgroundColor = "var(--color-neutral-100)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (
+                      e.currentTarget as HTMLAnchorElement
+                    ).style.backgroundColor = "transparent";
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={icon}
+                    style={{
+                      width: "0.85rem",
+                      color: "var(--color-neutral-400)",
+                    }}
+                  />
+                  {label}
+                  {badge !== null && (
+                    <span
+                      className="ml-auto rounded-full font-bold text-white flex items-center justify-center"
+                      style={{
+                        width: "1.25rem",
+                        height: "1.25rem",
+                        fontSize: "0.6rem",
+                        backgroundColor: "var(--color-primary)",
+                      }}
+                    >
+                      {badge}
+                    </span>
+                  )}
+                </Link>
+              ))}
             </div>
           </div>
 
           {/* Today's Schedule */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-4 md:p-6">
+          <div
+            className="rounded-2xl"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              padding: "1.375rem 1.25rem",
+            }}
+          >
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base md:text-lg font-bold text-neutral-900">
+              <h2
+                className="font-semibold"
+                style={{
+                  fontSize: "1rem",
+                  color: "var(--color-neutral-900)",
+                }}
+              >
                 Today&apos;s Schedule
-              </h3>
+              </h2>
               <FontAwesomeIcon
                 icon={faCalendarDays}
-                className="text-primary-600"
+                style={{
+                  color: "var(--color-neutral-300)",
+                  fontSize: "0.9rem",
+                }}
               />
             </div>
             {todays_schedule.length > 0 ? (
               <>
-                <div className="space-y-4">
-                  {todays_schedule.map((item, index) => (
-                    <div key={index} className="flex gap-3 md:gap-4">
-                      <div className="flex flex-col items-center flex-shrink-0">
-                        <span className="text-neutral-900 font-semibold text-xs md:text-sm">
-                          {item.time}
-                        </span>
-                      </div>
-                      <div className="flex-1 bg-neutral-50 rounded-lg p-3 md:p-4 border-l-4 border-primary-600">
-                        <p className="text-neutral-900 font-semibold mb-1 text-sm md:text-base">
+                <div className="space-y-3">
+                  {todays_schedule.map((item: ScheduleItem, index: number) => (
+                    <div key={index} className="flex gap-3">
+                      <span
+                        className="font-semibold flex-shrink-0 pt-1 leading-none"
+                        style={{
+                          fontSize: "0.7rem",
+                          color: "var(--color-neutral-400)",
+                          width: "2.5rem",
+                        }}
+                      >
+                        {item.time}
+                      </span>
+                      <div
+                        className="flex-1 rounded-lg p-3"
+                        style={{
+                          backgroundColor: "var(--color-neutral-50)",
+                          borderLeft: "3px solid var(--color-primary)",
+                        }}
+                      >
+                        <p
+                          className="font-semibold leading-snug mb-1"
+                          style={{
+                            fontSize: "0.8rem",
+                            color: "var(--color-neutral-900)",
+                          }}
+                        >
                           {item.title}
                         </p>
-                        <div className="flex items-center gap-2 text-neutral-600 text-xs md:text-sm">
-                          {item.location?.includes("Video") && (
-                            <FontAwesomeIcon
-                              icon={faVideo}
-                              className="text-xs"
-                            />
-                          )}
-                          <span>{item.location}</span>
-                        </div>
+                        {item.location && (
+                          <div
+                            className="flex items-center gap-1.5"
+                            style={{
+                              fontSize: "0.72rem",
+                              color: "var(--color-neutral-500)",
+                            }}
+                          >
+                            {item.location.includes("Video") && (
+                              <FontAwesomeIcon
+                                icon={faVideo}
+                                style={{ width: "0.65rem" }}
+                              />
+                            )}
+                            {item.location}
+                          </div>
+                        )}
                         {item.type && (
-                          <button className="mt-3 px-3 md:px-4 py-1.5 md:py-2 rounded-lg text-xs md:text-sm font-medium bg-primary-600 text-neutral-0 hover:bg-primary-700 transition-colors">
+                          <span
+                            className="inline-block mt-2 rounded-full font-semibold"
+                            style={{
+                              fontSize: "0.65rem",
+                              padding: "0.2rem 0.6rem",
+                              backgroundColor: "var(--color-primary-light)",
+                              color: "var(--color-primary)",
+                            }}
+                          >
                             {item.type}
-                          </button>
+                          </span>
                         )}
                       </div>
                     </div>
@@ -616,86 +1134,169 @@ export default function ProviderDashboard() {
                 </div>
                 <Link
                   href="/provider/calendar"
-                  className="block w-full mt-4 text-center text-primary-600 font-medium text-sm hover:text-primary-700"
+                  className="block text-center font-semibold mt-4 hover:opacity-70 transition-opacity"
+                  style={{
+                    fontSize: "0.8rem",
+                    color: "var(--color-primary)",
+                    textDecoration: "none",
+                  }}
                 >
-                  View Full Calendar
+                  Full calendar →
                 </Link>
               </>
             ) : (
               <div className="text-center py-8">
                 <FontAwesomeIcon
                   icon={faCalendar}
-                  className="text-4xl text-neutral-300 mb-3"
+                  style={{
+                    fontSize: "1.75rem",
+                    color: "var(--color-neutral-300)",
+                    marginBottom: "0.625rem",
+                  }}
                 />
-                <p className="text-neutral-500 text-sm">
+                <p
+                  style={{
+                    fontSize: "0.8rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
                   No events scheduled today
                 </p>
               </div>
             )}
           </div>
 
-          {/* Messages */}
+          {/* Unread Messages */}
           {unread_messages > 0 && (
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-4 md:p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-base md:text-lg font-bold text-neutral-900">
+            <div
+              className="rounded-2xl"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                border: "1px solid var(--color-neutral-200)",
+                padding: "1.375rem 1.25rem",
+              }}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h2
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
                   Messages
-                </h3>
-                <span className="px-3 py-1 bg-red-500 text-white text-xs font-bold rounded-full">
-                  {unread_messages}
+                </h2>
+                <span
+                  className="rounded-full font-bold text-white flex items-center justify-center"
+                  style={{
+                    padding: "0.2rem 0.6rem",
+                    fontSize: "0.65rem",
+                    backgroundColor: "#ef4444",
+                  }}
+                >
+                  {unread_messages} new
                 </span>
               </div>
-              <p className="text-neutral-600 text-sm mb-4">
+              <p
+                className="mb-4"
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
                 You have {unread_messages} unread message
-                {unread_messages !== 1 ? "s" : ""}
+                {unread_messages !== 1 ? "s" : ""}.
               </p>
               <Link
                 href="/provider/messages"
-                className="block w-full text-center px-4 py-3 bg-primary-600 text-white rounded-lg font-semibold hover:bg-primary-700 transition-colors text-sm md:text-base"
+                className="btn btn-primary btn-md w-full justify-center"
               >
-                View All Messages
+                <FontAwesomeIcon icon={faMessage} style={{ width: "0.8rem" }} />
+                Open Messages
               </Link>
             </div>
           )}
 
           {/* Optimization Tip */}
           {showOptimizationTip && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 md:p-6">
-              <div className="flex items-start gap-3 mb-4">
+            <div
+              className="rounded-2xl"
+              style={{
+                backgroundColor: "#fffbeb",
+                border: "1px solid #fde68a",
+                padding: "1.125rem 1.25rem",
+              }}
+            >
+              <div className="flex items-start gap-3 mb-3">
                 <FontAwesomeIcon
                   icon={faLightbulb}
-                  className="text-yellow-600 text-xl md:text-2xl flex-shrink-0"
+                  className="flex-shrink-0 mt-0.5"
+                  style={{
+                    color: "#f59e0b",
+                    width: "0.9rem",
+                  }}
                 />
-                <div className="flex-1">
-                  <h4 className="text-base md:text-lg font-bold text-neutral-900 mb-2">
-                    Optimization Tip
-                  </h4>
-                  <p className="text-neutral-700 text-xs md:text-sm">
-                    Your response rate is excellent! Consider adding weekend
-                    availability to capture 15% more leads in your area.
+                <div className="flex-1 min-w-0">
+                  <p
+                    className="font-semibold mb-1"
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    Optimization tip
+                  </p>
+                  <p
+                    className="leading-relaxed"
+                    style={{
+                      fontSize: "0.78rem",
+                      color: "var(--color-neutral-600)",
+                    }}
+                  >
+                    Your response rate is excellent! Adding weekend availability
+                    could capture 15% more leads.
                   </p>
                 </div>
                 <button
                   onClick={() => setShowOptimizationTip(false)}
-                  className="text-neutral-600 hover:text-neutral-900 flex-shrink-0"
                   aria-label="Dismiss tip"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--color-neutral-400)",
+                    flexShrink: 0,
+                    padding: "0.1rem",
+                  }}
                 >
-                  <FontAwesomeIcon
-                    icon={faXmark}
-                    className="hover:cursor-pointer"
-                  />
+                  <FontAwesomeIcon icon={faXmark} style={{ width: "0.8rem" }} />
                 </button>
               </div>
-              <div className="flex flex-col sm:flex-row gap-2 md:gap-3">
+              <div className="flex gap-2">
                 <Link
                   href="/provider/availability"
-                  className="flex-1 px-3 md:px-4 py-2 bg-primary-600 text-neutral-0 rounded-lg text-xs md:text-sm font-medium hover:bg-primary-700 transition-colors text-center"
+                  className="flex-1 flex items-center justify-center rounded-lg font-semibold transition-opacity hover:opacity-80"
+                  style={{
+                    padding: "0.5rem",
+                    fontSize: "0.78rem",
+                    backgroundColor: "#f59e0b",
+                    color: "white",
+                    textDecoration: "none",
+                  }}
                 >
-                  Update Availability
+                  Update
                 </Link>
                 <button
                   onClick={() => setShowOptimizationTip(false)}
-                  className="flex-1 px-3 md:px-4 py-2 bg-neutral-0 text-neutral-700 rounded-lg text-xs md:text-sm font-medium hover:bg-neutral-50 transition-colors border border-neutral-200"
+                  className="flex-1 rounded-lg font-semibold transition-colors"
+                  style={{
+                    padding: "0.5rem",
+                    fontSize: "0.78rem",
+                    backgroundColor: "white",
+                    color: "var(--color-neutral-600)",
+                    border: "1px solid var(--color-neutral-200)",
+                    cursor: "pointer",
+                  }}
                 >
                   Dismiss
                 </button>

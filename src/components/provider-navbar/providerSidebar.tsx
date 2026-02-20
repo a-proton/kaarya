@@ -16,6 +16,7 @@ import {
   faSpinner,
   faFileAlt,
   faArchive,
+  faEllipsis,
 } from "@fortawesome/free-solid-svg-icons";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -43,7 +44,6 @@ const navigationItems = [
   { icon: faMessage, label: "Messages", href: "/provider/messages" },
   { icon: faDollarSign, label: "Earnings", href: "/provider/earnings" },
   { icon: faFileAlt, label: "Reports", href: "/provider/reports" },
-
   { icon: faGear, label: "Settings", href: "/provider/settings" },
 ];
 
@@ -65,74 +65,125 @@ export default function ProviderSidebar() {
     }
   };
 
-  // Get user initials
   const getUserInitials = () => {
     if (!user) return "U";
-
-    // Use stored initials if available
-    if (user.initials) {
-      return user.initials;
-    }
-
+    if (user.initials) return user.initials;
     if (user.full_name) {
       const names = user.full_name.split(" ");
       return names.length > 1
         ? `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase()
         : names[0].substring(0, 2).toUpperCase();
     }
-
     return user.email?.[0]?.toUpperCase() || "U";
   };
 
   const getDisplayName = () => {
     if (!user) return "User";
-
-    // Prioritize full_name, then business_name, then email
     return user.full_name || user.business_name || user.email || "User";
+  };
+
+  const getRole = () => {
+    if (!user) return "";
+    return user.business_name ? "Business Owner" : "Service Provider";
   };
 
   return (
     <>
-      <aside className="fixed left-0 top-0 h-screen w-64 bg-neutral-0 border-r border-neutral-200 flex flex-col z-40">
-        {/* Logo Section */}
-        <div className="p-6 border-b border-neutral-200">
-          <h1 className="text-2xl font-bold text-neutral-900">Karya</h1>
-          <p className="text-xs text-neutral-600 mt-1">
-            WHERE SKILLS MEET OPPORTUNITY
-          </p>
+      <aside
+        className="fixed left-0 top-0 h-screen w-64 flex flex-col z-40"
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderRight: "1px solid var(--color-neutral-200)",
+        }}
+      >
+        {/* Logo */}
+        <div
+          className="flex items-center gap-3 px-5 h-16 flex-shrink-0"
+          style={{ borderBottom: "1px solid var(--color-neutral-200)" }}
+        >
+          <div
+            className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: "var(--color-primary)" }}
+          >
+            <span className="text-white font-bold" style={{ fontSize: "1rem" }}>
+              K
+            </span>
+          </div>
+          <div>
+            <h1
+              className="font-bold leading-tight"
+              style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+            >
+              Karya
+            </h1>
+            <p
+              className="font-medium leading-none tracking-widest"
+              style={{
+                fontSize: "0.52rem",
+                color: "var(--color-neutral-400)",
+                letterSpacing: "0.09em",
+              }}
+            >
+              WHERE SKILLS MEET OPPORTUNITY
+            </p>
+          </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-4 py-6 overflow-y-auto">
-          <ul className="space-y-2">
+        <nav className="flex-1 overflow-y-auto px-3 pt-4 pb-2">
+          <p
+            className="px-3 mb-2 font-semibold"
+            style={{
+              fontSize: "0.58rem",
+              color: "var(--color-neutral-400)",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+            }}
+          >
+            Main Menu
+          </p>
+          <ul className="space-y-px">
             {navigationItems.map((item) => {
               const isActive = pathname === item.href;
               return (
                 <li key={item.href}>
                   <Link
                     href={item.href}
-                    className={`relative flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                      isActive
-                        ? "bg-neutral-100 text-neutral-900"
-                        : "text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900"
-                    }`}
+                    className="relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors"
+                    style={{
+                      backgroundColor: isActive
+                        ? "var(--color-primary-light)"
+                        : "transparent",
+                      color: isActive
+                        ? "var(--color-primary)"
+                        : "var(--color-neutral-600)",
+                      fontWeight: isActive ? 600 : 400,
+                      fontSize: "0.875rem",
+                      textDecoration: "none",
+                    }}
                   >
                     {isActive && (
-                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-primary-600 rounded-r-full" />
+                      <span
+                        className="absolute left-0 top-1/2 rounded-r-sm"
+                        style={{
+                          width: "3px",
+                          height: "1.375rem",
+                          backgroundColor: "var(--color-primary)",
+                          transform: "translateY(-50%)",
+                        }}
+                      />
                     )}
                     <FontAwesomeIcon
                       icon={item.icon}
-                      className={`text-lg w-5 ${
-                        isActive ? "text-primary-600" : "text-neutral-600"
-                      }`}
+                      fixedWidth
+                      style={{
+                        color: isActive
+                          ? "var(--color-primary)"
+                          : "var(--color-neutral-400)",
+                        fontSize: "0.9rem",
+                      }}
                     />
-                    <span
-                      className={`font-medium flex-1 ${
-                        isActive ? "text-primary-600" : ""
-                      }`}
-                    >
-                      {item.label}
-                    </span>
+                    <span className="flex-1 truncate">{item.label}</span>
                   </Link>
                 </li>
               );
@@ -140,93 +191,155 @@ export default function ProviderSidebar() {
           </ul>
         </nav>
 
-        {/* Profile Section */}
-        <div className="p-4 border-t border-neutral-200">
+        {/* Profile */}
+        <div
+          className="p-3 flex-shrink-0"
+          style={{ borderTop: "1px solid var(--color-neutral-200)" }}
+        >
           <button
             onClick={() => setShowLogoutModal(true)}
             disabled={userLoading}
-            className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-neutral-50 cursor-pointer transition-colors disabled:opacity-50"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors disabled:opacity-50"
+            style={{ cursor: "pointer", backgroundColor: "transparent" }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                "var(--color-neutral-100)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                "transparent";
+            }}
           >
             {user?.profile_image ? (
               <img
                 src={user.profile_image}
                 alt={getDisplayName()}
-                className="w-10 h-10 rounded-full object-cover"
+                className="rounded-full object-cover flex-shrink-0"
+                style={{ width: "2.25rem", height: "2.25rem" }}
               />
             ) : (
-              <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-neutral-0 font-semibold text-sm">
+              <div
+                className="rounded-full flex items-center justify-center flex-shrink-0 font-bold"
+                style={{
+                  width: "2.25rem",
+                  height: "2.25rem",
+                  backgroundColor: "var(--color-primary)",
+                  color: "white",
+                  fontSize: "0.75rem",
+                }}
+              >
                 {getUserInitials()}
               </div>
             )}
             <div className="flex-1 text-left min-w-0">
-              <p className="text-sm font-semibold text-neutral-900 truncate">
+              <p
+                className="font-semibold truncate leading-tight"
+                style={{
+                  fontSize: "0.8125rem",
+                  color: "var(--color-neutral-900)",
+                }}
+              >
                 {userLoading ? "Loading..." : getDisplayName()}
               </p>
-              <p className="text-xs text-neutral-600">View Profile</p>
+              <p
+                className="truncate leading-tight"
+                style={{
+                  fontSize: "0.7rem",
+                  color: "var(--color-neutral-400)",
+                }}
+              >
+                {getRole()}
+              </p>
             </div>
+            <FontAwesomeIcon
+              icon={faEllipsis}
+              style={{
+                color: "var(--color-neutral-400)",
+                fontSize: "0.875rem",
+              }}
+            />
           </button>
         </div>
       </aside>
 
-      {/* Logout Confirmation Modal */}
+      {/* Logout Modal */}
       {showLogoutModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-[100]">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-md w-full mx-4">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-neutral-200">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+        <div
+          className="fixed inset-0 flex items-center justify-center z-[100]"
+          style={{ backgroundColor: "rgba(0,0,0,0.3)" }}
+        >
+          <div
+            className="w-full max-w-sm mx-4 rounded-2xl overflow-hidden"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 20px 50px rgba(0,0,0,0.15)",
+              border: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            <div className="p-6">
+              <div className="flex items-start gap-4 mb-6">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: "#fef2f2" }}
+                >
                   <FontAwesomeIcon
                     icon={faSignOut}
-                    className="text-red-600 text-xl"
+                    style={{ color: "#ef4444", width: "1rem" }}
                   />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-neutral-900">Logout</h3>
-                  <p className="text-neutral-600 text-sm">
-                    Are you sure you want to logout?
+                  <h3
+                    className="font-semibold mb-1"
+                    style={{
+                      fontSize: "1rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    Sign out
+                  </h3>
+                  <p
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    You&apos;ll be redirected to the login page.
                   </p>
                 </div>
               </div>
-            </div>
-
-            {/* Modal Content */}
-            <div className="p-6">
-              <p className="text-neutral-700">
-                You will be logged out of your account and redirected to the
-                login page.
-              </p>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
-              <button
-                onClick={() => setShowLogoutModal(false)}
-                disabled={isLoggingOut}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleLogout}
-                disabled={isLoggingOut}
-                className="px-5 py-2.5 bg-red-600 text-neutral-0 rounded-lg hover:bg-red-700 transition-colors font-semibold flex items-center gap-2 disabled:opacity-50"
-              >
-                {isLoggingOut ? (
-                  <>
-                    <FontAwesomeIcon
-                      icon={faSpinner}
-                      className="animate-spin"
-                    />
-                    Logging out...
-                  </>
-                ) : (
-                  <>
-                    <FontAwesomeIcon icon={faSignOut} />
-                    Logout
-                  </>
-                )}
-              </button>
+              <div className="flex items-center gap-3 justify-end">
+                <button
+                  onClick={() => setShowLogoutModal(false)}
+                  disabled={isLoggingOut}
+                  className="btn btn-ghost btn-md"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleLogout}
+                  disabled={isLoggingOut}
+                  className="btn btn-danger btn-md"
+                >
+                  {isLoggingOut ? (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faSpinner}
+                        className="animate-spin"
+                        style={{ width: "0.875rem" }}
+                      />
+                      Signing out…
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faSignOut}
+                        style={{ width: "0.875rem" }}
+                      />
+                      Sign out
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
