@@ -36,11 +36,7 @@ interface Message {
   fileName?: string | null;
   status: "sent" | "delivered" | "read";
   conversation: number;
-  sender: {
-    id: number;
-    email: string;
-    user_type: string;
-  };
+  sender: { id: number; email: string; user_type: string };
   sender_name: string;
   sender_image: string | null;
   sender_type: string;
@@ -50,14 +46,14 @@ interface Message {
   is_read: boolean;
   read_at: string | null;
   created_at: string;
-  is_guest?: boolean; // ✅ NEW: Flag for guest messages
+  is_guest?: boolean;
 }
 
 interface Conversation {
   id: number;
   name: string;
   initials: string;
-  type: "client" | "inquiry"; // ✅ UPDATED: Now properly uses "inquiry" for guests
+  type: "client" | "inquiry";
   avatar?: string | null;
   lastMessage: string;
   lastMessageTime: string;
@@ -76,7 +72,6 @@ interface Conversation {
   last_message_at: string;
   is_active: boolean;
   created_at: string;
-  // ✅ NEW: Guest inquiry fields
   is_guest?: boolean;
   guest_email?: string;
   guest_phone?: string;
@@ -86,15 +81,6 @@ interface MessageCreateData {
   message_text?: string;
   message_type?: "text" | "image" | "video" | "file";
   file_url?: string;
-}
-
-interface ConversationCreateData {
-  service_provider_id?: number;
-  client_id?: number;
-  client_name?: string;
-  client_email?: string;
-  client_phone?: string;
-  initial_message?: string;
 }
 
 interface MediaPreviewFile {
@@ -111,18 +97,31 @@ interface MediaPreviewFile {
 // HELPER FUNCTIONS
 // ==================================================================================
 
-const mapConversationFromBackend = (conv: any): Conversation => {
-  // ✅ UPDATED: Properly detect guest inquiries
+const AVATAR_COLORS = [
+  "#1ab189",
+  "#8b5cf6",
+  "#3b82f6",
+  "#f59e0b",
+  "#ec4899",
+  "#06b6d4",
+];
+
+const mapConversationFromBackend = (
+  conv: Record<string, unknown>,
+): Conversation => {
   const isGuest = conv.type === "inquiry" || !conv.client;
-
   const name = isGuest
-    ? conv.client_name || conv.client_name_display || "Guest User"
-    : conv.client_name_display || conv.service_provider_name || "Unknown";
-
+    ? (conv.client_name as string) ||
+      (conv.client_name_display as string) ||
+      "Guest User"
+    : (conv.client_name_display as string) ||
+      (conv.service_provider_name as string) ||
+      "Unknown";
   const avatar = isGuest
-    ? null // Guests don't have avatars
-    : conv.client_image || conv.service_provider_image || null;
-
+    ? null
+    : (conv.client_image as string | null) ||
+      (conv.service_provider_image as string | null) ||
+      null;
   const initials =
     name
       .split(" ")
@@ -130,76 +129,81 @@ const mapConversationFromBackend = (conv: any): Conversation => {
       .join("")
       .toUpperCase()
       .slice(0, 2) || "GU";
-
-  const colors = [
-    "bg-primary-600",
-    "bg-secondary-600",
-    "bg-purple-600",
-    "bg-yellow-600",
-    "bg-blue-600",
-    "bg-pink-600",
-  ];
-  const color = colors[conv.id % colors.length];
+  const id = conv.id as number;
+  const color = AVATAR_COLORS[id % AVATAR_COLORS.length];
+  const lastMsg = conv.last_message as {
+    text: string;
+    sender_type: string;
+    created_at: string;
+  } | null;
 
   return {
-    id: conv.id,
+    id,
     name,
     initials,
-    type: isGuest ? "inquiry" : "client", // ✅ FIXED: Properly set type
+    type: isGuest ? "inquiry" : "client",
     avatar,
     lastMessage:
-      conv.lastMessage || conv.last_message?.text || "No messages yet",
-    lastMessageTime: formatTime(conv.last_message_at || conv.created_at),
-    unreadCount: conv.unreadCount || 0,
-    isOnline: false, // Guests are never online
+      (conv.lastMessage as string) || lastMsg?.text || "No messages yet",
+    lastMessageTime: formatTime(
+      (conv.last_message_at as string) || (conv.created_at as string),
+    ),
+    unreadCount: (conv.unreadCount as number) || 0,
+    isOnline: false,
     color,
-    service_provider_name: conv.service_provider_name,
-    service_provider_image: conv.service_provider_image,
-    client_name_display: conv.client_name_display || name,
-    client_image: conv.client_image,
-    last_message: conv.last_message,
-    last_message_at: conv.last_message_at,
-    is_active: conv.is_active,
-    created_at: conv.created_at,
+    service_provider_name: (conv.service_provider_name as string) || "",
+    service_provider_image:
+      (conv.service_provider_image as string | null) || null,
+    client_name_display: (conv.client_name_display as string) || name,
+    client_image: (conv.client_image as string | null) || null,
+    last_message: lastMsg,
+    last_message_at: (conv.last_message_at as string) || "",
+    is_active: (conv.is_active as boolean) ?? true,
+    created_at: (conv.created_at as string) || "",
     is_guest: isGuest,
-    guest_email: isGuest ? conv.client_email || conv.guest_email : undefined,
-    guest_phone: isGuest ? conv.client_phone || conv.guest_phone : undefined,
+    guest_email: isGuest
+      ? (conv.client_email as string) ||
+        (conv.guest_email as string) ||
+        undefined
+      : undefined,
+    guest_phone: isGuest
+      ? (conv.client_phone as string) ||
+        (conv.guest_phone as string) ||
+        undefined
+      : undefined,
   };
 };
 
-const mapMessageFromBackend = (msg: any): Message => {
-  return {
-    id: msg.id,
-    senderId: msg.sender_type,
-    content: msg.message_text || "",
-    timestamp: msg.created_at,
-    type: msg.message_type || "text",
-    mediaUrl: msg.file_url,
-    fileName: null,
-    status: msg.is_read ? "read" : "delivered",
-    conversation: msg.conversation,
-    sender: msg.sender,
-    sender_name: msg.sender_name,
-    sender_image: msg.sender_image,
-    sender_type: msg.sender_type,
-    message_text: msg.message_text,
-    message_type: msg.message_type,
-    file_url: msg.file_url,
-    is_read: msg.is_read,
-    read_at: msg.read_at,
-    created_at: msg.created_at,
-    is_guest: msg.is_guest || false, // ✅ NEW: Track if message is from guest
-  };
-};
+const mapMessageFromBackend = (msg: Record<string, unknown>): Message => ({
+  id: msg.id as number,
+  senderId: msg.sender_type as string,
+  content: (msg.message_text as string) || "",
+  timestamp: msg.created_at as string,
+  type: (msg.message_type as Message["type"]) || "text",
+  mediaUrl: msg.file_url as string | null,
+  fileName: null,
+  status: (msg.is_read as boolean) ? "read" : "delivered",
+  conversation: msg.conversation as number,
+  sender: msg.sender as { id: number; email: string; user_type: string },
+  sender_name: msg.sender_name as string,
+  sender_image: (msg.sender_image as string | null) || null,
+  sender_type: msg.sender_type as string,
+  message_text: (msg.message_text as string) || "",
+  message_type: (msg.message_type as string) || "text",
+  file_url: (msg.file_url as string | null) || null,
+  is_read: (msg.is_read as boolean) || false,
+  read_at: (msg.read_at as string | null) || null,
+  created_at: msg.created_at as string,
+  is_guest: (msg.is_guest as boolean) || false,
+});
 
 const formatTime = (dateString: string) => {
+  if (!dateString) return "";
   const date = new Date(dateString);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
+  const diff = Date.now() - date.getTime();
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
-
   if (minutes < 1) return "Just now";
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
@@ -221,22 +225,21 @@ export default function MessagesPage() {
   const [showMediaPreview, setShowMediaPreview] = useState(false);
   const [previewFile, setPreviewFile] = useState<MediaPreviewFile | null>(null);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
-  const [showGuestInfo, setShowGuestInfo] = useState(false); // ✅ NEW: Toggle guest info panel
+  const [showGuestInfo, setShowGuestInfo] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // ==================================================================================
-  // DATA FETCHING WITH TANSTACK QUERY
-  // ==================================================================================
-
+  // ── Queries ──
   const {
     data: conversationsData = [],
     isLoading: conversationsLoading,
     isError: conversationsError,
-  } = useQuery({
+  } = useQuery<Conversation[]>({
     queryKey: ["conversations"],
     queryFn: async () => {
-      const response = await api.get("/api/v1/messages/conversations/");
+      const response = await api.get<Record<string, unknown>[]>(
+        "/api/v1/messages/conversations/",
+      );
       return response.map(mapConversationFromBackend);
     },
     refetchInterval: 5000,
@@ -246,21 +249,22 @@ export default function MessagesPage() {
     data: messagesData,
     isLoading: messagesLoading,
     isError: messagesError,
-  } = useQuery({
+  } = useQuery<Message[]>({
     queryKey: ["messages", selectedConversationId],
     queryFn: async () => {
       if (!selectedConversationId) return [];
       const response = await api.get<{
-        results: any[];
+        results: Record<string, unknown>[];
         count: number;
         next: string | null;
         previous: string | null;
       }>(`/api/v1/messages/conversations/${selectedConversationId}/messages/`);
-      const mappedMessages = response.results.map(mapMessageFromBackend);
-      return mappedMessages.sort(
-        (a, b) =>
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-      );
+      return response.results
+        .map(mapMessageFromBackend)
+        .sort(
+          (a, b) =>
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+        );
     },
     enabled: !!selectedConversationId,
     refetchInterval: 3000,
@@ -271,87 +275,66 @@ export default function MessagesPage() {
     conversations_with_unread: number;
   }>({
     queryKey: ["unread-count"],
-    queryFn: async () => {
-      return api.get<{
-        total_unread: number;
-        conversations_with_unread: number;
-      }>("/api/v1/messages/conversations/unread-count/");
-    },
+    queryFn: () =>
+      api.get<{ total_unread: number; conversations_with_unread: number }>(
+        "/api/v1/messages/conversations/unread-count/",
+      ),
     refetchInterval: 5000,
   });
 
-  // ==================================================================================
-  // MUTATIONS
-  // ==================================================================================
-
+  // ── Send mutation ──
   const sendMessageMutation = useMutation({
     mutationFn: async (data: {
       messageData: MessageCreateData;
       previewFile: MediaPreviewFile | null;
     }) => {
       if (!selectedConversationId) throw new Error("No conversation selected");
-
-      let finalMessageData = { ...data.messageData };
+      let finalData = { ...data.messageData };
 
       if (data.previewFile) {
-        console.log("📤 Uploading media to Supabase...");
         setIsUploadingMedia(true);
-
         setPreviewFile((prev) =>
           prev ? { ...prev, uploadStatus: "uploading" } : null,
         );
-
         try {
-          const uploadResult = await uploadMessageMedia(data.previewFile.file, {
+          const result = await uploadMessageMedia(data.previewFile.file, {
             folder: `messages/${selectedConversationId}`,
           });
-
-          if (uploadResult.success && uploadResult.publicUrl) {
-            console.log("✅ Upload successful:", uploadResult.publicUrl);
-
+          if (result.success && result.publicUrl) {
             setPreviewFile((prev) =>
               prev
                 ? {
                     ...prev,
                     uploadStatus: "uploaded",
-                    uploadedUrl: uploadResult.publicUrl,
+                    uploadedUrl: result.publicUrl,
                   }
                 : null,
             );
-
-            finalMessageData.file_url = uploadResult.publicUrl;
+            finalData.file_url = result.publicUrl;
           } else {
-            throw new Error(uploadResult.error || "Upload failed");
+            throw new Error(result.error || "Upload failed");
           }
-        } catch (error) {
-          console.error("❌ Upload failed:", error);
-
+        } catch (err) {
           setPreviewFile((prev) =>
             prev
               ? {
                   ...prev,
                   uploadStatus: "failed",
-                  error:
-                    error instanceof Error ? error.message : "Upload failed",
+                  error: err instanceof Error ? err.message : "Upload failed",
                 }
               : null,
           );
-
           setIsUploadingMedia(false);
           throw new Error(
-            `Media upload failed: ${
-              error instanceof Error ? error.message : "Unknown error"
-            }`,
+            `Media upload failed: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
         }
-
         setIsUploadingMedia(false);
       }
 
-      console.log("📝 Sending message to backend:", finalMessageData);
       return api.post(
         `/api/v1/messages/conversations/${selectedConversationId}/messages/send/`,
-        finalMessageData,
+        finalData,
       );
     },
     onSuccess: async () => {
@@ -365,49 +348,38 @@ export default function MessagesPage() {
       setShowMediaPreview(false);
       setIsUploadingMedia(false);
     },
-    onError: (error: any) => {
+    onError: (err: unknown) => {
       setIsUploadingMedia(false);
+      const e = err as { message?: string; data?: { detail?: string } };
       alert(
-        `Failed to send message: ${
-          error.message || error.data?.detail || "Unknown error"
-        }`,
+        `Failed to send message: ${e.message ?? e.data?.detail ?? "Unknown error"}`,
       );
     },
   });
 
-  const markConversationReadMutation = useMutation({
-    mutationFn: async (conversationId: number) => {
-      return api.post(
-        `/api/v1/messages/conversations/${conversationId}/mark-read/`,
-        {},
-      );
-    },
+  const markReadMutation = useMutation({
+    mutationFn: (id: number) =>
+      api.post(`/api/v1/messages/conversations/${id}/mark-read/`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
       queryClient.invalidateQueries({ queryKey: ["unread-count"] });
     },
   });
 
-  // ==================================================================================
-  // HANDLERS
-  // ==================================================================================
-
+  // ── Handlers ──
   const handleSendMessage = () => {
     if (!messageInput.trim() && !previewFile) return;
-
-    const messageData: MessageCreateData = {
-      message_text: messageInput.trim(),
-      message_type: previewFile
-        ? previewFile.type.startsWith("image")
-          ? "image"
-          : previewFile.type.startsWith("video")
-            ? "video"
-            : "file"
-        : "text",
-    };
-
     sendMessageMutation.mutate({
-      messageData,
+      messageData: {
+        message_text: messageInput.trim(),
+        message_type: previewFile
+          ? previewFile.type.startsWith("image")
+            ? "image"
+            : previewFile.type.startsWith("video")
+              ? "video"
+              : "file"
+          : "text",
+      },
       previewFile,
     });
   };
@@ -415,22 +387,17 @@ export default function MessagesPage() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const isImage = file.type.startsWith("image/");
     const isVideo = file.type.startsWith("video/");
-
     if (!isImage && !isVideo) {
       alert("Please select a valid image or video file");
       return;
     }
-
     const maxSize = isVideo ? 100 * 1024 * 1024 : 5 * 1024 * 1024;
     if (file.size > maxSize) {
-      const maxSizeMB = isVideo ? 100 : 5;
-      alert(`File is too large. Maximum size is ${maxSizeMB}MB`);
+      alert(`File is too large. Maximum ${isVideo ? "100" : "5"}MB.`);
       return;
     }
-
     const fileUrl = URL.createObjectURL(file);
     setPreviewFile({
       file,
@@ -440,90 +407,76 @@ export default function MessagesPage() {
       uploadStatus: "pending",
     });
     setShowMediaPreview(true);
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const cancelPreview = () => {
-    if (previewFile) {
-      URL.revokeObjectURL(previewFile.url);
-    }
+    if (previewFile) URL.revokeObjectURL(previewFile.url);
     setPreviewFile(null);
     setShowMediaPreview(false);
     setIsUploadingMedia(false);
   };
 
-  const handleConversationSelect = (conversationId: number) => {
-    setSelectedConversationId(conversationId);
-    setShowGuestInfo(false); // Reset guest info panel
-    const conversation = conversationsData.find((c) => c.id === conversationId);
-    if (conversation && conversation.unreadCount > 0) {
-      markConversationReadMutation.mutate(conversationId);
-    }
+  const handleConversationSelect = (id: number) => {
+    setSelectedConversationId(id);
+    setShowGuestInfo(false);
+    const conv = conversationsData.find((c) => c.id === id);
+    if (conv && conv.unreadCount > 0) markReadMutation.mutate(id);
   };
 
   const getMessageStatus = (status: Message["status"]) => {
     if (status === "sent")
-      return <FontAwesomeIcon icon={faCheck} className="w-3 h-3" />;
+      return (
+        <FontAwesomeIcon
+          icon={faCheck}
+          style={{ fontSize: "0.6rem", color: "rgba(255,255,255,0.7)" }}
+        />
+      );
     if (status === "delivered")
       return (
         <FontAwesomeIcon
           icon={faCheckDouble}
-          className="w-3 h-3 text-neutral-400"
+          style={{ fontSize: "0.6rem", color: "rgba(255,255,255,0.7)" }}
         />
       );
     return (
       <FontAwesomeIcon
         icon={faCheckDouble}
-        className="w-3 h-3 text-primary-600"
+        style={{ fontSize: "0.6rem", color: "#93c5fd" }}
       />
     );
   };
 
-  // ✅ UPDATED: Better badge labels and colors
-  const getTypeBadge = (type: Conversation["type"]) => {
-    if (type === "inquiry") return "Guest Inquiry";
-    return "Registered Client";
-  };
-
-  const getTypeBadgeColor = (type: Conversation["type"]) => {
-    if (type === "inquiry")
-      return "bg-orange-50 text-orange-700 border-orange-200";
-    return "bg-primary-50 text-primary-700 border-primary-200";
-  };
-
-  const filteredConversations = conversationsData.filter((conv) =>
-    conv.name.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
-
+  const messages = messagesData ?? [];
   const currentConversation = conversationsData.find(
     (c) => c.id === selectedConversationId,
   );
-
-  const messages = messagesData || [];
+  const filteredConversations = conversationsData.filter((c) =>
+    c.name.toLowerCase().includes(searchQuery.toLowerCase()),
+  );
 
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // ==================================================================================
-  // LOADING & ERROR STATES
-  // ==================================================================================
-
+  // ── Loading / Error ──
   if (conversationsLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-neutral-50">
+      <div
+        className="flex items-center justify-center min-h-screen"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            spin
-            className="w-8 h-8 text-primary-600 mb-4"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading conversations...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading conversations…
+          </p>
         </div>
       </div>
     );
@@ -531,23 +484,37 @@ export default function MessagesPage() {
 
   if (conversationsError) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-neutral-50">
+      <div
+        className="flex items-center justify-center min-h-screen"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center max-w-md px-6">
-          <FontAwesomeIcon
-            icon={faExclamationTriangle}
-            className="w-16 h-16 text-red-500 mb-4"
-          />
-          <h2 className="heading-3 text-neutral-900 mb-2">
+          <div
+            className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
+            style={{ backgroundColor: "#fef2f2" }}
+          >
+            <FontAwesomeIcon
+              icon={faExclamationTriangle}
+              style={{ color: "#ef4444", fontSize: "1.5rem" }}
+            />
+          </div>
+          <h2
+            className="font-bold mb-2"
+            style={{ fontSize: "1.25rem", color: "var(--color-neutral-900)" }}
+          >
             Error Loading Conversations
           </h2>
-          <p className="body-regular text-neutral-600 mb-6">
+          <p
+            className="mb-6"
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-600)" }}
+          >
             Failed to load your conversations. Please try again.
           </p>
           <button
             onClick={() =>
               queryClient.invalidateQueries({ queryKey: ["conversations"] })
             }
-            className="btn-primary"
+            className="btn btn-primary btn-md"
           >
             Retry
           </button>
@@ -559,47 +526,74 @@ export default function MessagesPage() {
   // ==================================================================================
   // RENDER
   // ==================================================================================
-
   return (
-    <div className="flex h-screen bg-neutral-50 overflow-hidden">
-      <div className="flex-1 flex flex-col lg:flex-row max-w-[1920px] mx-auto w-full overflow-hidden">
-        {/* Header - Only visible on mobile */}
-        <div className="lg:hidden bg-white border-b border-neutral-200 px-6 py-4 flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <h1 className="heading-2 text-neutral-900">Messages</h1>
-            {unreadData && unreadData.total_unread > 0 && (
-              <span className="bg-red-500 text-white px-2.5 py-1 rounded-full text-xs font-semibold">
-                {unreadData.total_unread} unread
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Upload Progress Toast */}
-        {isUploadingMedia && (
-          <div className="fixed top-8 right-8 z-50 animate-slide-in-right">
-            <div className="bg-blue-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3">
+    <div
+      className="flex overflow-hidden"
+      style={{ height: "100vh", backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* Upload progress toast */}
+      {isUploadingMedia && (
+        <div className="fixed top-5 right-5 z-[60]">
+          <div
+            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+            style={{
+              backgroundColor: "var(--color-neutral-900)",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.2)",
+              minWidth: "17rem",
+            }}
+          >
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: "#1ab189" }}
+            >
               <FontAwesomeIcon
-                icon={faSpinner}
-                className="animate-spin text-xl"
+                icon={faCloudUpload}
+                className="animate-pulse"
+                style={{ color: "white", fontSize: "0.75rem" }}
               />
-              <div>
-                <p className="font-semibold">Uploading to Cloud...</p>
-                <p className="text-blue-100 text-sm">
-                  Please wait while your file is being uploaded
-                </p>
-              </div>
+            </div>
+            <div>
+              <p
+                className="font-semibold"
+                style={{ fontSize: "0.875rem", color: "white" }}
+              >
+                Uploading to Cloud…
+              </p>
+              <p
+                style={{ fontSize: "0.72rem", color: "rgba(255,255,255,0.6)" }}
+              >
+                Please wait while your file uploads
+              </p>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Main Chat Area - CENTER/LEFT */}
+      <div
+        className="flex-1 flex overflow-hidden"
+        style={{ maxWidth: "1920px", margin: "0 auto", width: "100%" }}
+      >
+        {/* ── Main Chat Area ── */}
         {selectedConversationId ? (
-          <div className="flex-1 flex flex-col bg-white lg:border-r border-neutral-200 overflow-hidden">
-            {/* Chat Header */}
-            <div className="bg-white border-b border-neutral-200 px-6 py-4 flex items-center justify-between flex-shrink-0">
+          <div
+            className="flex-1 flex flex-col overflow-hidden"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              borderRight: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            {/* Chat header */}
+            <div
+              className="flex items-center justify-between flex-shrink-0"
+              style={{
+                padding: "1rem 1.5rem",
+                backgroundColor: "var(--color-neutral-0)",
+                borderBottom: "1px solid var(--color-neutral-200)",
+              }}
+            >
               <div className="flex items-center gap-3">
-                <div className="relative">
+                {/* Avatar */}
+                <div className="relative flex-shrink-0">
                   {currentConversation?.avatar ? (
                     <img
                       src={currentConversation.avatar}
@@ -608,36 +602,65 @@ export default function MessagesPage() {
                     />
                   ) : (
                     <div
-                      className={`w-10 h-10 rounded-full ${
-                        currentConversation?.type === "inquiry"
-                          ? "bg-orange-500"
-                          : currentConversation?.color
-                      } flex items-center justify-center text-white font-semibold`}
+                      className="w-10 h-10 rounded-full flex items-center justify-center font-semibold"
+                      style={{
+                        backgroundColor:
+                          currentConversation?.type === "inquiry"
+                            ? "#f97316"
+                            : (currentConversation?.color ?? "#1ab189"),
+                        color: "white",
+                        fontSize: "0.875rem",
+                      }}
                     >
                       {currentConversation?.initials}
                     </div>
                   )}
-                  {/* ✅ UPDATED: Guests never show online */}
                   {currentConversation?.type === "client" &&
-                    currentConversation?.isOnline && (
-                      <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
+                    currentConversation.isOnline && (
+                      <div
+                        className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2"
+                        style={{
+                          backgroundColor: "#22c55e",
+                          borderColor: "white",
+                        }}
+                      />
                     )}
                 </div>
+
                 <div>
                   <div className="flex items-center gap-2">
-                    <h2 className="font-semibold text-neutral-900">
+                    <h2
+                      className="font-semibold"
+                      style={{
+                        fontSize: "0.9375rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
                       {currentConversation?.name}
                     </h2>
-                    {/* ✅ NEW: Show inquiry badge in header */}
                     {currentConversation?.type === "inquiry" && (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-50 text-orange-700 border border-orange-200">
+                      <span
+                        className="rounded-full font-semibold"
+                        style={{
+                          padding: "0.15rem 0.5rem",
+                          fontSize: "0.65rem",
+                          backgroundColor: "#fff7ed",
+                          border: "1px solid #fed7aa",
+                          color: "#c2410c",
+                        }}
+                      >
                         Guest
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-neutral-500">
+                  <p
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
                     {currentConversation?.type === "inquiry"
-                      ? "Guest inquiry - Not registered"
+                      ? "Guest inquiry · Not registered"
                       : currentConversation?.isOnline
                         ? "Online"
                         : "Offline"}
@@ -645,241 +668,381 @@ export default function MessagesPage() {
                 </div>
               </div>
 
-              {/* ✅ NEW: Show guest info button for inquiries */}
+              {/* Guest info button */}
               {currentConversation?.type === "inquiry" && (
                 <button
-                  onClick={() => setShowGuestInfo(!showGuestInfo)}
-                  className="px-4 py-2 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 transition-colors text-sm font-medium"
+                  onClick={() => setShowGuestInfo((v) => !v)}
+                  className="flex items-center gap-2 rounded-xl font-semibold"
+                  style={{
+                    padding: "0.5rem 0.875rem",
+                    backgroundColor: showGuestInfo
+                      ? "#fff7ed"
+                      : "var(--color-neutral-50)",
+                    border: "1px solid #fed7aa",
+                    color: "#c2410c",
+                    fontSize: "0.8125rem",
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => {
+                    (
+                      e.currentTarget as HTMLButtonElement
+                    ).style.backgroundColor = "#fff7ed";
+                  }}
+                  onMouseLeave={(e) => {
+                    (
+                      e.currentTarget as HTMLButtonElement
+                    ).style.backgroundColor = showGuestInfo
+                      ? "#fff7ed"
+                      : "var(--color-neutral-50)";
+                  }}
                 >
-                  <FontAwesomeIcon icon={faUserCircle} className="mr-2" />
+                  <FontAwesomeIcon
+                    icon={faUserCircle}
+                    style={{ fontSize: "0.8rem" }}
+                  />
                   Guest Info
                 </button>
               )}
             </div>
 
-            {/* ✅ UPDATED: Guest Information Panel */}
+            {/* Guest info panel */}
             {showGuestInfo && currentConversation?.type === "inquiry" && (
-              <div className="bg-orange-50 border-b border-orange-200 px-6 py-4 flex-shrink-0">
-                <h3 className="font-semibold text-orange-900 mb-3 flex items-center gap-2">
-                  <FontAwesomeIcon icon={faUserCircle} />
+              <div
+                className="flex-shrink-0"
+                style={{
+                  backgroundColor: "#fff7ed",
+                  borderBottom: "1px solid #fed7aa",
+                  padding: "1rem 1.5rem",
+                }}
+              >
+                <h3
+                  className="font-semibold flex items-center gap-2 mb-3"
+                  style={{ fontSize: "0.875rem", color: "#9a3412" }}
+                >
+                  <FontAwesomeIcon
+                    icon={faUserCircle}
+                    style={{ fontSize: "0.8rem" }}
+                  />
                   Guest Contact Information
                 </h3>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-sm">
-                    <FontAwesomeIcon
-                      icon={faUserCircle}
-                      className="text-orange-600 w-4"
-                    />
-                    <span className="text-orange-800 font-medium">Name:</span>
-                    <span className="text-orange-900">
-                      {currentConversation.name}
-                    </span>
-                  </div>
-                  {currentConversation.guest_email && (
-                    <div className="flex items-center gap-2 text-sm">
+                <div className="space-y-2 mb-4">
+                  {[
+                    {
+                      icon: faUserCircle,
+                      label: "Name",
+                      value: currentConversation.name,
+                      href: undefined,
+                    },
+                    ...(currentConversation.guest_email
+                      ? [
+                          {
+                            icon: faEnvelope,
+                            label: "Email",
+                            value: currentConversation.guest_email,
+                            href: `mailto:${currentConversation.guest_email}`,
+                          },
+                        ]
+                      : []),
+                    ...(currentConversation.guest_phone
+                      ? [
+                          {
+                            icon: faPhone,
+                            label: "Phone",
+                            value: currentConversation.guest_phone,
+                            href: `tel:${currentConversation.guest_phone}`,
+                          },
+                        ]
+                      : []),
+                  ].map(({ icon, label, value, href }) => (
+                    <div
+                      key={label}
+                      className="flex items-center gap-2"
+                      style={{ fontSize: "0.8125rem" }}
+                    >
                       <FontAwesomeIcon
-                        icon={faEnvelope}
-                        className="text-orange-600 w-4"
+                        icon={icon}
+                        style={{
+                          color: "#ea580c",
+                          fontSize: "0.75rem",
+                          width: "0.875rem",
+                          flexShrink: 0,
+                        }}
                       />
-                      <span className="text-orange-800 font-medium">
-                        Email:
-                      </span>
-                      <a
-                        href={`mailto:${currentConversation.guest_email}`}
-                        className="text-orange-900 hover:underline"
+                      <span
+                        className="font-semibold"
+                        style={{ color: "#9a3412" }}
                       >
-                        {currentConversation.guest_email}
-                      </a>
-                    </div>
-                  )}
-                  {currentConversation.guest_phone && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <FontAwesomeIcon
-                        icon={faPhone}
-                        className="text-orange-600 w-4"
-                      />
-                      <span className="text-orange-800 font-medium">
-                        Phone:
+                        {label}:
                       </span>
-                      <a
-                        href={`tel:${currentConversation.guest_phone}`}
-                        className="text-orange-900 hover:underline"
-                      >
-                        {currentConversation.guest_phone}
-                      </a>
+                      {href ? (
+                        <a
+                          href={href}
+                          style={{ color: "#c2410c", textDecoration: "none" }}
+                          onMouseEnter={(e) => {
+                            (
+                              e.currentTarget as HTMLAnchorElement
+                            ).style.textDecoration = "underline";
+                          }}
+                          onMouseLeave={(e) => {
+                            (
+                              e.currentTarget as HTMLAnchorElement
+                            ).style.textDecoration = "none";
+                          }}
+                        >
+                          {value}
+                        </a>
+                      ) : (
+                        <span style={{ color: "#9a3412" }}>{value}</span>
+                      )}
                     </div>
-                  )}
+                  ))}
                 </div>
 
-                {/* ✅ Email notification info */}
-                <div className="mt-4 bg-white border border-orange-200 rounded-lg p-3">
-                  <div className="flex items-start gap-2">
-                    <FontAwesomeIcon
-                      icon={faEnvelope}
-                      className="text-orange-600 mt-1"
-                    />
-                    <div>
-                      <p className="text-sm font-semibold text-orange-900 mb-1">
-                        📧 Email Notifications Active
-                      </p>
-                      <p className="text-xs text-orange-700">
-                        This guest will receive your replies via email at{" "}
-                        <strong>{currentConversation.guest_email}</strong>. They
-                        can respond by contacting you directly.
-                      </p>
-                    </div>
+                {/* Email notification info */}
+                <div
+                  className="rounded-xl flex items-start gap-3 px-4 py-3"
+                  style={{
+                    backgroundColor: "white",
+                    border: "1px solid #fed7aa",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faEnvelope}
+                    style={{
+                      color: "#ea580c",
+                      fontSize: "0.8rem",
+                      marginTop: "0.1rem",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <div>
+                    <p
+                      className="font-semibold mb-0.5"
+                      style={{ fontSize: "0.8rem", color: "#9a3412" }}
+                    >
+                      📧 Email Notifications Active
+                    </p>
+                    <p style={{ fontSize: "0.72rem", color: "#c2410c" }}>
+                      This guest will receive your replies via email at{" "}
+                      <strong>{currentConversation.guest_email}</strong>. They
+                      can respond by contacting you directly.
+                    </p>
                   </div>
                 </div>
-
-                <p className="text-xs text-orange-700 mt-3 italic">
-                  💡 This user submitted a guest inquiry and hasn't registered
-                  yet.
+                <p
+                  className="mt-3 italic"
+                  style={{ fontSize: "0.72rem", color: "#c2410c" }}
+                >
+                  💡 This user submitted a guest inquiry and hasn&apos;t
+                  registered yet.
                 </p>
               </div>
             )}
 
-            {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            {/* Messages area */}
+            <div
+              className="flex-1 overflow-y-auto"
+              style={{ padding: "1.25rem 1.5rem" }}
+            >
               {messagesLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <FontAwesomeIcon
                     icon={faSpinner}
-                    spin
-                    className="w-8 h-8 text-primary-600"
+                    className="animate-spin"
+                    style={{ fontSize: "2rem", color: "#1ab189" }}
                   />
                 </div>
               ) : messagesError ? (
-                <div className="flex items-center justify-center h-full text-red-500">
-                  Failed to load messages
+                <div className="flex items-center justify-center h-full">
+                  <p style={{ color: "#ef4444", fontSize: "0.875rem" }}>
+                    Failed to load messages
+                  </p>
                 </div>
               ) : messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
-                  <div className="w-20 h-20 bg-neutral-100 rounded-full flex items-center justify-center mb-4">
+                  <div
+                    className="w-16 h-16 rounded-full flex items-center justify-center mb-4"
+                    style={{ backgroundColor: "var(--color-neutral-100)" }}
+                  >
                     <FontAwesomeIcon
                       icon={faPaperPlane}
-                      className="w-8 h-8 text-neutral-400"
+                      style={{
+                        fontSize: "1.5rem",
+                        color: "var(--color-neutral-400)",
+                      }}
                     />
                   </div>
-                  <p className="text-neutral-600 font-medium mb-1">
+                  <p
+                    className="font-semibold mb-1"
+                    style={{ color: "var(--color-neutral-700)" }}
+                  >
                     No messages yet
                   </p>
-                  <p className="text-neutral-500 text-sm">
+                  <p
+                    style={{
+                      fontSize: "0.8125rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
                     {currentConversation?.type === "inquiry"
                       ? "Reply to this guest inquiry to start the conversation"
                       : "Start the conversation by sending a message"}
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-3">
                   {messages.map((message) => {
                     const isMine = message.sender_type === "service_provider";
                     return (
                       <div
                         key={message.id}
-                        className={`flex ${
-                          isMine ? "justify-end" : "justify-start"
-                        }`}
+                        className={`flex ${isMine ? "justify-end" : "justify-start"}`}
                       >
-                        <div
-                          className={`max-w-[70%] ${
-                            isMine ? "items-end" : "items-start"
-                          }`}
-                        >
+                        <div style={{ maxWidth: "70%" }}>
                           {message.type === "text" && (
                             <div
-                              className={`px-4 py-2.5 rounded-2xl ${
-                                isMine
-                                  ? "bg-primary-600 text-white rounded-br-sm"
-                                  : "bg-neutral-100 text-neutral-900 rounded-bl-sm"
-                              }`}
+                              className="whitespace-pre-wrap break-words"
+                              style={{
+                                padding: "0.625rem 1rem",
+                                borderRadius: "1rem",
+                                borderBottomRightRadius: isMine
+                                  ? "0.25rem"
+                                  : "1rem",
+                                borderBottomLeftRadius: isMine
+                                  ? "1rem"
+                                  : "0.25rem",
+                                backgroundColor: isMine
+                                  ? "#1ab189"
+                                  : "var(--color-neutral-100)",
+                                color: isMine
+                                  ? "white"
+                                  : "var(--color-neutral-900)",
+                                fontSize: "0.875rem",
+                                lineHeight: 1.5,
+                              }}
                             >
-                              <p className="body-regular whitespace-pre-wrap break-words">
-                                {message.content}
-                              </p>
+                              {message.content}
                             </div>
                           )}
 
                           {message.type === "image" && (
                             <div
-                              className={`rounded-2xl overflow-hidden ${
-                                isMine ? "rounded-br-sm" : "rounded-bl-sm"
-                              }`}
+                              style={{
+                                borderRadius: "1rem",
+                                overflow: "hidden",
+                                borderBottomRightRadius: isMine
+                                  ? "0.25rem"
+                                  : "1rem",
+                                borderBottomLeftRadius: isMine
+                                  ? "1rem"
+                                  : "0.25rem",
+                              }}
                             >
                               {message.content && (
                                 <div
-                                  className={`px-4 py-2.5 ${
-                                    isMine
-                                      ? "bg-primary-600 text-white"
-                                      : "bg-neutral-100 text-neutral-900"
-                                  }`}
+                                  style={{
+                                    padding: "0.5rem 1rem",
+                                    backgroundColor: isMine
+                                      ? "#1ab189"
+                                      : "var(--color-neutral-100)",
+                                    color: isMine
+                                      ? "white"
+                                      : "var(--color-neutral-900)",
+                                    fontSize: "0.875rem",
+                                  }}
                                 >
-                                  <p className="body-regular">
-                                    {message.content}
-                                  </p>
+                                  {message.content}
                                 </div>
                               )}
-                              <div className="relative">
-                                {message.mediaUrl ? (
-                                  <img
-                                    src={message.mediaUrl}
-                                    alt="Shared image"
-                                    className="max-w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
-                                    onClick={() =>
-                                      window.open(message.mediaUrl!, "_blank")
-                                    }
+                              {message.mediaUrl ? (
+                                <img
+                                  src={message.mediaUrl}
+                                  alt="Shared image"
+                                  className="max-w-full h-auto cursor-pointer"
+                                  style={{ display: "block" }}
+                                  onClick={() =>
+                                    window.open(message.mediaUrl!, "_blank")
+                                  }
+                                  onMouseEnter={(e) => {
+                                    (
+                                      e.currentTarget as HTMLImageElement
+                                    ).style.opacity = "0.9";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (
+                                      e.currentTarget as HTMLImageElement
+                                    ).style.opacity = "1";
+                                  }}
+                                />
+                              ) : (
+                                <div
+                                  className="w-64 h-48 flex items-center justify-center"
+                                  style={{
+                                    backgroundColor: "var(--color-neutral-200)",
+                                  }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faImage}
+                                    style={{
+                                      fontSize: "3rem",
+                                      color: "var(--color-neutral-400)",
+                                    }}
                                   />
-                                ) : (
-                                  <div className="w-64 h-48 bg-neutral-200 flex items-center justify-center">
-                                    <FontAwesomeIcon
-                                      icon={faImage}
-                                      className="w-12 h-12 text-neutral-400"
-                                    />
-                                  </div>
-                                )}
-                              </div>
+                                </div>
+                              )}
                             </div>
                           )}
 
                           {message.type === "video" && (
                             <div
-                              className={`rounded-2xl overflow-hidden ${
-                                isMine ? "rounded-br-sm" : "rounded-bl-sm"
-                              }`}
+                              style={{
+                                borderRadius: "1rem",
+                                overflow: "hidden",
+                                borderBottomRightRadius: isMine
+                                  ? "0.25rem"
+                                  : "1rem",
+                                borderBottomLeftRadius: isMine
+                                  ? "1rem"
+                                  : "0.25rem",
+                              }}
                             >
                               {message.content && (
                                 <div
-                                  className={`px-4 py-2.5 ${
-                                    isMine
-                                      ? "bg-primary-600 text-white"
-                                      : "bg-neutral-100 text-neutral-900"
-                                  }`}
+                                  style={{
+                                    padding: "0.5rem 1rem",
+                                    backgroundColor: isMine
+                                      ? "#1ab189"
+                                      : "var(--color-neutral-100)",
+                                    color: isMine
+                                      ? "white"
+                                      : "var(--color-neutral-900)",
+                                    fontSize: "0.875rem",
+                                  }}
                                 >
-                                  <p className="body-regular">
-                                    {message.content}
-                                  </p>
+                                  {message.content}
                                 </div>
                               )}
                               <video
-                                src={message.mediaUrl || ""}
+                                src={message.mediaUrl ?? ""}
                                 controls
                                 className="max-w-full h-auto"
                               />
                             </div>
                           )}
 
+                          {/* Timestamp + status */}
                           <div
-                            className={`flex items-center gap-1 mt-1 ${
-                              isMine ? "justify-end" : "justify-start"
-                            }`}
+                            className={`flex items-center gap-1 mt-1 ${isMine ? "justify-end" : "justify-start"}`}
                           >
-                            <span className="text-xs text-neutral-500">
+                            <span
+                              style={{
+                                fontSize: "0.65rem",
+                                color: "var(--color-neutral-400)",
+                              }}
+                            >
                               {formatTime(message.timestamp)}
                             </span>
-                            {isMine && (
-                              <span className="text-neutral-500">
-                                {getMessageStatus(message.status)}
-                              </span>
-                            )}
+                            {isMine && getMessageStatus(message.status)}
                           </div>
                         </div>
                       </div>
@@ -890,305 +1053,578 @@ export default function MessagesPage() {
               )}
             </div>
 
-            {/* Media Preview */}
+            {/* Media preview */}
             {showMediaPreview && previewFile && (
-              <div className="px-6 py-3 bg-neutral-50 border-t border-neutral-200 flex-shrink-0">
-                <div className="flex items-center gap-3 bg-white rounded-lg p-3 border border-neutral-200">
-                  <div className="relative">
+              <div
+                className="flex-shrink-0"
+                style={{
+                  padding: "0.75rem 1.5rem",
+                  borderTop: "1px solid var(--color-neutral-200)",
+                  backgroundColor: "var(--color-neutral-50)",
+                }}
+              >
+                <div
+                  className="flex items-center gap-3 rounded-xl"
+                  style={{
+                    padding: "0.75rem",
+                    backgroundColor: "var(--color-neutral-0)",
+                    border: "1px solid var(--color-neutral-200)",
+                  }}
+                >
+                  {/* Thumbnail */}
+                  <div className="relative flex-shrink-0">
                     {previewFile.type.startsWith("image") ? (
                       <img
                         src={previewFile.url}
                         alt="Preview"
-                        className="w-12 h-12 rounded object-cover"
+                        className="w-12 h-12 rounded-lg object-cover"
                       />
                     ) : (
-                      <div className="w-12 h-12 bg-neutral-100 rounded flex items-center justify-center">
+                      <div
+                        className="w-12 h-12 rounded-lg flex items-center justify-center"
+                        style={{ backgroundColor: "var(--color-neutral-100)" }}
+                      >
                         <FontAwesomeIcon
                           icon={faVideo}
-                          className="w-6 h-6 text-neutral-600"
+                          style={{
+                            fontSize: "1.25rem",
+                            color: "var(--color-neutral-600)",
+                          }}
                         />
                       </div>
                     )}
-
                     {previewFile.uploadStatus &&
                       previewFile.uploadStatus !== "pending" && (
-                        <div className="absolute inset-0 bg-neutral-900/70 rounded flex items-center justify-center">
+                        <div
+                          className="absolute inset-0 rounded-lg flex items-center justify-center"
+                          style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+                        >
                           {previewFile.uploadStatus === "uploading" && (
                             <FontAwesomeIcon
                               icon={faSpinner}
-                              className="text-white text-lg animate-spin"
+                              className="animate-spin"
+                              style={{ color: "white", fontSize: "1rem" }}
                             />
                           )}
                           {previewFile.uploadStatus === "uploaded" && (
                             <FontAwesomeIcon
                               icon={faCheck}
-                              className="text-green-400 text-lg"
+                              style={{ color: "#86efac", fontSize: "1rem" }}
                             />
                           )}
                           {previewFile.uploadStatus === "failed" && (
                             <FontAwesomeIcon
                               icon={faTimes}
-                              className="text-red-400 text-lg"
+                              style={{ color: "#f87171", fontSize: "1rem" }}
                             />
                           )}
                         </div>
                       )}
                   </div>
 
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-neutral-900">
+                  <div className="flex-1 min-w-0">
+                    <p
+                      className="font-semibold truncate"
+                      style={{
+                        fontSize: "0.8125rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
                       {previewFile.name}
                     </p>
-                    <p className="text-xs text-neutral-500">
+                    <p
+                      style={{
+                        fontSize: "0.72rem",
+                        color: "var(--color-neutral-500)",
+                      }}
+                    >
                       {previewFile.type.startsWith("image") ? "Image" : "Video"}
                       {previewFile.uploadStatus === "uploading" &&
-                        " - Uploading..."}
+                        " · Uploading…"}
                       {previewFile.uploadStatus === "uploaded" &&
-                        " - Uploaded!"}
+                        " · Uploaded!"}
                       {previewFile.uploadStatus === "failed" &&
-                        ` - ${previewFile.error || "Upload failed"}`}
+                        ` · ${previewFile.error ?? "Upload failed"}`}
                     </p>
                   </div>
+
                   <button
                     onClick={cancelPreview}
                     disabled={isUploadingMedia}
-                    className="p-2 hover:bg-neutral-100 rounded-lg transition-colors disabled:opacity-50"
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: isUploadingMedia ? "not-allowed" : "pointer",
+                      padding: "0.375rem",
+                      color: "var(--color-neutral-500)",
+                      opacity: isUploadingMedia ? 0.4 : 1,
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        "var(--color-neutral-900)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        "var(--color-neutral-500)";
+                    }}
                   >
                     <FontAwesomeIcon
                       icon={faTimes}
-                      className="w-4 h-4 text-neutral-600"
+                      style={{ fontSize: "0.875rem" }}
                     />
                   </button>
                 </div>
               </div>
             )}
 
-            {/* Message Input */}
-            <div className="bg-white border-t border-neutral-200 px-6 py-4 flex-shrink-0">
-              <div className="flex items-end gap-3">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*,video/*"
-                  className="hidden"
-                  onChange={handleFileSelect}
+            {/* Message input */}
+            <div
+              className="flex-shrink-0 flex items-end gap-3"
+              style={{
+                padding: "0.875rem 1.5rem",
+                borderTop: "1px solid var(--color-neutral-200)",
+                backgroundColor: "var(--color-neutral-0)",
+              }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,video/*"
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+
+              {/* Attach button */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sendMessageMutation.isPending || isUploadingMedia}
+                title="Attach image or video"
+                style={{
+                  width: "2.5rem",
+                  height: "2.5rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: "0.75rem",
+                  border: "1px solid var(--color-neutral-200)",
+                  backgroundColor: "transparent",
+                  cursor: "pointer",
+                  color: "var(--color-neutral-600)",
+                  flexShrink: 0,
+                  opacity:
+                    sendMessageMutation.isPending || isUploadingMedia ? 0.4 : 1,
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "var(--color-neutral-50)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "transparent";
+                }}
+              >
+                <FontAwesomeIcon
+                  icon={faPlus}
+                  style={{ fontSize: "0.875rem" }}
                 />
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={sendMessageMutation.isPending || isUploadingMedia}
-                  className="p-2.5 hover:bg-neutral-50 rounded-lg transition-colors text-neutral-600 flex-shrink-0 disabled:opacity-50"
-                  title="Add image or video"
-                >
-                  <FontAwesomeIcon icon={faPlus} className="w-5 h-5" />
-                </button>
+              </button>
 
-                <div className="flex-1">
-                  <textarea
-                    value={messageInput}
-                    onChange={(e) => setMessageInput(e.target.value)}
-                    onKeyPress={(e) => {
-                      if (
-                        e.key === "Enter" &&
-                        !e.shiftKey &&
-                        !sendMessageMutation.isPending &&
-                        !isUploadingMedia
-                      ) {
-                        e.preventDefault();
-                        handleSendMessage();
-                      }
-                    }}
-                    disabled={sendMessageMutation.isPending || isUploadingMedia}
-                    placeholder={
-                      currentConversation?.type === "inquiry"
-                        ? "Reply to guest inquiry..."
-                        : "Type a message..."
-                    }
-                    className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50 resize-none"
-                    rows={1}
-                  />
-                </div>
+              {/* Textarea */}
+              <textarea
+                value={messageInput}
+                onChange={(e) => setMessageInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    !sendMessageMutation.isPending &&
+                    !isUploadingMedia
+                  ) {
+                    e.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
+                disabled={sendMessageMutation.isPending || isUploadingMedia}
+                placeholder={
+                  currentConversation?.type === "inquiry"
+                    ? "Reply to guest inquiry…"
+                    : "Type a message…"
+                }
+                rows={1}
+                style={{
+                  flex: 1,
+                  padding: "0.625rem 1rem",
+                  fontFamily: "var(--font-sans)",
+                  fontSize: "0.875rem",
+                  color: "var(--color-neutral-900)",
+                  backgroundColor: "var(--color-neutral-50)",
+                  border: "1px solid var(--color-neutral-200)",
+                  borderRadius: "0.75rem",
+                  outline: "none",
+                  resize: "none",
+                  transition: "border-color 150ms, box-shadow 150ms",
+                  opacity:
+                    sendMessageMutation.isPending || isUploadingMedia ? 0.6 : 1,
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = "#1ab189";
+                  e.currentTarget.style.boxShadow =
+                    "0 0 0 3px rgba(26,177,137,0.12)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor =
+                    "var(--color-neutral-200)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
+              />
 
-                <button
-                  onClick={handleSendMessage}
-                  disabled={
+              {/* Send button */}
+              <button
+                onClick={handleSendMessage}
+                disabled={
+                  sendMessageMutation.isPending ||
+                  isUploadingMedia ||
+                  (!messageInput.trim() && !previewFile)
+                }
+                className="flex items-center gap-2 font-semibold rounded-xl flex-shrink-0"
+                style={{
+                  padding: "0.625rem 1.25rem",
+                  backgroundColor: "#1ab189",
+                  color: "white",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: "0.875rem",
+                  transition: "opacity 150ms",
+                  opacity:
                     sendMessageMutation.isPending ||
                     isUploadingMedia ||
                     (!messageInput.trim() && !previewFile)
-                  }
-                  className="px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 flex-shrink-0"
-                >
-                  {isUploadingMedia ? (
-                    <>
-                      <FontAwesomeIcon
-                        icon={faCloudUpload}
-                        className="animate-pulse"
-                      />
-                      Uploading...
-                    </>
-                  ) : sendMessageMutation.isPending ? (
-                    <>
-                      <FontAwesomeIcon icon={faSpinner} spin />
-                      Sending...
-                    </>
-                  ) : (
-                    <>
-                      <FontAwesomeIcon icon={faPaperPlane} />
-                      Send
-                    </>
-                  )}
-                </button>
-              </div>
+                      ? 0.5
+                      : 1,
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "#159e7a";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "#1ab189";
+                }}
+              >
+                {isUploadingMedia ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faCloudUpload}
+                      className="animate-pulse"
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Uploading…
+                  </>
+                ) : sendMessageMutation.isPending ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faSpinner}
+                      className="animate-spin"
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Sending…
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faPaperPlane}
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Send
+                  </>
+                )}
+              </button>
             </div>
           </div>
         ) : (
-          <div className="flex-1 hidden lg:flex items-center justify-center bg-neutral-50">
-            <div className="text-center">
-              <div className="w-24 h-24 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <FontAwesomeIcon
-                  icon={faPaperPlane}
-                  className="w-10 h-10 text-neutral-400"
-                />
-              </div>
-              <h3 className="heading-3 text-neutral-900 mb-2">
-                Select a conversation
-              </h3>
-              <p className="body-regular text-neutral-600">
-                Choose a conversation from the list to start messaging
-              </p>
+          /* Empty state */
+          <div
+            className="flex-1 hidden lg:flex flex-col items-center justify-center"
+            style={{ backgroundColor: "var(--color-neutral-50)" }}
+          >
+            <div
+              className="w-20 h-20 rounded-full flex items-center justify-center mb-5"
+              style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+            >
+              <FontAwesomeIcon
+                icon={faPaperPlane}
+                style={{ fontSize: "2rem", color: "#1ab189" }}
+              />
             </div>
+            <h3
+              className="font-bold mb-2"
+              style={{ fontSize: "1.25rem", color: "var(--color-neutral-900)" }}
+            >
+              Select a conversation
+            </h3>
+            <p
+              style={{
+                fontSize: "0.875rem",
+                color: "var(--color-neutral-500)",
+              }}
+            >
+              Choose a conversation from the list to start messaging
+            </p>
           </div>
         )}
 
-        {/* Sidebar - Conversations List (RIGHT SIDE) */}
-        <div className="w-full lg:w-[400px] bg-white flex flex-col border-l border-neutral-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-neutral-200 flex-shrink-0">
+        {/* ── Sidebar: Conversations List ── */}
+        <div
+          className="flex flex-col overflow-hidden flex-shrink-0"
+          style={{
+            width: "clamp(20rem, 26rem, 28rem)",
+            backgroundColor: "var(--color-neutral-0)",
+            borderLeft: "1px solid var(--color-neutral-200)",
+          }}
+        >
+          {/* Sidebar header */}
+          <div
+            className="flex-shrink-0"
+            style={{
+              padding: "1.25rem 1.5rem",
+              borderBottom: "1px solid var(--color-neutral-200)",
+            }}
+          >
             <div className="flex items-center justify-between mb-4">
-              <h2 className="heading-3 text-neutral-900">Conversations</h2>
-              {unreadData && unreadData.total_unread > 0 && (
-                <span className="bg-red-500 text-white px-2.5 py-1 rounded-full text-xs font-semibold">
-                  {unreadData.total_unread}
+              <h2
+                className="font-bold"
+                style={{
+                  fontSize: "1.125rem",
+                  color: "var(--color-neutral-900)",
+                }}
+              >
+                Conversations
+              </h2>
+              {(unreadData?.total_unread ?? 0) > 0 && (
+                <span
+                  className="font-bold rounded-full"
+                  style={{
+                    padding: "0.2rem 0.6rem",
+                    backgroundColor: "#ef4444",
+                    color: "white",
+                    fontSize: "0.7rem",
+                  }}
+                >
+                  {unreadData!.total_unread}
                 </span>
               )}
             </div>
 
+            {/* Search */}
             <div className="relative">
               <FontAwesomeIcon
                 icon={faSearch}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 w-4 h-4"
+                className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                style={{
+                  color: "var(--color-neutral-400)",
+                  fontSize: "0.75rem",
+                }}
               />
               <input
                 type="text"
-                placeholder="Search conversations..."
+                placeholder="Search conversations…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-small"
+                style={{
+                  width: "100%",
+                  padding: "0.5rem 1rem 0.5rem 2.125rem",
+                  fontFamily: "var(--font-sans)",
+                  fontSize: "0.8125rem",
+                  color: "var(--color-neutral-900)",
+                  backgroundColor: "var(--color-neutral-50)",
+                  border: "1px solid var(--color-neutral-200)",
+                  borderRadius: "0.625rem",
+                  outline: "none",
+                  transition: "border-color 150ms, box-shadow 150ms",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = "#1ab189";
+                  e.currentTarget.style.boxShadow =
+                    "0 0 0 3px rgba(26,177,137,0.12)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor =
+                    "var(--color-neutral-200)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
               />
             </div>
           </div>
 
+          {/* Conversation list */}
           <div className="flex-1 overflow-y-auto">
             {filteredConversations.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-6">
                 <FontAwesomeIcon
                   icon={faSearch}
-                  className="w-12 h-12 text-neutral-300 mb-3"
+                  style={{
+                    fontSize: "2.5rem",
+                    color: "var(--color-neutral-300)",
+                    marginBottom: "0.75rem",
+                  }}
                 />
-                <p className="text-neutral-600 font-medium">
+                <p
+                  className="font-semibold"
+                  style={{ color: "var(--color-neutral-600)" }}
+                >
                   No conversations found
                 </p>
                 {searchQuery && (
-                  <p className="text-neutral-500 text-sm mt-1">
+                  <p
+                    className="mt-1"
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
                     Try a different search term
                   </p>
                 )}
               </div>
             ) : (
-              filteredConversations.map((conversation) => (
-                <div
-                  key={conversation.id}
-                  onClick={() => handleConversationSelect(conversation.id)}
-                  className={`px-6 py-4 border-b border-neutral-100 cursor-pointer transition-colors hover:bg-neutral-50 ${
-                    selectedConversationId === conversation.id
-                      ? "bg-primary-50 border-r-4 border-r-primary-600"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="relative flex-shrink-0">
-                      {conversation.avatar ? (
-                        <img
-                          src={conversation.avatar}
-                          alt={conversation.name}
-                          className="w-12 h-12 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div
-                          className={`w-12 h-12 rounded-full ${
-                            conversation.type === "inquiry"
-                              ? "bg-orange-500"
-                              : conversation.color
-                          } flex items-center justify-center text-white font-semibold`}
-                        >
-                          {conversation.initials}
-                        </div>
-                      )}
-                      {conversation.type === "client" &&
-                        conversation.isOnline && (
-                          <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
+              filteredConversations.map((conv) => {
+                const isSelected = selectedConversationId === conv.id;
+                const isGuest = conv.type === "inquiry";
+                return (
+                  <div
+                    key={conv.id}
+                    onClick={() => handleConversationSelect(conv.id)}
+                    style={{
+                      padding: "0.875rem 1.25rem",
+                      borderBottom: "1px solid var(--color-neutral-100)",
+                      cursor: "pointer",
+                      backgroundColor: isSelected
+                        ? "rgba(26,177,137,0.06)"
+                        : "transparent",
+                      borderRight: isSelected
+                        ? "3px solid #1ab189"
+                        : "3px solid transparent",
+                      transition: "background-color 120ms",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isSelected)
+                        (
+                          e.currentTarget as HTMLDivElement
+                        ).style.backgroundColor = "var(--color-neutral-50)";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isSelected)
+                        (
+                          e.currentTarget as HTMLDivElement
+                        ).style.backgroundColor = "transparent";
+                    }}
+                  >
+                    <div className="flex items-start gap-3">
+                      {/* Avatar */}
+                      <div className="relative flex-shrink-0">
+                        {conv.avatar ? (
+                          <img
+                            src={conv.avatar}
+                            alt={conv.name}
+                            className="w-12 h-12 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div
+                            className="w-12 h-12 rounded-full flex items-center justify-center font-bold"
+                            style={{
+                              backgroundColor: isGuest ? "#f97316" : conv.color,
+                              color: "white",
+                              fontSize: "0.875rem",
+                            }}
+                          >
+                            {conv.initials}
+                          </div>
                         )}
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between mb-1">
-                        <h3 className="font-semibold text-neutral-900 truncate">
-                          {conversation.name}
-                        </h3>
-                        <span className="text-xs text-neutral-500 flex-shrink-0 ml-2">
-                          {conversation.lastMessageTime}
-                        </span>
+                        {conv.type === "client" && conv.isOnline && (
+                          <div
+                            className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2"
+                            style={{
+                              backgroundColor: "#22c55e",
+                              borderColor: "white",
+                            }}
+                          />
+                        )}
                       </div>
-                      <p className="text-sm text-neutral-600 truncate mb-2">
-                        {conversation.lastMessage}
-                      </p>
-                      <div className="flex items-center justify-between gap-2">
-                        {conversation.unreadCount > 0 && (
-                          <span className="bg-primary-600 text-white px-2 py-0.5 rounded-full text-xs font-semibold">
-                            {conversation.unreadCount}
+
+                      <div className="flex-1 min-w-0">
+                        {/* Name + time */}
+                        <div className="flex items-start justify-between mb-0.5">
+                          <h3
+                            className="font-semibold truncate"
+                            style={{
+                              fontSize: "0.875rem",
+                              color: "var(--color-neutral-900)",
+                            }}
+                          >
+                            {conv.name}
+                          </h3>
+                          <span
+                            style={{
+                              fontSize: "0.7rem",
+                              color: "var(--color-neutral-400)",
+                              flexShrink: 0,
+                              marginLeft: "0.5rem",
+                            }}
+                          >
+                            {conv.lastMessageTime}
                           </span>
-                        )}
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-xs font-medium border ${getTypeBadgeColor(
-                            conversation.type,
-                          )} ml-auto`}
+                        </div>
+
+                        {/* Last message */}
+                        <p
+                          className="truncate mb-2"
+                          style={{
+                            fontSize: "0.78rem",
+                            color: "var(--color-neutral-500)",
+                          }}
                         >
-                          {getTypeBadge(conversation.type)}
-                        </span>
+                          {conv.lastMessage}
+                        </p>
+
+                        {/* Badges */}
+                        <div className="flex items-center gap-2">
+                          {conv.unreadCount > 0 && (
+                            <span
+                              className="font-bold rounded-full"
+                              style={{
+                                padding: "0.1rem 0.45rem",
+                                backgroundColor: "#1ab189",
+                                color: "white",
+                                fontSize: "0.6rem",
+                              }}
+                            >
+                              {conv.unreadCount}
+                            </span>
+                          )}
+                          <span
+                            className="rounded-full font-semibold ml-auto"
+                            style={{
+                              padding: "0.15rem 0.5rem",
+                              fontSize: "0.63rem",
+                              backgroundColor: isGuest
+                                ? "#fff7ed"
+                                : "rgba(26,177,137,0.08)",
+                              border: `1px solid ${isGuest ? "#fed7aa" : "rgba(26,177,137,0.25)"}`,
+                              color: isGuest ? "#c2410c" : "#1ab189",
+                            }}
+                          >
+                            {isGuest ? "Guest Inquiry" : "Registered Client"}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
       </div>
-
-      <style jsx>{`
-        @keyframes slide-in-right {
-          from {
-            transform: translateX(100%);
-            opacity: 0;
-          }
-          to {
-            transform: translateX(0);
-            opacity: 1;
-          }
-        }
-
-        .animate-slide-in-right {
-          animation: slide-in-right 0.3s ease-out;
-        }
-      `}</style>
     </div>
   );
 }

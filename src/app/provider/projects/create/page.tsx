@@ -7,7 +7,6 @@ import {
   faTrash,
   faCalendar,
   faMapMarkerAlt,
-  faUser,
   faFileAlt,
   faBriefcase,
   faCheckCircle,
@@ -31,10 +30,9 @@ import { getAccessToken } from "@/lib/auth";
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
-// ==================================================================================
-// TYPES & INTERFACES
-// ==================================================================================
-
+/* ─────────────────────────────────────────── */
+/* Types                                        */
+/* ─────────────────────────────────────────── */
 interface Milestone {
   id: string;
   title: string;
@@ -86,37 +84,37 @@ interface AssignEmployeePayload {
   assigned_date: string;
 }
 
-// ==================================================================================
-// API FUNCTIONS
-// ==================================================================================
+interface CreatedProject {
+  id: number;
+}
 
+/* ─────────────────────────────────────────── */
+/* API helpers                                  */
+/* ─────────────────────────────────────────── */
 async function fetchEmployees(): Promise<{ results: Employee[] }> {
   const token = getAccessToken();
   if (!token) throw new Error("No authentication token found");
-
-  const response = await fetch(`${API_BASE_URL}/api/v1/employees/`, {
-    method: "GET",
+  const res = await fetch(`${API_BASE_URL}/api/v1/employees/`, {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     credentials: "include",
   });
-
-  if (!response.ok) throw new Error("Failed to fetch employees");
-
-  const data = await response.json();
-  return Array.isArray(data) ? { results: data } : data;
+  if (!res.ok) throw new Error("Failed to fetch employees");
+  const data: unknown = await res.json();
+  return Array.isArray(data)
+    ? { results: data as Employee[] }
+    : (data as { results: Employee[] });
 }
 
-async function assignEmployeeToProject(
+async function assignEmployee(
   projectId: number,
-  payload: AssignEmployeePayload
-): Promise<any> {
+  payload: AssignEmployeePayload,
+): Promise<void> {
   const token = getAccessToken();
   if (!token) throw new Error("No authentication token found");
-
-  const response = await fetch(
+  const res = await fetch(
     `${API_BASE_URL}/api/v1/projects/${projectId}/employees/assign/`,
     {
       method: "POST",
@@ -126,31 +124,225 @@ async function assignEmployeeToProject(
       },
       credentials: "include",
       body: JSON.stringify(payload),
-    }
+    },
   );
-
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(
-      errorData.detail || errorData.error || "Failed to assign employee"
-    );
+  if (!res.ok) {
+    const err = (await res.json()) as { detail?: string; error?: string };
+    throw new Error(err.detail ?? err.error ?? "Failed to assign employee");
   }
-
-  return response.json();
 }
 
-// ==================================================================================
-// MAIN COMPONENT
-// ==================================================================================
+/* ─────────────────────────────────────────── */
+/* Constants                                    */
+/* ─────────────────────────────────────────── */
+const MILESTONE_STATUS_STYLES: Record<string, { bg: string; color: string }> = {
+  pending: { bg: "#fefce8", color: "#a16207" },
+  in_progress: { bg: "#eff6ff", color: "#1d4ed8" },
+  completed: { bg: "rgba(26,177,137,0.1)", color: "#1ab189" },
+};
 
+const MILESTONE_LABELS: Record<string, string> = {
+  pending: "Pending",
+  in_progress: "In Progress",
+  completed: "Completed",
+};
+
+const EMPLOYEE_COLORS = [
+  "#1ab189",
+  "#3b82f6",
+  "#f59e0b",
+  "#8b5cf6",
+  "#10b981",
+  "#06b6d4",
+  "#f97316",
+  "#ec4899",
+  "#6366f1",
+  "#14b8a6",
+];
+
+const getMilestoneStyle = (s: string) =>
+  MILESTONE_STATUS_STYLES[s] ?? {
+    bg: "var(--color-neutral-100)",
+    color: "var(--color-neutral-600)",
+  };
+const getMilestoneIcon = (s: string) =>
+  s === "completed"
+    ? faCheck
+    : s === "in_progress"
+      ? faClock
+      : faExclamationTriangle;
+const employeeColor = (id: number) =>
+  EMPLOYEE_COLORS[id % EMPLOYEE_COLORS.length];
+
+const formatCurrency = (n: number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(n);
+
+/* ─────────────────────────────────────────── */
+/* Shared input style                           */
+/* ─────────────────────────────────────────── */
+const baseInput: React.CSSProperties = {
+  width: "100%",
+  padding: "0.625rem 1rem",
+  fontFamily: "var(--font-sans)",
+  fontSize: "0.875rem",
+  color: "var(--color-neutral-900)",
+  backgroundColor: "var(--color-neutral-0)",
+  border: "1px solid var(--color-neutral-200)",
+  borderRadius: "0.625rem",
+  outline: "none",
+  transition: "border-color 150ms, box-shadow 150ms",
+  appearance: "none" as const,
+};
+
+function onFocusIn(
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+  >,
+) {
+  e.currentTarget.style.borderColor = "#1ab189";
+  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(26,177,137,0.12)";
+}
+function onFocusOut(
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+  >,
+) {
+  e.currentTarget.style.borderColor = "var(--color-neutral-200)";
+  e.currentTarget.style.boxShadow = "none";
+}
+
+/* ─────────────────────────────────────────── */
+/* Small reusable UI pieces                    */
+/* ─────────────────────────────────────────── */
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label
+        className="block font-semibold mb-1.5"
+        style={{ fontSize: "0.8rem", color: "var(--color-neutral-700)" }}
+      >
+        {label}
+        {required && <span style={{ color: "#ef4444" }}> *</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function SectionCard({
+  title,
+  icon,
+  extra,
+  children,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  extra?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="rounded-2xl"
+      style={{
+        backgroundColor: "var(--color-neutral-0)",
+        border: "1px solid var(--color-neutral-200)",
+        padding: "1.5rem",
+      }}
+    >
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-3">
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+          >
+            <span style={{ color: "#1ab189", fontSize: "0.875rem" }}>
+              {icon}
+            </span>
+          </div>
+          <h2
+            className="font-semibold"
+            style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+          >
+            {title}
+          </h2>
+        </div>
+        {extra}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function SummaryRow({
+  icon,
+  label,
+  value,
+  border = true,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  border?: boolean;
+}) {
+  return (
+    <div
+      className="flex items-start gap-3"
+      style={{
+        paddingBottom: border ? "0.875rem" : 0,
+        marginBottom: border ? "0.875rem" : 0,
+        borderBottom: border ? "1px solid var(--color-neutral-100)" : "none",
+      }}
+    >
+      <span
+        style={{
+          color: "#1ab189",
+          marginTop: "2px",
+          fontSize: "0.8rem",
+          flexShrink: 0,
+        }}
+      >
+        {icon}
+      </span>
+      <div className="flex-1 min-w-0">
+        <p
+          className="mb-0.5 font-semibold tracking-wider uppercase"
+          style={{ fontSize: "0.65rem", color: "var(--color-neutral-400)" }}
+        >
+          {label}
+        </p>
+        <p
+          className="font-semibold truncate"
+          style={{ fontSize: "0.85rem", color: "var(--color-neutral-900)" }}
+        >
+          {value}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────── */
+/* Component                                   */
+/* ─────────────────────────────────────────── */
 export default function CreateProjectPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  // Form State
+  /* Form state */
   const [projectName, setProjectName] = useState("");
   const [location, setLocation] = useState("");
-  const [clientName, setClientName] = useState("");
   const [projectBudget, setProjectBudget] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -162,10 +354,10 @@ export default function CreateProjectPage() {
   const [selectedEmployees, setSelectedEmployees] = useState<number[]>([]);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
 
-  // Modal State
+  /* Milestone modal state */
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState<Milestone | null>(
-    null
+    null,
   );
   const [milestoneForm, setMilestoneForm] = useState<MilestoneFormData>({
     title: "",
@@ -175,250 +367,140 @@ export default function CreateProjectPage() {
     status: "pending",
   });
   const [viewingMilestone, setViewingMilestone] = useState<Milestone | null>(
-    null
+    null,
   );
 
-  // UI State
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
-  const [successMessage, setSuccessMessage] = useState("");
-  const [createdProjectId, setCreatedProjectId] = useState<number | null>(null);
+  /* UI state */
+  const [showToast, setShowToast] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
   const [isCreatingMilestones, setIsCreatingMilestones] = useState(false);
   const [isAssigningEmployees, setIsAssigningEmployees] = useState(false);
 
-  // ==================================================================================
-  // QUERIES
-  // ==================================================================================
-
-  // Fetch all employees
+  /* ── Queries ── */
   const {
     data: employeesData,
-    isLoading: employeesLoading,
-    isError: employeesError,
+    isLoading: empLoading,
+    isError: empError,
   } = useQuery({
     queryKey: ["employees"],
     queryFn: fetchEmployees,
   });
+  const employees = employeesData?.results ?? [];
 
-  const employees = employeesData?.results || [];
+  /* ── Helpers ── */
+  const notify = (msg: string) => {
+    setToastMsg(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
 
-  // ==================================================================================
-  // MUTATIONS
-  // ==================================================================================
+  const assignEmployees = async (projectId: number) => {
+    setIsAssigningEmployees(true);
+    const date = startDate || new Date().toISOString().split("T")[0];
+    const results = await Promise.allSettled(
+      selectedEmployees.map((id) =>
+        assignEmployee(projectId, { employee_id: id, assigned_date: date }),
+      ),
+    );
+    setIsAssigningEmployees(false);
+    return results.filter((r) => r.status === "fulfilled").length;
+  };
 
-  // Create project mutation
-  const createProjectMutation = useMutation({
-    mutationFn: async (payload: CreateProjectPayload) => {
-      try {
-        console.log("📤 Sending to API:", payload);
-        const response = await api.post("/api/v1/projects/create/", payload);
-        console.log("✅ API Response:", response);
-        return response;
-      } catch (error: any) {
-        console.error("❌ API Error:", error);
-        console.error("❌ Error status:", error.status);
-        console.error("❌ Error data:", error.data);
+  const createMilestones = async (projectId: number) => {
+    setIsCreatingMilestones(true);
+    const results = await Promise.allSettled(
+      milestones.map((m) => {
+        const payload: CreateMilestonePayload = {
+          title: m.title,
+          description: m.description,
+          target_date: m.dueDate,
+          status: m.status,
+        };
+        return api.post(
+          `/api/v1/projects/${projectId}/milestones/create/`,
+          payload,
+        );
+      }),
+    );
+    setIsCreatingMilestones(false);
+    queryClient.invalidateQueries({ queryKey: ["projects"] });
+    queryClient.invalidateQueries({ queryKey: ["all-milestones"] });
+    return results.filter((r) => r.status === "fulfilled").length;
+  };
 
-        // Log detailed error information
-        if (error.data) {
-          console.error(
-            "❌ Detailed error:",
-            JSON.stringify(error.data, null, 2)
-          );
-        }
+  const buildSuccessMsg = (empCount: number, msCount: number) => {
+    let msg = "Project created successfully!";
+    if (empCount > 0)
+      msg += ` ${empCount} employee${empCount !== 1 ? "s" : ""} assigned.`;
+    if (msCount > 0)
+      msg += ` ${msCount} milestone${msCount !== 1 ? "s" : ""} created.`;
+    return msg;
+  };
 
-        throw error;
-      }
+  /* ── Create mutation ── */
+  const createMutation = useMutation({
+    mutationFn: (payload: CreateProjectPayload) =>
+      api.post<CreatedProject>("/api/v1/projects/create/", payload),
+    onSuccess: async (data) => {
+      const projectId = data.id;
+      const empCount =
+        selectedEmployees.length > 0 ? await assignEmployees(projectId) : 0;
+      const msCount =
+        milestones.length > 0 ? await createMilestones(projectId) : 0;
+      notify(buildSuccessMsg(empCount, msCount));
+      setTimeout(() => router.push("/provider/projects"), 1800);
     },
-    onSuccess: async (data: any) => {
-      console.log("✅ Project created successfully:", data);
-      setCreatedProjectId(data.id);
-
-      // Step 1: Assign employees if selected
-      if (selectedEmployees.length > 0 && data.id) {
-        await assignEmployeesToProject(data.id);
+    onError: (err: unknown) => {
+      const e = err as { data?: Record<string, unknown>; message?: string };
+      if (e.data && typeof e.data === "object") {
+        const msgs = Object.entries(e.data).map(
+          ([f, v]) => `${f}: ${Array.isArray(v) ? v.join(", ") : String(v)}`,
+        );
+        alert(`Error:\n${msgs.join("\n")}`);
+      } else {
+        alert(`Error: ${e.message ?? "Failed to create project"}`);
       }
-
-      // Step 2: Create milestones if added
-      if (milestones.length > 0 && data.id) {
-        await createMilestonesForProject(data.id);
-      }
-
-      // If no employees or milestones, redirect immediately
-      if (selectedEmployees.length === 0 && milestones.length === 0) {
-        showSuccessNotification("Project created successfully!");
-        setTimeout(() => {
-          router.push("/provider/projects");
-        }, 1500);
-      }
-    },
-    onError: (error: any) => {
-      console.error("❌ Project creation error:", error);
-
-      // Extract detailed error message
-      let errorMessage = "Failed to create project";
-
-      if (error.data) {
-        if (typeof error.data === "object") {
-          // Handle field-specific errors
-          const fieldErrors: string[] = [];
-          Object.entries(error.data).forEach(([field, messages]) => {
-            const msgArray = Array.isArray(messages) ? messages : [messages];
-            fieldErrors.push(`${field}: ${msgArray.join(", ")}`);
-          });
-
-          if (fieldErrors.length > 0) {
-            errorMessage = fieldErrors.join("\n");
-          }
-        } else if (typeof error.data === "string") {
-          errorMessage = error.data;
-        }
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-
-      alert(`Error creating project:\n\n${errorMessage}`);
     },
   });
 
-  // ==================================================================================
-  // HELPER FUNCTIONS
-  // ==================================================================================
-
-  // Assign employees to project after creation
-  const assignEmployeesToProject = async (projectId: number) => {
-    setIsAssigningEmployees(true);
-    let successCount = 0;
-    let failCount = 0;
-
-    const assignedDate = startDate || new Date().toISOString().split("T")[0];
-
-    console.log(
-      `📋 Assigning ${selectedEmployees.length} employees to project ${projectId}...`
-    );
-
-    for (const employeeId of selectedEmployees) {
-      try {
-        const payload: AssignEmployeePayload = {
-          employee_id: employeeId,
-          assigned_date: assignedDate,
-        };
-
-        await assignEmployeeToProject(projectId, payload);
-        successCount++;
-        console.log(`✅ Assigned employee ${employeeId} to project`);
-      } catch (error) {
-        console.error(`❌ Failed to assign employee ${employeeId}:`, error);
-        failCount++;
-      }
+  /* ── Submit ── */
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!projectName || !location || !startDate || !endDate || !projectBudget) {
+      alert("Please fill in all required fields");
+      return;
     }
-
-    setIsAssigningEmployees(false);
-
-    console.log(
-      `📊 Employee assignment complete: ${successCount} success, ${failCount} failed`
-    );
-
-    // Continue to milestones if any, otherwise finish
-    if (milestones.length === 0) {
-      showFinalSuccessMessage(successCount, failCount, 0, 0);
+    const budget = parseFloat(projectBudget.replace(/[^0-9.-]+/g, ""));
+    if (isNaN(budget) || budget <= 0) {
+      alert("Please enter a valid budget");
+      return;
     }
+    const advance = initialPaymentTaken
+      ? parseFloat(initialPaymentAmount) || 0
+      : 0;
+    createMutation.mutate({
+      project_name: projectName,
+      description: description || `${category} project at ${location}`,
+      site_address: location,
+      status,
+      start_date: startDate,
+      expected_end_date: endDate,
+      total_cost: budget.toFixed(2),
+      advance_payment: advance.toFixed(2),
+      balance_payment: (budget - advance).toFixed(2),
+    });
   };
 
-  // Create milestones for project
-  const createMilestonesForProject = async (projectId: number) => {
-    setIsCreatingMilestones(true);
-    let successCount = 0;
-    let failCount = 0;
-
-    console.log(
-      `📋 Creating ${milestones.length} milestones for project ${projectId}...`
-    );
-
-    for (const milestone of milestones) {
-      try {
-        const payload: CreateMilestonePayload = {
-          title: milestone.title,
-          description: milestone.description,
-          target_date: milestone.dueDate,
-          status: milestone.status,
-        };
-
-        await api.post(
-          `/api/v1/projects/${projectId}/milestones/create/`,
-          payload
-        );
-        successCount++;
-        console.log(`✅ Created milestone: ${milestone.title}`);
-      } catch (error) {
-        console.error(
-          `❌ Failed to create milestone: ${milestone.title}`,
-          error
-        );
-        failCount++;
-      }
-    }
-
-    setIsCreatingMilestones(false);
-
-    // Invalidate queries to refresh data
-    queryClient.invalidateQueries({ queryKey: ["projects"] });
-    queryClient.invalidateQueries({ queryKey: ["all-milestones"] });
-
-    showFinalSuccessMessage(
-      selectedEmployees.length,
-      0,
-      successCount,
-      failCount
-    );
-  };
-
-  // Show final success message with all counts
-  const showFinalSuccessMessage = (
-    employeesAssigned: number,
-    employeesFailed: number,
-    milestonesCreated: number,
-    milestonesFailed: number
-  ) => {
-    let message = "Project created successfully!";
-
-    if (employeesAssigned > 0) {
-      message += ` ${employeesAssigned} employee${
-        employeesAssigned !== 1 ? "s" : ""
-      } assigned.`;
-    }
-
-    if (milestonesCreated > 0) {
-      message += ` ${milestonesCreated} milestone${
-        milestonesCreated !== 1 ? "s" : ""
-      } created.`;
-    }
-
-    if (employeesFailed > 0 || milestonesFailed > 0) {
-      message += ` (${employeesFailed + milestonesFailed} item${
-        employeesFailed + milestonesFailed !== 1 ? "s" : ""
-      } failed)`;
-    }
-
-    showSuccessNotification(message);
-
-    setTimeout(() => {
-      router.push("/provider/projects");
-    }, 2000);
-  };
-
-  // ==================================================================================
-  // MILESTONE HANDLERS
-  // ==================================================================================
-
-  const openMilestoneModal = (milestone?: Milestone) => {
-    if (milestone) {
-      setEditingMilestone(milestone);
+  /* ── Milestone handlers ── */
+  const openMilestoneModal = (m?: Milestone) => {
+    if (m) {
+      setEditingMilestone(m);
       setMilestoneForm({
-        title: milestone.title,
-        description: milestone.description,
-        dueDate: milestone.dueDate,
-        amount: milestone.amount.toString(),
-        status: milestone.status,
+        title: m.title,
+        description: m.description,
+        dueDate: m.dueDate,
+        amount: m.amount.toString(),
+        status: m.status,
       });
     } else {
       setEditingMilestone(null);
@@ -451,253 +533,193 @@ export default function CreateProjectPage() {
       !milestoneForm.dueDate ||
       !milestoneForm.amount
     ) {
-      alert("Please fill in all required fields including payment amount");
+      alert("Please fill in all required milestone fields");
       return;
     }
-
     const amount = parseFloat(milestoneForm.amount);
     if (isNaN(amount) || amount <= 0) {
-      alert("Please enter a valid payment amount");
+      alert("Please enter a valid amount");
       return;
     }
-
     if (editingMilestone) {
-      setMilestones(
-        milestones.map((m) =>
-          m.id === editingMilestone.id ? { ...m, ...milestoneForm, amount } : m
-        )
+      setMilestones((prev) =>
+        prev.map((m) =>
+          m.id === editingMilestone.id ? { ...m, ...milestoneForm, amount } : m,
+        ),
       );
-      showSuccessNotification("Milestone updated successfully!");
+      notify("Milestone updated!");
     } else {
-      const newMilestone: Milestone = {
-        id: Date.now().toString(),
-        title: milestoneForm.title,
-        description: milestoneForm.description,
-        dueDate: milestoneForm.dueDate,
-        amount,
-        status: milestoneForm.status,
-      };
-      setMilestones([...milestones, newMilestone]);
-      showSuccessNotification("Milestone added successfully!");
+      setMilestones((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          title: milestoneForm.title,
+          description: milestoneForm.description,
+          dueDate: milestoneForm.dueDate,
+          amount,
+          status: milestoneForm.status,
+        },
+      ]);
+      notify("Milestone added!");
     }
     closeMilestoneModal();
   };
 
   const deleteMilestone = (id: string) => {
-    if (confirm("Are you sure you want to delete this milestone?")) {
-      setMilestones(milestones.filter((m) => m.id !== id));
-      showSuccessNotification("Milestone deleted successfully!");
+    if (confirm("Delete this milestone?")) {
+      setMilestones((prev) => prev.filter((m) => m.id !== id));
+      notify("Milestone deleted.");
     }
   };
 
-  const viewMilestone = (milestone: Milestone) => {
-    setViewingMilestone(milestone);
-  };
-
-  const closeViewModal = () => {
-    setViewingMilestone(null);
-  };
-
-  // ==================================================================================
-  // FORM HANDLERS
-  // ==================================================================================
-
-  const showSuccessNotification = (message: string) => {
-    setSuccessMessage(message);
-    setShowSuccessMessage(true);
-    setTimeout(() => {
-      setShowSuccessMessage(false);
-    }, 3000);
-  };
-
-  const toggleEmployee = (employeeId: number) => {
-    if (selectedEmployees.includes(employeeId)) {
-      setSelectedEmployees(selectedEmployees.filter((id) => id !== employeeId));
-    } else {
-      setSelectedEmployees([...selectedEmployees, employeeId]);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    // Validation
-    if (!projectName || !location || !startDate || !endDate || !projectBudget) {
-      alert("Please fill in all required fields");
-      return;
-    }
-
-    // Parse project budget to number
-    const budgetValue = parseFloat(projectBudget.replace(/[^0-9.-]+/g, ""));
-    if (isNaN(budgetValue) || budgetValue <= 0) {
-      alert("Please enter a valid project budget");
-      return;
-    }
-
-    // Calculate balance payment
-    const advancePayment = initialPaymentTaken
-      ? parseFloat(initialPaymentAmount) || 0
-      : 0;
-    const balancePayment = budgetValue - advancePayment;
-
-    // Prepare payload matching the API structure
-    const payload: CreateProjectPayload = {
-      project_name: projectName,
-      description: description || `${category} project at ${location}`,
-      site_address: location,
-      status: status,
-      start_date: startDate,
-      expected_end_date: endDate,
-      total_cost: budgetValue.toFixed(2),
-      advance_payment: advancePayment.toFixed(2),
-      balance_payment: balancePayment.toFixed(2),
-    };
-
-    console.log("📤 Submitting project:", payload);
-    console.log(
-      `📊 Will assign ${selectedEmployees.length} employees after creation`
-    );
-    console.log(
-      `📊 Will create ${milestones.length} milestones after creation`
+  const toggleEmployee = (id: number) =>
+    setSelectedEmployees((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
 
-    // Submit to API
-    createProjectMutation.mutate(payload);
-  };
-
-  const handleCancel = () => {
-    if (
-      confirm(
-        "Are you sure you want to cancel? All unsaved changes will be lost."
-      )
-    ) {
-      router.push("/provider/projects");
-    }
-  };
-
-  // ==================================================================================
-  // HELPER FUNCTIONS FOR UI
-  // ==================================================================================
-
-  const getStatusBadgeColor = (status: Milestone["status"]) => {
-    const colors = {
-      pending: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      in_progress: "bg-blue-100 text-blue-700 border-blue-200",
-      completed: "bg-green-100 text-green-700 border-green-200",
-    };
-    return colors[status];
-  };
-
-  const getStatusIcon = (status: Milestone["status"]) => {
-    const icons = {
-      pending: faExclamationTriangle,
-      in_progress: faClock,
-      completed: faCheck,
-    };
-    return icons[status];
-  };
-
-  const getStatusText = (status: Milestone["status"]) => {
-    const texts = {
-      pending: "Pending",
-      in_progress: "In Progress",
-      completed: "Completed",
-    };
-    return texts[status];
-  };
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(amount);
-  };
-
-  const totalMilestoneAmount = milestones.reduce((sum, m) => sum + m.amount, 0);
-  const initialPayment = parseFloat(initialPaymentAmount) || 0;
-
+  /* ── Derived values ── */
+  const budget = parseFloat(projectBudget.replace(/[^0-9.-]+/g, "")) || 0;
+  const advance = parseFloat(initialPaymentAmount) || 0;
+  const balance = budget - advance;
+  const totalMilestoneAmount = milestones.reduce((s, m) => s + m.amount, 0);
   const isSubmitting =
-    createProjectMutation.isPending ||
-    isCreatingMilestones ||
-    isAssigningEmployees;
+    createMutation.isPending || isCreatingMilestones || isAssigningEmployees;
 
-  // Get color for employee avatar (deterministic based on ID)
-  const getEmployeeColor = (id: number) => {
-    const colors = [
-      "bg-primary-600",
-      "bg-secondary-600",
-      "bg-yellow-600",
-      "bg-purple-600",
-      "bg-green-600",
-      "bg-blue-600",
-      "bg-orange-600",
-      "bg-teal-600",
-      "bg-pink-600",
-      "bg-indigo-600",
-    ];
-    return colors[id % colors.length];
-  };
+  const submitLabel = isCreatingMilestones
+    ? "Creating Milestones…"
+    : isAssigningEmployees
+      ? "Assigning Team…"
+      : "Creating Project…";
 
-  // ==================================================================================
-  // LOADING STATE
-  // ==================================================================================
-
-  if (employeesLoading) {
+  /* ── Loading ── */
+  if (empLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading employees...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading employees…
+          </p>
         </div>
       </div>
     );
   }
 
-  // ==================================================================================
-  // RENDER
-  // ==================================================================================
-
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Success Toast */}
-      {showSuccessMessage && (
-        <div className="fixed top-8 right-8 z-[60] animate-slide-in-right">
-          <div className="bg-green-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 min-w-[300px]">
-            <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
-              <FontAwesomeIcon icon={faCheck} />
-            </div>
-            <div className="flex-1">
-              <p className="font-semibold">{successMessage}</p>
-            </div>
-            <button
-              onClick={() => setShowSuccessMessage(false)}
-              className="text-neutral-0 hover:text-neutral-200 transition-colors"
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* Toast */}
+      {showToast && (
+        <div
+          className="fixed top-5 right-5 z-[60]"
+          style={{ minWidth: "17rem" }}
+        >
+          <div
+            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+            style={{
+              backgroundColor: "var(--color-neutral-900)",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div
+              className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: "#1ab189" }}
             >
-              <FontAwesomeIcon icon={faTimes} />
+              <FontAwesomeIcon
+                icon={faCheck}
+                style={{ color: "white", fontSize: "0.6rem" }}
+              />
+            </div>
+            <p
+              className="flex-1 font-medium"
+              style={{ fontSize: "0.875rem", color: "white" }}
+            >
+              {toastMsg}
+            </p>
+            <button
+              onClick={() => setShowToast(false)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "rgba(255,255,255,0.5)",
+                padding: 0,
+              }}
+            >
+              <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
             </button>
           </div>
         </div>
       )}
 
       {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex items-center gap-4 mb-2">
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.125rem 2rem",
+        }}
+      >
+        <div className="flex items-center gap-3">
           <button
             onClick={() => router.push("/provider/projects")}
-            className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
             aria-label="Go back"
+            style={{
+              width: "2.25rem",
+              height: "2.25rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "transparent",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "0.625rem",
+              cursor: "pointer",
+              color: "var(--color-neutral-500)",
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                "var(--color-neutral-100)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                "transparent";
+            }}
           >
             <FontAwesomeIcon
               icon={faArrowLeft}
-              className="text-neutral-600 text-lg"
+              style={{ fontSize: "0.85rem" }}
             />
           </button>
           <div>
-            <h1 className="heading-2 text-neutral-900">Create New Project</h1>
-            <p className="text-neutral-600 body-regular mt-1">
+            <h1
+              className="font-bold"
+              style={{
+                fontSize: "1.375rem",
+                color: "var(--color-neutral-900)",
+                lineHeight: 1.2,
+              }}
+            >
+              Create New Project
+            </h1>
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--color-neutral-500)",
+                marginTop: "0.125rem",
+              }}
+            >
               Fill in the details to create your project
             </p>
           </div>
@@ -705,268 +727,276 @@ export default function CreateProjectPage() {
       </div>
 
       {/* Form */}
-      <form onSubmit={handleSubmit} className="p-8 max-w-6xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Form - Takes 2 columns */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Project Information Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                <FontAwesomeIcon
-                  icon={faBriefcase}
-                  className="text-primary-600"
-                />
-                Project Information
-              </h2>
-
-              <div className="space-y-5">
-                {/* Project Name */}
-                <div>
-                  <label
-                    htmlFor="projectName"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    Project Name <span className="text-red-500">*</span>
-                  </label>
+      <form
+        onSubmit={handleSubmit}
+        style={{ padding: "1.75rem 2rem", maxWidth: "72rem", margin: "0 auto" }}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* ── Left col ── */}
+          <div className="lg:col-span-2 space-y-5">
+            {/* Project info */}
+            <SectionCard
+              title="Project Information"
+              icon={<FontAwesomeIcon icon={faBriefcase} />}
+            >
+              <div className="space-y-4">
+                <Field label="Project Name" required>
                   <input
                     type="text"
-                    id="projectName"
                     value={projectName}
                     onChange={(e) => setProjectName(e.target.value)}
                     placeholder="e.g., Kitchen Renovation"
                     required
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                    style={baseInput}
+                    onFocus={onFocusIn}
+                    onBlur={onFocusOut}
                   />
-                </div>
+                </Field>
 
-                {/* Category */}
-                <div>
-                  <label
-                    htmlFor="category"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    Category <span className="text-red-500">*</span>
-                  </label>
+                <Field label="Category" required>
                   <select
-                    id="category"
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
                     required
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                    style={{
+                      ...baseInput,
+                      cursor: "pointer",
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a1a1aa' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                      backgroundRepeat: "no-repeat",
+                      backgroundPosition: "right 0.875rem center",
+                      paddingRight: "2.5rem",
+                    }}
+                    onFocus={onFocusIn}
+                    onBlur={onFocusOut}
                   >
                     <option value="">Select a category</option>
-                    <option value="Renovation">Renovation</option>
-                    <option value="Electrical">Electrical</option>
-                    <option value="Plumbing">Plumbing</option>
-                    <option value="HVAC">HVAC</option>
-                    <option value="Landscaping">Landscaping</option>
-                    <option value="Commercial">Commercial</option>
-                    <option value="Residential">Residential</option>
+                    {[
+                      "Renovation",
+                      "Electrical",
+                      "Plumbing",
+                      "HVAC",
+                      "Landscaping",
+                      "Commercial",
+                      "Residential",
+                    ].map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
                   </select>
-                </div>
+                </Field>
 
-                {/* Status */}
-                <div>
-                  <label
-                    htmlFor="status"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    Project Status <span className="text-red-500">*</span>
-                  </label>
+                <Field label="Project Status" required>
                   <select
-                    id="status"
                     value={status}
                     onChange={(e) => setStatus(e.target.value)}
                     required
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                    style={{
+                      ...baseInput,
+                      cursor: "pointer",
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a1a1aa' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                      backgroundRepeat: "no-repeat",
+                      backgroundPosition: "right 0.875rem center",
+                      paddingRight: "2.5rem",
+                    }}
+                    onFocus={onFocusIn}
+                    onBlur={onFocusOut}
                   >
-                    <option value="pending">Pending</option>
-                    <option value="not_started">Not Started</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="on_hold">On Hold</option>
-                    <option value="completed">Completed</option>
-                    <option value="cancelled">Cancelled</option>
+                    {[
+                      ["pending", "Pending"],
+                      ["not_started", "Not Started"],
+                      ["in_progress", "In Progress"],
+                      ["on_hold", "On Hold"],
+                      ["completed", "Completed"],
+                      ["cancelled", "Cancelled"],
+                    ].map(([v, l]) => (
+                      <option key={v} value={v}>
+                        {l}
+                      </option>
+                    ))}
                   </select>
-                </div>
+                </Field>
 
-                {/* Location */}
-                <div>
-                  <label
-                    htmlFor="location"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
+                <Field label="Location" required>
+                  <div className="relative">
                     <FontAwesomeIcon
                       icon={faMapMarkerAlt}
-                      className="text-primary-600 mr-2"
+                      className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                      style={{ color: "#1ab189", fontSize: "0.8rem" }}
                     />
-                    Location <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    id="location"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    placeholder="e.g., 123 Main Street, New York, NY"
-                    required
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                </div>
+                    <input
+                      type="text"
+                      value={location}
+                      onChange={(e) => setLocation(e.target.value)}
+                      placeholder="e.g., 123 Main Street, New York, NY"
+                      required
+                      style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                      onFocus={onFocusIn}
+                      onBlur={onFocusOut}
+                    />
+                  </div>
+                </Field>
 
-                {/* Project Budget */}
-                <div>
-                  <label
-                    htmlFor="projectBudget"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    <FontAwesomeIcon
-                      icon={faMoneyBill}
-                      className="text-primary-600 mr-2"
-                    />
-                    Project Total Cost <span className="text-red-500">*</span>
-                  </label>
+                <Field label="Project Total Cost" required>
                   <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400">
+                    <span
+                      className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none font-semibold"
+                      style={{
+                        color: "var(--color-neutral-400)",
+                        fontSize: "0.875rem",
+                      }}
+                    >
                       $
                     </span>
                     <input
                       type="number"
-                      id="projectBudget"
                       value={projectBudget}
                       onChange={(e) => setProjectBudget(e.target.value)}
                       placeholder="50000"
                       min="0"
                       step="0.01"
                       required
-                      className="w-full pl-8 pr-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      style={{ ...baseInput, paddingLeft: "1.875rem" }}
+                      onFocus={onFocusIn}
+                      onBlur={onFocusOut}
                     />
                   </div>
-                </div>
+                </Field>
 
-                {/* Date Range */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label
-                      htmlFor="startDate"
-                      className="block text-neutral-700 font-semibold mb-2 body-small"
-                    >
+                  <Field label="Start Date" required>
+                    <div className="relative">
                       <FontAwesomeIcon
                         icon={faCalendar}
-                        className="text-primary-600 mr-2"
+                        className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                        style={{ color: "#1ab189", fontSize: "0.8rem" }}
                       />
-                      Start Date <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      id="startDate"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      required
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="endDate"
-                      className="block text-neutral-700 font-semibold mb-2 body-small"
-                    >
+                      <input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        required
+                        style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                        onFocus={onFocusIn}
+                        onBlur={onFocusOut}
+                      />
+                    </div>
+                  </Field>
+                  <Field label="End Date (Estimated)" required>
+                    <div className="relative">
                       <FontAwesomeIcon
                         icon={faCalendar}
-                        className="text-primary-600 mr-2"
+                        className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                        style={{ color: "#1ab189", fontSize: "0.8rem" }}
                       />
-                      End Date (Estimated){" "}
-                      <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      id="endDate"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      min={startDate}
-                      required
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                    />
-                  </div>
+                      <input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        min={startDate}
+                        required
+                        style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                        onFocus={onFocusIn}
+                        onBlur={onFocusOut}
+                      />
+                    </div>
+                  </Field>
                 </div>
 
-                {/* Description */}
-                <div>
-                  <label
-                    htmlFor="description"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
+                <Field label="Project Description">
+                  <div className="relative">
                     <FontAwesomeIcon
                       icon={faFileAlt}
-                      className="text-primary-600 mr-2"
+                      className="absolute left-3.5 top-3.5 pointer-events-none"
+                      style={{ color: "#1ab189", fontSize: "0.8rem" }}
                     />
-                    Project Description
-                  </label>
-                  <textarea
-                    id="description"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Provide a detailed description of the project..."
-                    rows={4}
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
-                  />
-                </div>
+                    <textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder="Provide a detailed description…"
+                      rows={4}
+                      style={{
+                        ...baseInput,
+                        paddingLeft: "2.25rem",
+                        resize: "none",
+                      }}
+                      onFocus={onFocusIn}
+                      onBlur={onFocusOut}
+                    />
+                  </div>
+                </Field>
               </div>
-            </div>
+            </SectionCard>
 
-            {/* Initial Payment Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                <FontAwesomeIcon
-                  icon={faDollarSign}
-                  className="text-primary-600"
-                />
-                Initial Payment (Advance)
-              </h2>
-
-              <div className="space-y-5">
-                {/* Payment Checkbox */}
-                <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            {/* Advance payment */}
+            <SectionCard
+              title="Initial Payment (Advance)"
+              icon={<FontAwesomeIcon icon={faDollarSign} />}
+            >
+              <div className="space-y-4">
+                <div
+                  className="flex items-start gap-3 rounded-xl"
+                  style={{
+                    padding: "1rem",
+                    backgroundColor: "var(--color-neutral-50)",
+                    border: "1px solid var(--color-neutral-200)",
+                  }}
+                >
                   <input
                     type="checkbox"
-                    id="initialPayment"
+                    id="initPay"
                     checked={initialPaymentTaken}
                     onChange={(e) => {
                       setInitialPaymentTaken(e.target.checked);
                       if (!e.target.checked) setInitialPaymentAmount("");
                     }}
-                    className="w-5 h-5 text-primary-600 border-neutral-300 rounded focus:ring-2 focus:ring-primary-500 mt-0.5"
+                    style={{
+                      width: "1.125rem",
+                      height: "1.125rem",
+                      accentColor: "#1ab189",
+                      marginTop: "2px",
+                      flexShrink: 0,
+                      cursor: "pointer",
+                    }}
                   />
-                  <div className="flex-1">
+                  <div>
                     <label
-                      htmlFor="initialPayment"
-                      className="text-neutral-900 font-semibold block cursor-pointer"
+                      htmlFor="initPay"
+                      className="font-semibold block"
+                      style={{
+                        fontSize: "0.875rem",
+                        color: "var(--color-neutral-900)",
+                        cursor: "pointer",
+                      }}
                     >
                       Initial payment received
                     </label>
-                    <p className="text-neutral-600 text-sm mt-1">
-                      Check this if you've received an advance payment from the
-                      client
+                    <p
+                      className="mt-0.5"
+                      style={{
+                        fontSize: "0.78rem",
+                        color: "var(--color-neutral-500)",
+                      }}
+                    >
+                      Check this if you&apos;ve received an advance payment from
+                      the client
                     </p>
                   </div>
                 </div>
 
-                {/* Amount Input */}
                 {initialPaymentTaken && (
-                  <div>
-                    <label
-                      htmlFor="initialPaymentAmount"
-                      className="block text-neutral-700 font-semibold mb-2 body-small"
-                    >
-                      Advance Payment Amount{" "}
-                      <span className="text-red-500">*</span>
-                    </label>
+                  <Field label="Advance Payment Amount" required>
                     <div className="relative">
                       <FontAwesomeIcon
                         icon={faDollarSign}
-                        className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
+                        className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                        style={{
+                          color: "var(--color-neutral-400)",
+                          fontSize: "0.8rem",
+                        }}
                       />
                       <input
                         type="number"
-                        id="initialPaymentAmount"
                         value={initialPaymentAmount}
                         onChange={(e) =>
                           setInitialPaymentAmount(e.target.value)
@@ -975,422 +1005,572 @@ export default function CreateProjectPage() {
                         min="0"
                         step="0.01"
                         required={initialPaymentTaken}
-                        className="w-full pl-10 pr-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                        style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                        onFocus={onFocusIn}
+                        onBlur={onFocusOut}
                       />
                     </div>
-                    {initialPayment > 0 && projectBudget && (
-                      <div className="mt-3 space-y-2">
-                        <p className="text-green-600 text-sm font-medium flex items-center gap-2">
-                          <FontAwesomeIcon icon={faCheckCircle} />
-                          Advance payment: {formatCurrency(initialPayment)}
+                    {advance > 0 && budget > 0 && (
+                      <div className="mt-3 space-y-1">
+                        <p
+                          className="flex items-center gap-2 font-medium"
+                          style={{ fontSize: "0.78rem", color: "#1ab189" }}
+                        >
+                          <FontAwesomeIcon
+                            icon={faCheckCircle}
+                            style={{ fontSize: "0.75rem" }}
+                          />{" "}
+                          Advance: {formatCurrency(advance)}
                         </p>
-                        <p className="text-blue-600 text-sm font-medium flex items-center gap-2">
-                          <FontAwesomeIcon icon={faMoneyBill} />
-                          Balance payment:{" "}
-                          {formatCurrency(
-                            parseFloat(
-                              projectBudget.replace(/[^0-9.-]+/g, "")
-                            ) - initialPayment
-                          )}
+                        <p
+                          className="flex items-center gap-2 font-medium"
+                          style={{ fontSize: "0.78rem", color: "#3b82f6" }}
+                        >
+                          <FontAwesomeIcon
+                            icon={faMoneyBill}
+                            style={{ fontSize: "0.75rem" }}
+                          />{" "}
+                          Balance: {formatCurrency(balance)}
                         </p>
                       </div>
                     )}
-                  </div>
+                  </Field>
                 )}
               </div>
-            </div>
+            </SectionCard>
 
-            {/* Team Assignment Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-4 flex items-center gap-3">
-                <FontAwesomeIcon icon={faUsers} className="text-primary-600" />
-                Assign Team Members
-                <span className="text-sm font-normal text-neutral-500">
-                  (Optional)
-                </span>
-              </h2>
-              <p className="text-neutral-600 text-sm mb-4">
-                Select employees to assign to this project. They will be
-                automatically assigned after the project is created.
+            {/* Team assignment */}
+            <SectionCard
+              title="Assign Team Members"
+              icon={<FontAwesomeIcon icon={faUsers} />}
+            >
+              <p
+                className="mb-4"
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
+                Select employees to assign. They will be assigned automatically
+                after creation.
               </p>
-
-              {employeesError ? (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
-                  <FontAwesomeIcon
-                    icon={faExclamationTriangle}
-                    className="mr-2"
-                  />
-                  Failed to load employees. You can assign them after creating
-                  the project.
+              {empError ? (
+                <div
+                  className="rounded-xl p-4"
+                  style={{
+                    backgroundColor: "#fef2f2",
+                    border: "1px solid #fecaca",
+                  }}
+                >
+                  <p
+                    className="flex items-center gap-2"
+                    style={{ fontSize: "0.8rem", color: "#b91c1c" }}
+                  >
+                    <FontAwesomeIcon
+                      icon={faExclamationTriangle}
+                      style={{ fontSize: "0.8rem" }}
+                    />
+                    Failed to load employees. You can assign them after creating
+                    the project.
+                  </p>
                 </div>
               ) : employees.length === 0 ? (
-                <div className="p-8 text-center bg-neutral-50 rounded-lg border-2 border-dashed border-neutral-200">
+                <div
+                  className="text-center py-8 rounded-xl"
+                  style={{
+                    border: "2px dashed var(--color-neutral-200)",
+                    backgroundColor: "var(--color-neutral-50)",
+                  }}
+                >
                   <FontAwesomeIcon
                     icon={faUsers}
-                    className="text-neutral-300 text-4xl mb-3"
+                    style={{
+                      fontSize: "2.5rem",
+                      color: "var(--color-neutral-300)",
+                      marginBottom: "0.75rem",
+                    }}
                   />
-                  <p className="text-neutral-600 mb-2">
+                  <p
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-600)",
+                    }}
+                  >
                     No employees available
                   </p>
-                  <p className="text-neutral-500 text-sm">
-                    Add employees to your team first before assigning them to
-                    projects
+                  <p
+                    className="mt-1"
+                    style={{
+                      fontSize: "0.78rem",
+                      color: "var(--color-neutral-400)",
+                    }}
+                  >
+                    Add employees to your team first
                   </p>
                 </div>
               ) : (
                 <>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {employees.map((employee) => (
-                      <div
-                        key={employee.id}
-                        onClick={() => toggleEmployee(employee.id)}
-                        className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                          selectedEmployees.includes(employee.id)
-                            ? "border-primary-500 bg-primary-50"
-                            : "border-neutral-200 hover:border-neutral-300 bg-neutral-0"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
+                    {employees.map((emp) => {
+                      const selected = selectedEmployees.includes(emp.id);
+                      return (
+                        <div
+                          key={emp.id}
+                          onClick={() => toggleEmployee(emp.id)}
+                          className="flex items-center gap-3 rounded-xl p-3.5 cursor-pointer"
+                          style={{
+                            border: `2px solid ${selected ? "#1ab189" : "var(--color-neutral-200)"}`,
+                            backgroundColor: selected
+                              ? "rgba(26,177,137,0.06)"
+                              : "var(--color-neutral-0)",
+                            transition:
+                              "border-color 150ms, background-color 150ms",
+                          }}
+                        >
                           <div
-                            className={`w-10 h-10 rounded-full ${getEmployeeColor(
-                              employee.id
-                            )} text-neutral-0 flex items-center justify-center font-semibold flex-shrink-0`}
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold flex-shrink-0"
+                            style={{
+                              backgroundColor: employeeColor(emp.id),
+                              color: "white",
+                              fontSize: "0.8rem",
+                            }}
                           >
-                            {employee.initials}
+                            {emp.initials}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-neutral-900 truncate">
-                              {employee.full_name}
+                            <p
+                              className="font-semibold truncate"
+                              style={{
+                                fontSize: "0.875rem",
+                                color: "var(--color-neutral-900)",
+                              }}
+                            >
+                              {emp.full_name}
                             </p>
-                            <p className="text-sm text-neutral-600 truncate">
-                              {employee.role || "No role"} •{" "}
-                              {employee.department || "No department"}
+                            <p
+                              className="truncate"
+                              style={{
+                                fontSize: "0.75rem",
+                                color: "var(--color-neutral-500)",
+                              }}
+                            >
+                              {emp.role || "No role"}
+                              {emp.department ? ` · ${emp.department}` : ""}
                             </p>
                           </div>
-                          {selectedEmployees.includes(employee.id) && (
+                          {selected && (
                             <FontAwesomeIcon
                               icon={faCheck}
-                              className="text-primary-600 flex-shrink-0"
+                              style={{
+                                color: "#1ab189",
+                                fontSize: "0.8rem",
+                                flexShrink: 0,
+                              }}
                             />
                           )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
-
                   {selectedEmployees.length > 0 && (
-                    <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                      <p className="text-green-700 text-sm font-medium">
-                        <FontAwesomeIcon
-                          icon={faCheckCircle}
-                          className="mr-2"
-                        />
+                    <div
+                      className="mt-4 flex items-center gap-2 rounded-xl px-4 py-3"
+                      style={{
+                        backgroundColor: "rgba(26,177,137,0.06)",
+                        border: "1px solid rgba(26,177,137,0.2)",
+                      }}
+                    >
+                      <FontAwesomeIcon
+                        icon={faCheckCircle}
+                        style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                      />
+                      <p
+                        style={{
+                          fontSize: "0.8rem",
+                          color: "#1ab189",
+                          fontWeight: 500,
+                        }}
+                      >
                         {selectedEmployees.length} employee
-                        {selectedEmployees.length !== 1 ? "s" : ""} selected (
-                        will be assigned automatically)
+                        {selectedEmployees.length !== 1 ? "s" : ""} selected
                       </p>
                     </div>
                   )}
                 </>
               )}
-            </div>
+            </SectionCard>
 
-            {/* Milestones Card - keeping your existing milestone code */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="heading-4 text-neutral-900 flex items-center gap-3">
-                  <FontAwesomeIcon
-                    icon={faCheckCircle}
-                    className="text-primary-600"
-                  />
-                  Project Milestones
-                  <span className="text-sm font-normal text-neutral-500">
-                    (Optional)
-                  </span>
-                </h2>
+            {/* Milestones */}
+            <SectionCard
+              title="Project Milestones"
+              icon={<FontAwesomeIcon icon={faCheckCircle} />}
+              extra={
                 <button
                   type="button"
                   onClick={() => openMilestoneModal()}
-                  className="btn-primary text-sm flex items-center gap-2"
+                  className="btn btn-primary btn-sm flex items-center gap-2"
                 >
-                  <FontAwesomeIcon icon={faPlus} />
+                  <FontAwesomeIcon
+                    icon={faPlus}
+                    style={{ fontSize: "0.75rem" }}
+                  />{" "}
                   Add Milestone
                 </button>
-              </div>
-
+              }
+            >
               {milestones.length === 0 ? (
-                <div className="text-center py-8 px-4 bg-neutral-50 rounded-lg border-2 border-dashed border-neutral-200">
+                <div
+                  className="text-center py-8 rounded-xl"
+                  style={{
+                    border: "2px dashed var(--color-neutral-200)",
+                    backgroundColor: "var(--color-neutral-50)",
+                  }}
+                >
                   <FontAwesomeIcon
                     icon={faCheckCircle}
-                    className="text-neutral-300 text-4xl mb-3"
+                    style={{
+                      fontSize: "2.5rem",
+                      color: "var(--color-neutral-300)",
+                      marginBottom: "0.75rem",
+                    }}
                   />
-                  <p className="text-neutral-600 mb-3">
+                  <p
+                    className="mb-3"
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-600)",
+                    }}
+                  >
                     No milestones added yet
                   </p>
                   <button
                     type="button"
                     onClick={() => openMilestoneModal()}
-                    className="btn-secondary text-sm"
+                    className="btn btn-secondary btn-sm"
                   >
                     Add First Milestone
                   </button>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {milestones.map((milestone) => (
-                    <div
-                      key={milestone.id}
-                      className="p-4 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <h4 className="font-semibold text-neutral-900">
-                              {milestone.title}
+                  {milestones.map((m) => {
+                    const ms = getMilestoneStyle(m.status);
+                    return (
+                      <div
+                        key={m.id}
+                        className="flex items-start justify-between rounded-xl p-4"
+                        style={{
+                          border: "1px solid var(--color-neutral-200)",
+                          backgroundColor: "var(--color-neutral-50)",
+                        }}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                            <h4
+                              className="font-semibold"
+                              style={{
+                                fontSize: "0.9rem",
+                                color: "var(--color-neutral-900)",
+                              }}
+                            >
+                              {m.title}
                             </h4>
                             <span
-                              className={`text-xs font-semibold px-2 py-0.5 border rounded ${getStatusBadgeColor(
-                                milestone.status
-                              )}`}
+                              className="rounded-full font-semibold"
+                              style={{
+                                fontSize: "0.65rem",
+                                padding: "0.15rem 0.55rem",
+                                backgroundColor: ms.bg,
+                                color: ms.color,
+                              }}
                             >
-                              {getStatusText(milestone.status)}
+                              {MILESTONE_LABELS[m.status]}
                             </span>
                           </div>
-                          {milestone.description && (
-                            <p className="text-neutral-600 text-sm mb-2">
-                              {milestone.description}
+                          {m.description && (
+                            <p
+                              className="mb-2"
+                              style={{
+                                fontSize: "0.8rem",
+                                color: "var(--color-neutral-600)",
+                              }}
+                            >
+                              {m.description}
                             </p>
                           )}
-                          <div className="flex items-center gap-4 text-sm text-neutral-600">
-                            <span className="flex items-center gap-1 font-semibold text-green-600">
+                          <div
+                            className="flex items-center gap-3 flex-wrap"
+                            style={{ fontSize: "0.8rem" }}
+                          >
+                            <span
+                              className="font-semibold flex items-center gap-1"
+                              style={{ color: "#1ab189" }}
+                            >
                               <FontAwesomeIcon
                                 icon={faDollarSign}
-                                className="text-xs"
+                                style={{ fontSize: "0.7rem" }}
                               />
-                              {formatCurrency(milestone.amount)}
+                              {formatCurrency(m.amount)}
                             </span>
-                            <span className="flex items-center gap-1">
+                            <span
+                              className="flex items-center gap-1"
+                              style={{ color: "var(--color-neutral-500)" }}
+                            >
                               <FontAwesomeIcon
                                 icon={faCalendar}
-                                className="text-xs"
+                                style={{ fontSize: "0.7rem" }}
                               />
-                              {new Date(milestone.dueDate).toLocaleDateString(
-                                "en-US",
-                                {
-                                  month: "short",
-                                  day: "numeric",
-                                  year: "numeric",
-                                }
-                              )}
+                              {new Date(m.dueDate).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}
                             </span>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 ml-4">
-                          <button
-                            type="button"
-                            onClick={() => viewMilestone(milestone)}
-                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            title="View details"
-                          >
-                            <FontAwesomeIcon icon={faEye} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openMilestoneModal(milestone)}
-                            className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                            title="Edit milestone"
-                          >
-                            <FontAwesomeIcon icon={faPenToSquare} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteMilestone(milestone.id)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Delete milestone"
-                          >
-                            <FontAwesomeIcon icon={faTrash} />
-                          </button>
+                        <div className="flex items-center gap-1.5 ml-3 flex-shrink-0">
+                          {[
+                            {
+                              icon: faEye,
+                              color: "#3b82f6",
+                              hover: "#eff6ff",
+                              action: () => setViewingMilestone(m),
+                            },
+                            {
+                              icon: faPenToSquare,
+                              color: "#1ab189",
+                              hover: "rgba(26,177,137,0.1)",
+                              action: () => openMilestoneModal(m),
+                            },
+                            {
+                              icon: faTrash,
+                              color: "#ef4444",
+                              hover: "#fef2f2",
+                              action: () => deleteMilestone(m.id),
+                            },
+                          ].map(({ icon, color, hover, action }, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={action}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                color,
+                                padding: "0.375rem",
+                                borderRadius: "0.5rem",
+                              }}
+                              onMouseEnter={(e) => {
+                                (
+                                  e.currentTarget as HTMLButtonElement
+                                ).style.backgroundColor = hover;
+                              }}
+                              onMouseLeave={(e) => {
+                                (
+                                  e.currentTarget as HTMLButtonElement
+                                ).style.backgroundColor = "transparent";
+                              }}
+                            >
+                              <FontAwesomeIcon
+                                icon={icon}
+                                style={{ fontSize: "0.8rem" }}
+                              />
+                            </button>
+                          ))}
                         </div>
                       </div>
+                    );
+                  })}
+                  {/* Total */}
+                  <div
+                    className="flex items-center justify-between rounded-xl px-4 py-3"
+                    style={{
+                      backgroundColor: "rgba(26,177,137,0.06)",
+                      border: "1px solid rgba(26,177,137,0.2)",
+                    }}
+                  >
+                    <div>
+                      <p
+                        className="font-semibold"
+                        style={{
+                          fontSize: "0.875rem",
+                          color: "var(--color-neutral-900)",
+                        }}
+                      >
+                        Total Milestone Value
+                      </p>
+                      <p
+                        style={{
+                          fontSize: "0.75rem",
+                          color: "var(--color-neutral-500)",
+                        }}
+                      >
+                        {milestones.length} milestone
+                        {milestones.length !== 1 ? "s" : ""} · avg{" "}
+                        {formatCurrency(
+                          totalMilestoneAmount / milestones.length,
+                        )}
+                      </p>
                     </div>
-                  ))}
-
-                  {/* Milestone Summary */}
-                  <div className="p-4 bg-gradient-to-br from-primary-50 to-secondary-50 rounded-lg border border-primary-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-semibold text-neutral-900">
-                        Total Milestone Value:
-                      </span>
-                      <span className="text-lg font-bold text-primary-600">
-                        {formatCurrency(totalMilestoneAmount)}
-                      </span>
-                    </div>
-                    <div className="text-sm text-neutral-600">
-                      {milestones.length} milestone
-                      {milestones.length !== 1 ? "s" : ""} • Average:{" "}
-                      {formatCurrency(totalMilestoneAmount / milestones.length)}
-                    </div>
+                    <span
+                      className="font-bold"
+                      style={{ fontSize: "1.125rem", color: "#1ab189" }}
+                    >
+                      {formatCurrency(totalMilestoneAmount)}
+                    </span>
                   </div>
                 </div>
               )}
-            </div>
+            </SectionCard>
           </div>
 
-          {/* Sidebar - Summary */}
+          {/* ── Right col: summary + actions ── */}
           <div className="lg:col-span-1">
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 sticky top-8">
-              <h3 className="heading-4 text-neutral-900 mb-4">
+            <div
+              className="rounded-2xl sticky top-6"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                border: "1px solid var(--color-neutral-200)",
+                padding: "1.5rem",
+              }}
+            >
+              <h3
+                className="font-semibold mb-4"
+                style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+              >
                 Project Summary
               </h3>
 
-              <div className="space-y-4 mb-6">
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
-                    icon={faBriefcase}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">
-                      Project Name
-                    </p>
-                    <p className="text-neutral-900 font-semibold truncate">
-                      {projectName || "Not specified"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
-                    icon={faMapMarkerAlt}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">Location</p>
-                    <p className="text-neutral-900 font-semibold truncate">
-                      {location || "Not specified"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
-                    icon={faMoneyBill}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">
-                      Total Cost
-                    </p>
-                    <p className="text-neutral-900 font-semibold truncate">
-                      {projectBudget
-                        ? formatCurrency(
-                            parseFloat(projectBudget.replace(/[^0-9.-]+/g, ""))
-                          )
-                        : "Not specified"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
-                    icon={faUsers}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">
-                      Team Members
-                    </p>
-                    <p className="text-neutral-900 font-semibold">
-                      {selectedEmployees.length === 0
-                        ? "None assigned"
-                        : `${selectedEmployees.length} employee${
-                            selectedEmployees.length !== 1 ? "s" : ""
-                          }`}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
-                    icon={faCheckCircle}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">
-                      Milestones
-                    </p>
-                    <p className="text-neutral-900 font-semibold">
-                      {milestones.length === 0
-                        ? "None added"
-                        : `${milestones.length} milestone${
-                            milestones.length !== 1 ? "s" : ""
-                          }`}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <FontAwesomeIcon
-                    icon={faCalendar}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1">
-                    <p className="text-neutral-600 body-small mb-1">Duration</p>
-                    <p className="text-neutral-900 font-semibold">
-                      {startDate && endDate
-                        ? `${new Date(startDate).toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                          })} - ${new Date(endDate).toLocaleDateString(
-                            "en-US",
-                            { month: "short", day: "numeric", year: "numeric" }
-                          )}`
-                        : "Not specified"}
-                    </p>
-                  </div>
-                </div>
+              <div className="mb-5">
+                <SummaryRow
+                  icon={<FontAwesomeIcon icon={faBriefcase} />}
+                  label="Project Name"
+                  value={projectName || "Not specified"}
+                />
+                <SummaryRow
+                  icon={<FontAwesomeIcon icon={faMapMarkerAlt} />}
+                  label="Location"
+                  value={location || "Not specified"}
+                />
+                <SummaryRow
+                  icon={<FontAwesomeIcon icon={faMoneyBill} />}
+                  label="Total Cost"
+                  value={budget > 0 ? formatCurrency(budget) : "Not specified"}
+                />
+                <SummaryRow
+                  icon={<FontAwesomeIcon icon={faUsers} />}
+                  label="Team Members"
+                  value={
+                    selectedEmployees.length === 0
+                      ? "None"
+                      : `${selectedEmployees.length} selected`
+                  }
+                />
+                <SummaryRow
+                  icon={<FontAwesomeIcon icon={faCheckCircle} />}
+                  label="Milestones"
+                  value={
+                    milestones.length === 0
+                      ? "None"
+                      : `${milestones.length} added`
+                  }
+                />
+                <SummaryRow
+                  icon={<FontAwesomeIcon icon={faCalendar} />}
+                  label="Duration"
+                  value={
+                    startDate && endDate
+                      ? `${new Date(startDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                      : "Not specified"
+                  }
+                  border={false}
+                />
               </div>
 
-              {/* Payment Summary */}
-              {projectBudget && (
-                <div className="mb-6 p-4 bg-gradient-to-br from-primary-50 to-secondary-50 rounded-lg border border-primary-200">
-                  <h4 className="font-semibold text-neutral-900 mb-3 flex items-center gap-2">
+              {/* Payment breakdown */}
+              {budget > 0 && (
+                <div
+                  className="rounded-xl mb-5"
+                  style={{
+                    backgroundColor: "var(--color-neutral-50)",
+                    border: "1px solid var(--color-neutral-200)",
+                    padding: "1rem",
+                  }}
+                >
+                  <p
+                    className="font-semibold mb-3 flex items-center gap-2"
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "var(--color-neutral-700)",
+                    }}
+                  >
                     <FontAwesomeIcon
                       icon={faDollarSign}
-                      className="text-primary-600"
+                      style={{ color: "#1ab189", fontSize: "0.75rem" }}
                     />
                     Payment Breakdown
-                  </h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-neutral-600">Total Cost:</span>
-                      <span className="font-semibold text-neutral-900">
-                        {formatCurrency(
-                          parseFloat(projectBudget.replace(/[^0-9.-]+/g, ""))
-                        )}
+                  </p>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span
+                        style={{
+                          fontSize: "0.78rem",
+                          color: "var(--color-neutral-500)",
+                        }}
+                      >
+                        Total Cost
+                      </span>
+                      <span
+                        className="font-semibold"
+                        style={{
+                          fontSize: "0.78rem",
+                          color: "var(--color-neutral-900)",
+                        }}
+                      >
+                        {formatCurrency(budget)}
                       </span>
                     </div>
-                    {initialPaymentTaken && initialPayment > 0 && (
+                    {initialPaymentTaken && advance > 0 && (
                       <>
-                        <div className="flex items-center justify-between">
-                          <span className="text-neutral-600">
-                            Advance Payment:
+                        <div className="flex justify-between">
+                          <span
+                            style={{
+                              fontSize: "0.78rem",
+                              color: "var(--color-neutral-500)",
+                            }}
+                          >
+                            Advance
                           </span>
-                          <span className="font-semibold text-green-600">
-                            {formatCurrency(initialPayment)}
+                          <span
+                            className="font-semibold"
+                            style={{ fontSize: "0.78rem", color: "#1ab189" }}
+                          >
+                            {formatCurrency(advance)}
                           </span>
                         </div>
-                        <div className="border-t border-primary-200 my-2"></div>
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-neutral-700">
-                            Balance Payment:
+                        <div
+                          style={{
+                            borderTop: "1px solid var(--color-neutral-200)",
+                            paddingTop: "0.5rem",
+                            marginTop: "0.25rem",
+                          }}
+                        />
+                        <div className="flex justify-between">
+                          <span
+                            className="font-semibold"
+                            style={{
+                              fontSize: "0.78rem",
+                              color: "var(--color-neutral-700)",
+                            }}
+                          >
+                            Balance
                           </span>
-                          <span className="text-lg font-bold text-primary-600">
-                            {formatCurrency(
-                              parseFloat(
-                                projectBudget.replace(/[^0-9.-]+/g, "")
-                              ) - initialPayment
-                            )}
+                          <span
+                            className="font-bold"
+                            style={{ fontSize: "0.9rem", color: "#1ab189" }}
+                          >
+                            {formatCurrency(balance)}
                           </span>
                         </div>
                       </>
@@ -1399,47 +1579,72 @@ export default function CreateProjectPage() {
                 </div>
               )}
 
-              <div className="space-y-3">
+              {/* Actions */}
+              <div className="space-y-2.5">
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full btn-primary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="btn btn-primary btn-md w-full justify-center"
+                  style={{ opacity: isSubmitting ? 0.6 : 1 }}
                 >
                   {isSubmitting ? (
                     <>
                       <FontAwesomeIcon
                         icon={faSpinner}
                         className="animate-spin"
-                      />
-                      {isCreatingMilestones
-                        ? "Creating Milestones..."
-                        : isAssigningEmployees
-                        ? "Assigning Employees..."
-                        : "Creating Project..."}
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
+                      {submitLabel}
                     </>
                   ) : (
                     <>
-                      <FontAwesomeIcon icon={faPlus} />
+                      <FontAwesomeIcon
+                        icon={faPlus}
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
                       Create Project
                     </>
                   )}
                 </button>
                 <button
                   type="button"
-                  onClick={handleCancel}
+                  onClick={() => {
+                    if (confirm("Discard unsaved changes?"))
+                      router.push("/provider/projects");
+                  }}
                   disabled={isSubmitting}
-                  className="w-full btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="btn btn-ghost btn-md w-full justify-center"
                 >
                   Cancel
                 </button>
               </div>
 
-              <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                <p className="text-blue-700 body-small">
-                  <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                  <strong>Note:</strong> Project will be created with{" "}
-                  {selectedEmployees.length} employee
-                  {selectedEmployees.length !== 1 ? "s" : ""} and{" "}
+              <div
+                className="rounded-xl mt-4"
+                style={{
+                  backgroundColor: "rgba(26,177,137,0.06)",
+                  border: "1px solid rgba(26,177,137,0.2)",
+                  padding: "0.875rem",
+                }}
+              >
+                <p
+                  className="flex items-start gap-2"
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "var(--color-neutral-600)",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faCheckCircle}
+                    style={{
+                      color: "#1ab189",
+                      fontSize: "0.75rem",
+                      marginTop: "2px",
+                      flexShrink: 0,
+                    }}
+                  />
+                  Project will be created with {selectedEmployees.length}{" "}
+                  employee{selectedEmployees.length !== 1 ? "s" : ""} and{" "}
                   {milestones.length} milestone
                   {milestones.length !== 1 ? "s" : ""}.
                 </p>
@@ -1449,34 +1654,69 @@ export default function CreateProjectPage() {
         </div>
       </form>
 
-      {/* Milestone Modals - keeping your existing code */}
+      {/* ── Milestone modal ── */}
       {showMilestoneModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between z-10">
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div
+              className="flex items-center justify-between sticky top-0 rounded-t-2xl"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                borderBottom: "1px solid var(--color-neutral-200)",
+                padding: "1.25rem 1.5rem",
+              }}
+            >
               <div>
-                <h3 className="heading-4 text-neutral-900">
-                  {editingMilestone ? "Edit Milestone" : "Add New Milestone"}
+                <h3
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1.0625rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
+                  {editingMilestone ? "Edit Milestone" : "Add Milestone"}
                 </h3>
-                <p className="text-neutral-600 text-sm mt-1">
+                <p
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--color-neutral-500)",
+                    marginTop: "0.125rem",
+                  }}
+                >
                   {editingMilestone
-                    ? "Update milestone details and payment amount"
-                    : "Create a new milestone with payment amount"}
+                    ? "Update milestone details"
+                    : "Create a new milestone"}
                 </p>
               </div>
               <button
                 onClick={closeMilestoneModal}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--color-neutral-500)",
+                  padding: "0.375rem",
+                  borderRadius: "0.5rem",
+                }}
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+                <FontAwesomeIcon
+                  icon={faTimes}
+                  style={{ fontSize: "0.875rem" }}
+                />
               </button>
             </div>
 
-            <div className="p-6 space-y-5">
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Milestone Title <span className="text-red-500">*</span>
-                </label>
+            <div style={{ padding: "1.5rem" }} className="space-y-4">
+              <Field label="Milestone Title" required>
                 <input
                   type="text"
                   value={milestoneForm.title}
@@ -1487,14 +1727,12 @@ export default function CreateProjectPage() {
                     })
                   }
                   placeholder="e.g., Foundation Complete"
-                  className="w-full px-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
+                  style={baseInput}
+                  onFocus={onFocusIn}
+                  onBlur={onFocusOut}
                 />
-              </div>
-
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Description
-                </label>
+              </Field>
+              <Field label="Description">
                 <textarea
                   value={milestoneForm.description}
                   onChange={(e) =>
@@ -1503,21 +1741,23 @@ export default function CreateProjectPage() {
                       description: e.target.value,
                     })
                   }
-                  placeholder="Describe this milestone..."
-                  rows={4}
-                  className="w-full px-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all resize-none"
+                  placeholder="Describe this milestone…"
+                  rows={3}
+                  style={{ ...baseInput, resize: "none" }}
+                  onFocus={onFocusIn}
+                  onBlur={onFocusOut}
                 />
-              </div>
-
+              </Field>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Payment Amount <span className="text-red-500">*</span>
-                  </label>
+                <Field label="Payment Amount" required>
                   <div className="relative">
                     <FontAwesomeIcon
                       icon={faDollarSign}
-                      className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
+                      className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                      style={{
+                        color: "var(--color-neutral-400)",
+                        fontSize: "0.8rem",
+                      }}
                     />
                     <input
                       type="number"
@@ -1531,15 +1771,13 @@ export default function CreateProjectPage() {
                       placeholder="0.00"
                       min="0"
                       step="0.01"
-                      className="w-full pl-10 pr-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
+                      style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                      onFocus={onFocusIn}
+                      onBlur={onFocusOut}
                     />
                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Due Date <span className="text-red-500">*</span>
-                  </label>
+                </Field>
+                <Field label="Due Date" required>
                   <input
                     type="date"
                     value={milestoneForm.dueDate}
@@ -1551,15 +1789,13 @@ export default function CreateProjectPage() {
                     }
                     min={startDate}
                     max={endDate}
-                    className="w-full px-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
+                    style={baseInput}
+                    onFocus={onFocusIn}
+                    onBlur={onFocusOut}
                   />
-                </div>
+                </Field>
               </div>
-
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Status <span className="text-red-500">*</span>
-                </label>
+              <Field label="Status" required>
                 <select
                   value={milestoneForm.status}
                   onChange={(e) =>
@@ -1571,41 +1807,72 @@ export default function CreateProjectPage() {
                         | "completed",
                     })
                   }
-                  className="w-full px-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all cursor-pointer"
+                  style={{
+                    ...baseInput,
+                    cursor: "pointer",
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a1a1aa' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                    backgroundRepeat: "no-repeat",
+                    backgroundPosition: "right 0.875rem center",
+                    paddingRight: "2.5rem",
+                  }}
+                  onFocus={onFocusIn}
+                  onBlur={onFocusOut}
                 >
-                  <option value="pending">⚠ Pending</option>
-                  <option value="in_progress">⏱ In Progress</option>
-                  <option value="completed">✓ Completed</option>
+                  <option value="pending">Pending</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
                 </select>
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-blue-700 text-sm flex items-start gap-2">
-                  <FontAwesomeIcon
-                    icon={faCheckCircle}
-                    className="mt-0.5 flex-shrink-0"
-                  />
-                  <span>
-                    This milestone will be created when you submit the project
-                    form.
-                  </span>
+              </Field>
+              <div
+                className="flex items-center gap-2 rounded-xl px-4 py-3"
+                style={{
+                  backgroundColor: "rgba(26,177,137,0.06)",
+                  border: "1px solid rgba(26,177,137,0.2)",
+                }}
+              >
+                <FontAwesomeIcon
+                  icon={faCheckCircle}
+                  style={{
+                    color: "#1ab189",
+                    fontSize: "0.875rem",
+                    flexShrink: 0,
+                  }}
+                />
+                <p
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--color-neutral-600)",
+                  }}
+                >
+                  This milestone will be created when you submit the project
+                  form.
                 </p>
               </div>
             </div>
 
-            <div className="sticky bottom-0 bg-neutral-50 border-t border-neutral-200 px-6 py-4 flex items-center justify-end gap-3">
+            <div
+              className="sticky bottom-0 flex items-center justify-end gap-3 rounded-b-2xl"
+              style={{
+                backgroundColor: "var(--color-neutral-50)",
+                borderTop: "1px solid var(--color-neutral-200)",
+                padding: "1rem 1.5rem",
+              }}
+            >
               <button
+                type="button"
                 onClick={closeMilestoneModal}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
+                className="btn btn-ghost btn-md"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={saveMilestone}
-                className="btn-primary flex items-center gap-2"
+                className="btn btn-primary btn-md flex items-center gap-2"
               >
                 <FontAwesomeIcon
                   icon={editingMilestone ? faCheckCircle : faPlus}
+                  style={{ fontSize: "0.875rem" }}
                 />
                 {editingMilestone ? "Update Milestone" : "Add Milestone"}
               </button>
@@ -1614,74 +1881,177 @@ export default function CreateProjectPage() {
         </div>
       )}
 
-      {/* View Milestone Modal - keeping your existing code */}
+      {/* ── View milestone modal ── */}
       {viewingMilestone && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between z-10">
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div
+              className="flex items-center justify-between sticky top-0 rounded-t-2xl"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                borderBottom: "1px solid var(--color-neutral-200)",
+                padding: "1.25rem 1.5rem",
+              }}
+            >
               <div>
-                <h3 className="heading-4 text-neutral-900">
+                <h3
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1.0625rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
                   Milestone Details
                 </h3>
-                <p className="text-neutral-600 text-sm mt-1">
+                <p
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--color-neutral-500)",
+                    marginTop: "0.125rem",
+                  }}
+                >
                   Review milestone information
                 </p>
               </div>
               <button
-                onClick={closeViewModal}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+                onClick={() => setViewingMilestone(null)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--color-neutral-500)",
+                  padding: "0.375rem",
+                  borderRadius: "0.5rem",
+                }}
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+                <FontAwesomeIcon
+                  icon={faTimes}
+                  style={{ fontSize: "0.875rem" }}
+                />
               </button>
             </div>
 
-            <div className="p-6 space-y-6">
+            <div style={{ padding: "1.5rem" }} className="space-y-5">
               <div>
-                <label className="block text-neutral-600 font-medium mb-2 body-small">
+                <p
+                  className="font-semibold uppercase tracking-wider mb-1"
+                  style={{
+                    fontSize: "0.65rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
                   Title
-                </label>
-                <p className="text-neutral-900 font-semibold text-lg">
+                </p>
+                <p
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1.0625rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
                   {viewingMilestone.title}
                 </p>
               </div>
-
               {viewingMilestone.description && (
                 <div>
-                  <label className="block text-neutral-600 font-medium mb-2 body-small">
+                  <p
+                    className="font-semibold uppercase tracking-wider mb-1"
+                    style={{
+                      fontSize: "0.65rem",
+                      color: "var(--color-neutral-400)",
+                    }}
+                  >
                     Description
-                  </label>
-                  <div className="bg-neutral-50 rounded-lg p-4 border border-neutral-200">
-                    <p className="text-neutral-700 leading-relaxed">
+                  </p>
+                  <div
+                    className="rounded-xl p-4"
+                    style={{
+                      backgroundColor: "var(--color-neutral-50)",
+                      border: "1px solid var(--color-neutral-200)",
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: "0.875rem",
+                        color: "var(--color-neutral-700)",
+                        lineHeight: 1.7,
+                      }}
+                    >
                       {viewingMilestone.description}
                     </p>
                   </div>
                 </div>
               )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-neutral-600 font-medium mb-2 body-small">
+                  <p
+                    className="font-semibold uppercase tracking-wider mb-1"
+                    style={{
+                      fontSize: "0.65rem",
+                      color: "var(--color-neutral-400)",
+                    }}
+                  >
                     Payment Amount
-                  </label>
-                  <div className="flex items-center gap-2 text-neutral-900 font-bold text-2xl bg-green-50 p-4 rounded-lg border border-green-200">
+                  </p>
+                  <div
+                    className="flex items-center gap-2 rounded-xl p-3"
+                    style={{
+                      backgroundColor: "rgba(26,177,137,0.06)",
+                      border: "1px solid rgba(26,177,137,0.2)",
+                    }}
+                  >
                     <FontAwesomeIcon
                       icon={faDollarSign}
-                      className="text-green-600"
+                      style={{ color: "#1ab189", fontSize: "0.8rem" }}
                     />
-                    {formatCurrency(viewingMilestone.amount)}
+                    <span
+                      className="font-bold"
+                      style={{
+                        fontSize: "1.125rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
+                      {formatCurrency(viewingMilestone.amount)}
+                    </span>
                   </div>
                 </div>
-
                 <div>
-                  <label className="block text-neutral-600 font-medium mb-2 body-small">
+                  <p
+                    className="font-semibold uppercase tracking-wider mb-1"
+                    style={{
+                      fontSize: "0.65rem",
+                      color: "var(--color-neutral-400)",
+                    }}
+                  >
                     Due Date
-                  </label>
-                  <div className="flex items-center gap-2 text-neutral-900 font-medium bg-neutral-50 p-4 rounded-lg border border-neutral-200">
+                  </p>
+                  <div
+                    className="flex items-center gap-2 rounded-xl p-3"
+                    style={{
+                      backgroundColor: "var(--color-neutral-50)",
+                      border: "1px solid var(--color-neutral-200)",
+                    }}
+                  >
                     <FontAwesomeIcon
                       icon={faCalendar}
-                      className="text-primary-600"
+                      style={{ color: "#1ab189", fontSize: "0.8rem" }}
                     />
-                    <span className="text-sm">
+                    <span
+                      style={{
+                        fontSize: "0.8rem",
+                        color: "var(--color-neutral-800)",
+                        fontWeight: 500,
+                      }}
+                    >
                       {new Date(viewingMilestone.dueDate).toLocaleDateString(
                         "en-US",
                         {
@@ -1689,84 +2059,97 @@ export default function CreateProjectPage() {
                           year: "numeric",
                           month: "long",
                           day: "numeric",
-                        }
+                        },
                       )}
                     </span>
                   </div>
                 </div>
               </div>
-
               <div>
-                <label className="block text-neutral-600 font-medium mb-2 body-small">
+                <p
+                  className="font-semibold uppercase tracking-wider mb-2"
+                  style={{
+                    fontSize: "0.65rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
                   Status
-                </label>
+                </p>
                 <span
-                  className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold border ${getStatusBadgeColor(
-                    viewingMilestone.status
-                  )}`}
+                  className="inline-flex items-center gap-2 rounded-full font-semibold"
+                  style={{
+                    fontSize: "0.7rem",
+                    padding: "0.3rem 0.75rem",
+                    backgroundColor: getMilestoneStyle(viewingMilestone.status)
+                      .bg,
+                    color: getMilestoneStyle(viewingMilestone.status).color,
+                  }}
                 >
                   <FontAwesomeIcon
-                    icon={getStatusIcon(viewingMilestone.status)}
+                    icon={getMilestoneIcon(viewingMilestone.status)}
+                    style={{ fontSize: "0.65rem" }}
                   />
-                  {getStatusText(viewingMilestone.status)}
+                  {MILESTONE_LABELS[viewingMilestone.status]}
                 </span>
               </div>
             </div>
 
-            <div className="sticky bottom-0 bg-neutral-50 border-t border-neutral-200 px-6 py-4 flex items-center justify-between gap-3">
+            <div
+              className="sticky bottom-0 flex items-center justify-between gap-3 rounded-b-2xl"
+              style={{
+                backgroundColor: "var(--color-neutral-50)",
+                borderTop: "1px solid var(--color-neutral-200)",
+                padding: "1rem 1.5rem",
+              }}
+            >
               <button
+                type="button"
                 onClick={() => {
-                  if (
-                    confirm("Are you sure you want to delete this milestone?")
-                  ) {
+                  if (confirm("Delete this milestone?")) {
                     deleteMilestone(viewingMilestone.id);
-                    closeViewModal();
+                    setViewingMilestone(null);
                   }
                 }}
-                className="px-5 py-2.5 bg-red-600 text-neutral-0 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center gap-2"
+                className="btn btn-md flex items-center gap-2"
+                style={{
+                  backgroundColor: "#ef4444",
+                  color: "white",
+                  border: "none",
+                }}
               >
-                <FontAwesomeIcon icon={faTrash} />
+                <FontAwesomeIcon
+                  icon={faTrash}
+                  style={{ fontSize: "0.8rem" }}
+                />{" "}
                 Delete
               </button>
               <div className="flex items-center gap-3">
                 <button
-                  onClick={closeViewModal}
-                  className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
+                  type="button"
+                  onClick={() => setViewingMilestone(null)}
+                  className="btn btn-ghost btn-md"
                 >
                   Close
                 </button>
                 <button
+                  type="button"
                   onClick={() => {
-                    closeViewModal();
+                    setViewingMilestone(null);
                     openMilestoneModal(viewingMilestone);
                   }}
-                  className="btn-primary flex items-center gap-2"
+                  className="btn btn-primary btn-md flex items-center gap-2"
                 >
-                  <FontAwesomeIcon icon={faPenToSquare} />
-                  Edit Milestone
+                  <FontAwesomeIcon
+                    icon={faPenToSquare}
+                    style={{ fontSize: "0.8rem" }}
+                  />{" "}
+                  Edit
                 </button>
               </div>
             </div>
           </div>
         </div>
       )}
-
-      <style jsx>{`
-        @keyframes slide-in-right {
-          from {
-            transform: translateX(100%);
-            opacity: 0;
-          }
-          to {
-            transform: translateX(0);
-            opacity: 1;
-          }
-        }
-
-        .animate-slide-in-right {
-          animation: slide-in-right 0.3s ease-out;
-        }
-      `}</style>
     </div>
   );
 }

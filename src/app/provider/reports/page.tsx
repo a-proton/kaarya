@@ -1,9 +1,11 @@
 "use client";
 
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faFileAlt,
-  faDownload,
   faFilter,
   faCalendar,
   faProjectDiagram,
@@ -15,14 +17,15 @@ import {
   faFileExcel,
   faFileCsv,
   faSpinner,
+  faPrint,
   faChevronDown,
-  faChevronUp,
   faTimes,
-  faExclamationTriangle,
+  faArrowLeft,
 } from "@fortawesome/free-solid-svg-icons";
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
 import { api } from "@/lib/api";
 import { isAuthenticated } from "@/lib/auth";
 
@@ -38,27 +41,84 @@ interface ReportType {
 interface ReportData {
   report_type: string;
   generated_at: string;
-  summary: any;
-  [key: string]: any;
+  summary: Record<string, unknown>;
+  projects?: ProjectItem[];
+  employees?: EmployeeItem[];
+  clients?: ClientItem[];
+  milestones?: MilestoneItem[];
+  payment_details?: PaymentItem[];
+}
+
+interface ProjectItem {
+  id?: number;
+  name?: string;
+  client?: string;
+  status?: string;
+  total_cost?: number;
+  received?: number;
+  balance?: number;
+  completion?: string;
+  milestones?: number;
+}
+
+interface EmployeeItem {
+  id?: number;
+  name?: string;
+  role?: string;
+  department?: string;
+  hours_worked?: number;
+  projects_assigned?: number;
+  attendance?: {
+    total_days?: number;
+    present?: number;
+    absent?: number;
+    rate?: number;
+  };
+}
+
+interface ClientItem {
+  id?: number;
+  name?: string;
+  email?: string;
+  phone?: string;
+  total_projects?: number;
+  completed_projects?: number;
+  total_revenue?: number;
+  total_paid?: number;
+  average_rating?: number;
+  review_count?: number;
+}
+
+interface MilestoneItem {
+  id?: number;
+  project?: string;
+  title?: string;
+  status?: string;
+  target_date?: string;
+  completion_percentage?: number;
+  is_overdue?: boolean;
+  days_delayed?: number;
+}
+
+interface PaymentItem {
+  date?: string;
+  project?: string;
+  type?: string;
+  amount?: number;
+  method?: string;
+  transaction_id?: string;
 }
 
 interface ReportFilters {
   start_date?: string;
   end_date?: string;
   status?: string;
-  employee_id?: number;
-  project_id?: number;
   client_id?: number;
-}
-
-interface Client {
-  id: number;
-  name: string;
-  email: string;
+  project_id?: number;
 }
 
 // ========== ICON MAPPING ==========
-const iconMapping: { [key: string]: any } = {
+const iconMapping: Record<string, unknown> = {
   faProjectDiagram: faProjectDiagram,
   faChartLine: faChartLine,
   faUsers: faUsers,
@@ -66,19 +126,11 @@ const iconMapping: { [key: string]: any } = {
   faCheckCircle: faCheckCircle,
 };
 
-const formatIconMapping: { [key: string]: any } = {
-  pdf: faFilePdf,
-  excel: faFileExcel,
-  csv: faFileCsv,
-};
-
 // ========== HELPER FUNCTIONS ==========
-const formatCurrency = (value: number) => {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(value);
-};
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+    value,
+  );
 
 const formatDate = (dateString: string) => {
   if (!dateString) return "N/A";
@@ -100,1073 +152,1124 @@ const formatDateTime = (dateString: string) => {
   });
 };
 
-const getApiBaseUrl = () => {
-  if (typeof window !== "undefined") {
-    return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-  }
-  return "http://localhost:8000";
+// ========== DESIGN SYSTEM TOKENS ==========
+const GREEN = "#1ab189";
+const GREEN_TINT = "rgba(26,177,137,0.10)";
+const GREEN_RING = "rgba(26,177,137,0.18)";
+
+const baseInput: React.CSSProperties = {
+  width: "100%",
+  padding: "0.625rem 0.875rem",
+  border: "1px solid var(--color-neutral-200)",
+  borderRadius: "0.625rem",
+  fontSize: "0.875rem",
+  background: "#fff",
+  color: "var(--color-neutral-900)",
+  outline: "none",
+  transition: "box-shadow 0.15s",
 };
 
+const STATUS_STYLES: Record<string, { background: string; color: string }> = {
+  pending: { background: "#fef3c7", color: "#92400e" },
+  in_progress: { background: "#dbeafe", color: "#1e40af" },
+  completed: { background: "#d1fae5", color: "#065f46" },
+  on_hold: { background: "#ffedd5", color: "#9a3412" },
+  cancelled: { background: "#fee2e2", color: "#991b1b" },
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUS_STYLES[status?.toLowerCase().replace(" ", "_")] ?? {
+    background: "#f3f4f6",
+    color: "#374151",
+  };
+  return (
+    <span
+      style={{
+        ...s,
+        borderRadius: "9999px",
+        padding: "0.2rem 0.75rem",
+        fontSize: "0.75rem",
+        fontWeight: 600,
+        display: "inline-block",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {status ?? "Unknown"}
+    </span>
+  );
+}
+
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <div
+      style={{
+        padding: "1.25rem 1.5rem",
+        borderBottom: "1px solid var(--color-neutral-200)",
+        display: "flex",
+        alignItems: "center",
+        gap: "0.75rem",
+      }}
+    >
+      <div
+        style={{
+          width: 32,
+          height: 32,
+          borderRadius: "0.5rem",
+          background: GREEN_TINT,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <FontAwesomeIcon
+          icon={faFileAlt}
+          style={{ color: GREEN, fontSize: 14 }}
+        />
+      </div>
+      <h3
+        style={{
+          fontWeight: 700,
+          fontSize: "1rem",
+          color: "var(--color-neutral-900)",
+        }}
+      >
+        {title}
+      </h3>
+    </div>
+  );
+}
+
+// ========== MAIN PAGE ==========
 export default function ReportsPage() {
   const router = useRouter();
+  const printRef = useRef<HTMLDivElement>(null);
 
-  // ========== STATE ==========
   const [selectedReport, setSelectedReport] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<ReportFilters>({
-    start_date: "2020-01-01",
-    end_date: "2030-12-31",
+    start_date: "2024-01-01",
+    end_date: new Date().toISOString().split("T")[0],
   });
   const [reportData, setReportData] = useState<ReportData | null>(null);
-  const [exportingFormat, setExportingFormat] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [focusedInput, setFocusedInput] = useState<string | null>(null);
 
-  // ========== AUTHENTICATION CHECK ==========
   useEffect(() => {
     if (!isAuthenticated()) {
-      console.log("❌ Not authenticated, redirecting...");
       router.push("/login?type=service_provider&session=expired");
-    } else {
-      console.log("✅ User is authenticated");
     }
   }, [router]);
 
-  // ========== API QUERIES ==========
-
-  // Fetch available report types
-  const {
-    data: reportTypes,
-    isLoading: typesLoading,
-    error: typesError,
-  } = useQuery({
+  // ========== QUERIES ==========
+  const { data: reportTypes, isLoading: typesLoading } = useQuery({
     queryKey: ["report-types"],
-    queryFn: async () => {
-      if (!isAuthenticated()) {
-        router.push("/login?type=service_provider&session=expired");
-        throw new Error("Not authenticated");
-      }
-      console.log("🔍 Fetching report types...");
-      const data = await api.get<ReportType[]>("/api/v1/reports/types/");
-      console.log("✅ Report types received:", data);
-      return data;
-    },
+    queryFn: () => api.get<ReportType[]>("/api/v1/reports/types/"),
     retry: 1,
   });
 
-  // Fetch clients for dropdown
   const { data: clientsList } = useQuery({
     queryKey: ["clients-for-reports"],
-    queryFn: async () => {
-      if (!isAuthenticated()) {
-        return [];
-      }
-      console.log("🔍 Fetching clients for reports...");
-      const data = await api.get<Client[]>("/api/v1/reports/clients/");
-      console.log("✅ Clients received:", data);
-      return data;
-    },
+    queryFn: () => api.get<ClientItem[]>("/api/v1/reports/clients/"),
     retry: 1,
   });
 
-  // Generate report mutation
-  const generateReportMutation = useMutation({
-    mutationFn: async ({
-      reportId,
-      filters,
-    }: {
-      reportId: string;
-      filters: ReportFilters;
-    }) => {
-      console.log("🔍 Generating report:", reportId, "with filters:", filters);
+  const { data: projectsList } = useQuery({
+    queryKey: ["projects-for-reports"],
+    queryFn: () => api.get<ProjectItem[]>("/api/v1/projects/"),
+    retry: 1,
+  });
 
+  // ========== GENERATE REPORT ==========
+  const handleGenerateReport = async (reportId: string) => {
+    setSelectedReport(reportId);
+    setReportData(null);
+    setIsGenerating(true);
+    try {
       const queryParams = new URLSearchParams();
-
       if (filters.start_date)
         queryParams.append("start_date", filters.start_date);
       if (filters.end_date) queryParams.append("end_date", filters.end_date);
       if (filters.status) queryParams.append("status", filters.status);
-      if (filters.employee_id)
-        queryParams.append("employee_id", filters.employee_id.toString());
-      if (filters.project_id)
-        queryParams.append("project_id", filters.project_id.toString());
       if (filters.client_id)
         queryParams.append("client_id", filters.client_id.toString());
+      if (filters.project_id)
+        queryParams.append("project_id", filters.project_id.toString());
 
       const data = await api.get<ReportData>(
         `/api/v1/reports/${reportId}/?${queryParams.toString()}`,
       );
-
-      console.log("✅ Report data received:", data);
-      return data;
-    },
-    onSuccess: (data) => {
-      console.log("=== REPORT DATA RECEIVED ===");
-      console.log("Report type:", data.report_type);
-      console.log("Summary:", data.summary);
-      console.log("Full data:", JSON.stringify(data, null, 2));
-      console.log("========================");
       setReportData(data);
-    },
-    onError: (error: any) => {
-      console.error("❌ Report generation error:", error);
-      alert(error.message || "Failed to generate report");
-    },
-  });
-
-  // Export report mutation
-  const exportReportMutation = useMutation({
-    mutationFn: async ({
-      reportId,
-      format,
-      filters,
-    }: {
-      reportId: string;
-      format: string;
-      filters: ReportFilters;
-    }) => {
-      const baseUrl = getApiBaseUrl();
-      const url = `${baseUrl}/api/v1/reports/${reportId}/export/`;
-
-      console.log("📥 Exporting to:", url);
-
-      let token = localStorage.getItem("accessToken");
-
-      if (!token) {
-        throw new Error("No authentication token found. Please log in again.");
-      }
-
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          format,
-          ...filters,
-        }),
-      });
-
-      // Handle 401 - try to refresh token
-      if (response.status === 401) {
-        console.log("🔄 Token expired, attempting refresh...");
-
-        const refreshToken = localStorage.getItem("refreshToken");
-        if (!refreshToken) {
-          throw new Error("Session expired. Please log in again.");
-        }
-
-        try {
-          const refreshResponse = await fetch(
-            `${baseUrl}/api/v1/auth/token/refresh/`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                refresh: refreshToken,
-              }),
-            },
-          );
-
-          if (refreshResponse.ok) {
-            const refreshData = await refreshResponse.json();
-            localStorage.setItem("accessToken", refreshData.access);
-
-            // Retry the export with new token
-            const retryResponse = await fetch(url, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${refreshData.access}`,
-              },
-              body: JSON.stringify({
-                format,
-                ...filters,
-              }),
-            });
-
-            if (!retryResponse.ok) {
-              const error = await retryResponse
-                .json()
-                .catch(() => ({ error: "Export failed after token refresh" }));
-              throw new Error(error.error || "Export failed");
-            }
-
-            const contentDisposition = retryResponse.headers.get(
-              "content-disposition",
-            );
-            let filename = `report.${format === "excel" ? "xlsx" : format}`;
-            if (contentDisposition) {
-              const filenameMatch =
-                contentDisposition.match(/filename="?(.+)"?/);
-              if (filenameMatch) {
-                filename = filenameMatch[1];
-              }
-            }
-
-            const blob = await retryResponse.blob();
-            const downloadUrl = window.URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = downloadUrl;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(downloadUrl);
-            document.body.removeChild(a);
-
-            return;
-          } else {
-            throw new Error("Session expired. Please log in again.");
-          }
-        } catch (refreshError) {
-          localStorage.removeItem("accessToken");
-          localStorage.removeItem("refreshToken");
-          router.push("/login?type=service_provider&session=expired");
-          throw new Error("Session expired. Please log in again.");
-        }
-      }
-
-      if (!response.ok) {
-        const error = await response
-          .json()
-          .catch(() => ({ error: "Export failed" }));
-        throw new Error(error.error || "Export failed");
-      }
-
-      // Get filename from header or use default
-      const contentDisposition = response.headers.get("content-disposition");
-      let filename = `report.${format === "excel" ? "xlsx" : format}`;
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
-
-      const blob = await response.blob();
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = downloadUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(downloadUrl);
-      document.body.removeChild(a);
-    },
-    onSuccess: () => {
-      console.log("✅ Export successful");
-      setExportingFormat(null);
-    },
-    onError: (error: any) => {
-      console.error("❌ Export error:", error);
-      setExportingFormat(null);
-      alert(error.message || "Failed to export report");
-    },
-  });
-
-  // ========== EVENT HANDLERS ==========
-
-  const handleGenerateReport = (reportId: string) => {
-    console.log("📊 Generating report:", reportId);
-    setSelectedReport(reportId);
-    setReportData(null);
-    generateReportMutation.mutate({ reportId, filters });
-  };
-
-  const handleExport = (format: string) => {
-    if (!selectedReport) return;
-    console.log("📥 Exporting report in format:", format);
-    setExportingFormat(format);
-    exportReportMutation.mutate({
-      reportId: selectedReport,
-      format,
-      filters,
-    });
-  };
-
-  const handleFilterChange = (field: string, value: any) => {
-    console.log("🔧 Filter changed:", field, "=", value);
-    setFilters((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to generate report";
+      alert(message);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleApplyFilters = () => {
-    console.log("✅ Applying filters:", filters);
-    if (selectedReport) {
-      generateReportMutation.mutate({ reportId: selectedReport, filters });
-    }
     setShowFilters(false);
+    if (selectedReport) handleGenerateReport(selectedReport);
   };
 
   const handleResetFilters = () => {
-    console.log("🔄 Resetting filters");
     setFilters({
-      start_date: "2020-01-01",
-      end_date: "2030-12-31",
+      start_date: "2024-01-01",
+      end_date: new Date().toISOString().split("T")[0],
     });
   };
 
-  // ========== RENDER FUNCTIONS ==========
+  const inputStyle = (field: string): React.CSSProperties => ({
+    ...baseInput,
+    boxShadow: focusedInput === field ? `0 0 0 3px ${GREEN_RING}` : "none",
+    borderColor: focusedInput === field ? GREEN : "var(--color-neutral-200)",
+  });
 
-  const renderSummaryCards = (summary: any) => {
-    if (!summary) return null;
+  const focusHandlers = (field: string) => ({
+    onFocus: () => setFocusedInput(field),
+    onBlur: () => setFocusedInput(null),
+  });
 
-    if (reportData?.report_type === "Projects Summary") {
-      return (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border border-blue-200">
-            <div className="text-blue-600 text-sm font-semibold mb-1">
-              Total Projects
-            </div>
-            <div className="text-3xl font-bold text-blue-900">
-              {summary.total_projects || 0}
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border border-green-200">
-            <div className="text-green-600 text-sm font-semibold mb-1">
-              Total Revenue
-            </div>
-            <div className="text-3xl font-bold text-green-900">
-              {formatCurrency(summary.total_revenue || 0)}
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200">
-            <div className="text-purple-600 text-sm font-semibold mb-1">
-              Received
-            </div>
-            <div className="text-3xl font-bold text-purple-900">
-              {formatCurrency(summary.total_received || 0)}
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-6 border border-orange-200">
-            <div className="text-orange-600 text-sm font-semibold mb-1">
-              Pending
-            </div>
-            <div className="text-3xl font-bold text-orange-900">
-              {formatCurrency(summary.total_pending || 0)}
-            </div>
-          </div>
-        </div>
+  // ========== EXPORT: PDF ==========
+  const exportToPDF = () => {
+    if (!reportData) return;
+    setIsExporting(true);
+    try {
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+
+      doc.setFontSize(18);
+      doc.setTextColor(26, 177, 137);
+      doc.text(reportData.report_type, pageWidth / 2, 20, { align: "center" });
+
+      doc.setFontSize(10);
+      doc.setTextColor(100);
+      doc.text(
+        `Generated: ${formatDateTime(reportData.generated_at)}`,
+        pageWidth / 2,
+        28,
+        {
+          align: "center",
+        },
       );
-    }
 
-    if (reportData?.report_type === "Financial Report") {
-      return (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border border-green-200">
-            <div className="text-green-600 text-sm font-semibold mb-1">
-              Total Income
-            </div>
-            <div className="text-3xl font-bold text-green-900">
-              {formatCurrency(summary.total_income || 0)}
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-6 border border-red-200">
-            <div className="text-red-600 text-sm font-semibold mb-1">
-              Total Expenses
-            </div>
-            <div className="text-3xl font-bold text-red-900">
-              {formatCurrency(summary.total_expenses || 0)}
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border border-blue-200">
-            <div className="text-blue-600 text-sm font-semibold mb-1">
-              Net Profit
-            </div>
-            <div className="text-3xl font-bold text-blue-900">
-              {formatCurrency(summary.net_profit || 0)}
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200">
-            <div className="text-purple-600 text-sm font-semibold mb-1">
-              Profit Margin
-            </div>
-            <div className="text-3xl font-bold text-purple-900">
-              {summary.profit_margin || 0}%
-            </div>
-          </div>
-        </div>
+      let yPos = 40;
+
+      if (reportData.summary) {
+        doc.setFontSize(13);
+        doc.setTextColor(26, 177, 137);
+        doc.text("Summary", 14, yPos);
+        yPos += 8;
+        doc.setFontSize(10);
+        doc.setTextColor(0);
+        Object.entries(reportData.summary).forEach(([key, value]) => {
+          const label = key
+            .replace(/_/g, " ")
+            .replace(/\b\w/g, (l) => l.toUpperCase());
+          doc.text(`${label}: ${value}`, 14, yPos);
+          yPos += 6;
+        });
+        yPos += 5;
+      }
+
+      const headStyles = {
+        fillColor: [26, 177, 137] as [number, number, number],
+      };
+
+      if (reportData.projects?.length) {
+        autoTable(doc, {
+          startY: yPos,
+          head: [
+            [
+              "Project",
+              "Client",
+              "Status",
+              "Total Cost",
+              "Received",
+              "Balance",
+            ],
+          ],
+          body: reportData.projects.map((p) => [
+            p.name ?? "N/A",
+            p.client ?? "N/A",
+            p.status ?? "N/A",
+            formatCurrency(p.total_cost ?? 0),
+            formatCurrency(p.received ?? 0),
+            formatCurrency(p.balance ?? 0),
+          ]),
+          theme: "grid",
+          headStyles,
+        });
+      }
+      if (reportData.employees?.length) {
+        autoTable(doc, {
+          startY: yPos,
+          head: [
+            ["Name", "Role", "Attendance Rate", "Hours Worked", "Projects"],
+          ],
+          body: reportData.employees.map((e) => [
+            e.name ?? "N/A",
+            e.role ?? "N/A",
+            `${e.attendance?.rate ?? 0}%`,
+            (e.hours_worked ?? 0).toFixed(2),
+            e.projects_assigned ?? 0,
+          ]),
+          theme: "grid",
+          headStyles,
+        });
+      }
+      if (reportData.clients?.length) {
+        autoTable(doc, {
+          startY: yPos,
+          head: [["Client", "Projects", "Revenue", "Paid", "Rating"]],
+          body: reportData.clients.map((c) => [
+            c.name ?? "N/A",
+            c.total_projects ?? 0,
+            formatCurrency(c.total_revenue ?? 0),
+            formatCurrency(c.total_paid ?? 0),
+            `${(c.average_rating ?? 0).toFixed(1)} ★`,
+          ]),
+          theme: "grid",
+          headStyles,
+        });
+      }
+      if (reportData.milestones?.length) {
+        autoTable(doc, {
+          startY: yPos,
+          head: [["Project", "Milestone", "Status", "Progress", "Target Date"]],
+          body: reportData.milestones.map((m) => [
+            m.project ?? "N/A",
+            m.title ?? "N/A",
+            m.status ?? "N/A",
+            `${m.completion_percentage ?? 0}%`,
+            formatDate(m.target_date ?? ""),
+          ]),
+          theme: "grid",
+          headStyles,
+        });
+      }
+      if (reportData.payment_details?.length) {
+        autoTable(doc, {
+          startY: yPos,
+          head: [["Date", "Project", "Type", "Amount", "Method"]],
+          body: reportData.payment_details.map((p) => [
+            formatDate(p.date ?? ""),
+            p.project ?? "N/A",
+            p.type ?? "N/A",
+            formatCurrency(p.amount ?? 0),
+            p.method ?? "N/A",
+          ]),
+          theme: "grid",
+          headStyles,
+        });
+      }
+
+      doc.save(
+        `${reportData.report_type.replace(/\s+/g, "_")}_${Date.now()}.pdf`,
       );
+    } catch {
+      alert("Failed to generate PDF");
+    } finally {
+      setIsExporting(false);
     }
-
-    if (reportData?.report_type === "Employee Performance") {
-      return (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border border-blue-200">
-            <div className="text-blue-600 text-sm font-semibold mb-1">
-              Total Employees
-            </div>
-            <div className="text-3xl font-bold text-blue-900">
-              {summary.total_employees || 0}
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border border-green-200">
-            <div className="text-green-600 text-sm font-semibold mb-1">
-              Avg Attendance Rate
-            </div>
-            <div className="text-3xl font-bold text-green-900">
-              {summary.avg_attendance_rate || 0}%
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200">
-            <div className="text-purple-600 text-sm font-semibold mb-1">
-              Total Hours Worked
-            </div>
-            <div className="text-3xl font-bold text-purple-900">
-              {(summary.total_hours_worked || 0).toLocaleString()}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (reportData?.report_type === "Client Analysis") {
-      return (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border border-blue-200">
-            <div className="text-blue-600 text-sm font-semibold mb-1">
-              Total Clients
-            </div>
-            <div className="text-3xl font-bold text-blue-900">
-              {summary.total_clients || 0}
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border border-green-200">
-            <div className="text-green-600 text-sm font-semibold mb-1">
-              Total Revenue
-            </div>
-            <div className="text-3xl font-bold text-green-900">
-              {formatCurrency(summary.total_revenue || 0)}
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200">
-            <div className="text-purple-600 text-sm font-semibold mb-1">
-              Avg Revenue/Client
-            </div>
-            <div className="text-3xl font-bold text-purple-900">
-              {formatCurrency(summary.avg_revenue_per_client || 0)}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (reportData?.report_type === "Milestone Completion") {
-      return (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border border-blue-200">
-            <div className="text-blue-600 text-sm font-semibold mb-1">
-              Total Milestones
-            </div>
-            <div className="text-3xl font-bold text-blue-900">
-              {summary.total_milestones || 0}
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border border-green-200">
-            <div className="text-green-600 text-sm font-semibold mb-1">
-              Completed
-            </div>
-            <div className="text-3xl font-bold text-green-900">
-              {summary.completed || 0}
-            </div>
-          </div>
-          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border border-purple-200">
-            <div className="text-purple-600 text-sm font-semibold mb-1">
-              Completion Rate
-            </div>
-            <div className="text-3xl font-bold text-purple-900">
-              {summary.completion_rate || 0}%
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    return null;
   };
 
-  const renderProjectsTable = (projects: any[]) => {
-    if (!projects || projects.length === 0) {
-      return (
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-8 text-center">
-          <p className="text-neutral-600">No projects found</p>
-        </div>
+  // ========== EXPORT: EXCEL ==========
+  const exportToExcel = () => {
+    if (!reportData) return;
+    setIsExporting(true);
+    try {
+      const wb = XLSX.utils.book_new();
+      if (reportData.summary) {
+        const data = Object.entries(reportData.summary).map(([key, value]) => ({
+          Metric: key
+            .replace(/_/g, " ")
+            .replace(/\b\w/g, (l) => l.toUpperCase()),
+          Value: value,
+        }));
+        XLSX.utils.book_append_sheet(
+          wb,
+          XLSX.utils.json_to_sheet(data),
+          "Summary",
+        );
+      }
+      if (reportData.projects?.length)
+        XLSX.utils.book_append_sheet(
+          wb,
+          XLSX.utils.json_to_sheet(reportData.projects),
+          "Projects",
+        );
+      if (reportData.employees?.length)
+        XLSX.utils.book_append_sheet(
+          wb,
+          XLSX.utils.json_to_sheet(reportData.employees),
+          "Employees",
+        );
+      if (reportData.clients?.length)
+        XLSX.utils.book_append_sheet(
+          wb,
+          XLSX.utils.json_to_sheet(reportData.clients),
+          "Clients",
+        );
+      if (reportData.milestones?.length)
+        XLSX.utils.book_append_sheet(
+          wb,
+          XLSX.utils.json_to_sheet(reportData.milestones),
+          "Milestones",
+        );
+      if (reportData.payment_details?.length)
+        XLSX.utils.book_append_sheet(
+          wb,
+          XLSX.utils.json_to_sheet(reportData.payment_details),
+          "Payments",
+        );
+      XLSX.writeFile(
+        wb,
+        `${reportData.report_type.replace(/\s+/g, "_")}_${Date.now()}.xlsx`,
       );
+    } catch {
+      alert("Failed to generate Excel file");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // ========== EXPORT: CSV ==========
+  const exportToCSV = () => {
+    if (!reportData) return;
+    setIsExporting(true);
+    try {
+      let csv = `${reportData.report_type}\nGenerated: ${formatDateTime(reportData.generated_at)}\n\n`;
+      if (reportData.summary) {
+        csv += "SUMMARY\n";
+        Object.entries(reportData.summary).forEach(([k, v]) => {
+          csv += `${k.replace(/_/g, " ")},${v}\n`;
+        });
+        csv += "\n";
+      }
+      if (reportData.projects?.length) {
+        csv += "PROJECTS\nName,Client,Status,Total Cost,Received,Balance\n";
+        reportData.projects.forEach((p) => {
+          csv += `"${p.name ?? ""}","${p.client ?? ""}","${p.status ?? ""}",${p.total_cost ?? 0},${p.received ?? 0},${p.balance ?? 0}\n`;
+        });
+        csv += "\n";
+      }
+      if (reportData.employees?.length) {
+        csv += "EMPLOYEES\nName,Role,Attendance Rate,Hours Worked,Projects\n";
+        reportData.employees.forEach((e) => {
+          csv += `"${e.name ?? ""}","${e.role ?? ""}",${e.attendance?.rate ?? 0}%,${e.hours_worked ?? 0},${e.projects_assigned ?? 0}\n`;
+        });
+        csv += "\n";
+      }
+      if (reportData.clients?.length) {
+        csv += "CLIENTS\nName,Projects,Revenue,Paid,Rating\n";
+        reportData.clients.forEach((c) => {
+          csv += `"${c.name ?? ""}",${c.total_projects ?? 0},${c.total_revenue ?? 0},${c.total_paid ?? 0},${c.average_rating ?? 0}\n`;
+        });
+      }
+      saveAs(
+        new Blob([csv], { type: "text/csv;charset=utf-8;" }),
+        `${reportData.report_type.replace(/\s+/g, "_")}_${Date.now()}.csv`,
+      );
+    } catch {
+      alert("Failed to generate CSV");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // ========== SUMMARY CARDS ==========
+  const renderSummaryCards = () => {
+    if (!reportData?.summary) return null;
+    const s = reportData.summary as Record<string, number>;
+    type CardDef = { label: string; value: string | number };
+    let cards: CardDef[] = [];
+
+    if (reportData.report_type === "Projects Summary") {
+      cards = [
+        { label: "Total Projects", value: s.total_projects ?? 0 },
+        { label: "Total Revenue", value: formatCurrency(s.total_revenue ?? 0) },
+        { label: "Received", value: formatCurrency(s.total_received ?? 0) },
+        { label: "Pending", value: formatCurrency(s.total_pending ?? 0) },
+      ];
+    } else if (reportData.report_type === "Financial Report") {
+      cards = [
+        { label: "Total Income", value: formatCurrency(s.total_income ?? 0) },
+        {
+          label: "Total Expenses",
+          value: formatCurrency(s.total_expenses ?? 0),
+        },
+        { label: "Net Profit", value: formatCurrency(s.net_profit ?? 0) },
+        { label: "Profit Margin", value: `${s.profit_margin ?? 0}%` },
+      ];
+    } else if (reportData.report_type === "Employee Performance") {
+      cards = [
+        { label: "Total Employees", value: s.total_employees ?? 0 },
+        { label: "Avg Attendance", value: `${s.avg_attendance_rate ?? 0}%` },
+        {
+          label: "Total Hours",
+          value: (s.total_hours_worked ?? 0).toLocaleString(),
+        },
+      ];
+    } else if (reportData.report_type === "Client Analysis") {
+      cards = [
+        { label: "Total Clients", value: s.total_clients ?? 0 },
+        { label: "Total Revenue", value: formatCurrency(s.total_revenue ?? 0) },
+        {
+          label: "Avg Revenue/Client",
+          value: formatCurrency(s.avg_revenue_per_client ?? 0),
+        },
+      ];
+    } else if (reportData.report_type === "Milestone Completion") {
+      cards = [
+        { label: "Total Milestones", value: s.total_milestones ?? 0 },
+        { label: "Completed", value: s.completed ?? 0 },
+        { label: "Completion Rate", value: `${s.completion_rate ?? 0}%` },
+      ];
     }
 
     return (
-      <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
-        <div className="p-6 border-b border-neutral-200 bg-gradient-to-r from-primary-50 to-secondary-50">
-          <h3 className="heading-4">Project Details</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-neutral-100">
-              <tr>
-                <th className="text-left p-4 font-semibold text-neutral-700">
-                  Project
-                </th>
-                <th className="text-left p-4 font-semibold text-neutral-700">
-                  Client
-                </th>
-                <th className="text-left p-4 font-semibold text-neutral-700">
-                  Status
-                </th>
-                <th className="text-right p-4 font-semibold text-neutral-700">
-                  Total Cost
-                </th>
-                <th className="text-right p-4 font-semibold text-neutral-700">
-                  Received
-                </th>
-                <th className="text-right p-4 font-semibold text-neutral-700">
-                  Balance
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Completion
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {projects.map((project, index) => (
-                <tr
-                  key={project.id || index}
-                  className="border-t border-neutral-200 hover:bg-neutral-50"
-                >
-                  <td className="p-4">
-                    <div className="font-semibold text-neutral-900">
-                      {project.name || "Unnamed Project"}
-                    </div>
-                    <div className="text-sm text-neutral-600">
-                      {project.milestones || "0"} milestones
-                    </div>
-                  </td>
-                  <td className="p-4 text-neutral-700">
-                    {project.client || "N/A"}
-                  </td>
-                  <td className="p-4">
-                    <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
-                      {project.status || "Unknown"}
-                    </span>
-                  </td>
-                  <td className="p-4 text-right font-semibold text-neutral-900">
-                    {formatCurrency(project.total_cost || 0)}
-                  </td>
-                  <td className="p-4 text-right text-green-600 font-semibold">
-                    {formatCurrency(project.received || 0)}
-                  </td>
-                  <td className="p-4 text-right text-orange-600 font-semibold">
-                    {formatCurrency(project.balance || 0)}
-                  </td>
-                  <td className="p-4 text-center">
-                    <span className="font-semibold text-neutral-900">
-                      {project.completion || "0%"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${cards.length}, 1fr)`,
+          gap: "1rem",
+          marginBottom: "1.5rem",
+        }}
+      >
+        {cards.map((card, idx) => (
+          <div
+            key={idx}
+            style={{
+              background: "#fff",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "1rem",
+              padding: "1.5rem",
+              borderTop: `3px solid ${GREEN}`,
+            }}
+          >
+            <div
+              style={{
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                color: "var(--color-neutral-500)",
+                marginBottom: "0.375rem",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+              }}
+            >
+              {card.label}
+            </div>
+            <div
+              style={{
+                fontSize: "1.75rem",
+                fontWeight: 700,
+                color: "var(--color-neutral-900)",
+              }}
+            >
+              {card.value}
+            </div>
+          </div>
+        ))}
       </div>
     );
   };
 
-  const renderEmployeeTable = (employees: any[]) => {
-    if (!employees || employees.length === 0) {
-      return (
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-8 text-center">
-          <p className="text-neutral-600">No employees found</p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
-        <div className="p-6 border-b border-neutral-200 bg-gradient-to-r from-primary-50 to-secondary-50">
-          <h3 className="heading-4">Employee Performance</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-neutral-100">
-              <tr>
-                <th className="text-left p-4 font-semibold text-neutral-700">
-                  Employee
-                </th>
-                <th className="text-left p-4 font-semibold text-neutral-700">
-                  Role
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Total Days
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Present
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Absent
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Attendance Rate
-                </th>
-                <th className="text-right p-4 font-semibold text-neutral-700">
-                  Hours Worked
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Projects
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {employees.map((emp, index) => (
-                <tr
-                  key={emp.id || index}
-                  className="border-t border-neutral-200 hover:bg-neutral-50"
-                >
-                  <td className="p-4">
-                    <div className="font-semibold text-neutral-900">
-                      {emp.name || "Unknown"}
-                    </div>
-                    <div className="text-sm text-neutral-600">
-                      {emp.department || "N/A"}
-                    </div>
-                  </td>
-                  <td className="p-4 text-neutral-700">{emp.role || "N/A"}</td>
-                  <td className="p-4 text-center text-neutral-900">
-                    {emp.attendance?.total_days || 0}
-                  </td>
-                  <td className="p-4 text-center text-green-600 font-semibold">
-                    {emp.attendance?.present || 0}
-                  </td>
-                  <td className="p-4 text-center text-red-600 font-semibold">
-                    {emp.attendance?.absent || 0}
-                  </td>
-                  <td className="p-4 text-center">
-                    <span className="font-semibold text-neutral-900">
-                      {emp.attendance?.rate || 0}%
-                    </span>
-                  </td>
-                  <td className="p-4 text-right font-semibold text-neutral-900">
-                    {(emp.hours_worked || 0).toFixed(2)}
-                  </td>
-                  <td className="p-4 text-center text-blue-600 font-semibold">
-                    {emp.projects_assigned || 0}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
-  const renderClientTable = (clients: any[]) => {
-    if (!clients || clients.length === 0) {
-      return (
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-8 text-center">
-          <p className="text-neutral-600">No clients found</p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
-        <div className="p-6 border-b border-neutral-200 bg-gradient-to-r from-primary-50 to-secondary-50">
-          <h3 className="heading-4">Client Analysis</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-neutral-100">
-              <tr>
-                <th className="text-left p-4 font-semibold text-neutral-700">
-                  Client
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Total Projects
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Completed
-                </th>
-                <th className="text-right p-4 font-semibold text-neutral-700">
-                  Total Revenue
-                </th>
-                <th className="text-right p-4 font-semibold text-neutral-700">
-                  Total Paid
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Avg Rating
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {clients.map((client, index) => (
-                <tr
-                  key={client.id || index}
-                  className="border-t border-neutral-200 hover:bg-neutral-50"
-                >
-                  <td className="p-4">
-                    <div className="font-semibold text-neutral-900">
-                      {client.name || "Unknown"}
-                    </div>
-                    <div className="text-sm text-neutral-600">
-                      {client.email || "N/A"}
-                    </div>
-                    <div className="text-sm text-neutral-500">
-                      {client.phone || "N/A"}
-                    </div>
-                  </td>
-                  <td className="p-4 text-center text-neutral-900 font-semibold">
-                    {client.total_projects || 0}
-                  </td>
-                  <td className="p-4 text-center text-green-600 font-semibold">
-                    {client.completed_projects || 0}
-                  </td>
-                  <td className="p-4 text-right text-neutral-900 font-semibold">
-                    {formatCurrency(client.total_revenue || 0)}
-                  </td>
-                  <td className="p-4 text-right text-green-600 font-semibold">
-                    {formatCurrency(client.total_paid || 0)}
-                  </td>
-                  <td className="p-4 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <span className="text-yellow-500">★</span>
-                      <span className="font-semibold text-neutral-900">
-                        {(client.average_rating || 0).toFixed(1)}
-                      </span>
-                      <span className="text-xs text-neutral-500">
-                        ({client.review_count || 0})
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
-  const renderMilestoneTable = (milestones: any[]) => {
-    if (!milestones || milestones.length === 0) {
-      return (
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-8 text-center">
-          <p className="text-neutral-600">No milestones found</p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
-        <div className="p-6 border-b border-neutral-200 bg-gradient-to-r from-primary-50 to-secondary-50">
-          <h3 className="heading-4">Milestone Details</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-neutral-100">
-              <tr>
-                <th className="text-left p-4 font-semibold text-neutral-700">
-                  Project
-                </th>
-                <th className="text-left p-4 font-semibold text-neutral-700">
-                  Milestone
-                </th>
-                <th className="text-left p-4 font-semibold text-neutral-700">
-                  Status
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Target Date
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Progress
-                </th>
-                <th className="text-center p-4 font-semibold text-neutral-700">
-                  Overdue
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {milestones.map((milestone, index) => (
-                <tr
-                  key={milestone.id || index}
-                  className="border-t border-neutral-200 hover:bg-neutral-50"
-                >
-                  <td className="p-4 text-neutral-900 font-semibold">
-                    {milestone.project || "N/A"}
-                  </td>
-                  <td className="p-4 text-neutral-700">
-                    {milestone.title || "N/A"}
-                  </td>
-                  <td className="p-4">
-                    <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
-                      {milestone.status || "Unknown"}
-                    </span>
-                  </td>
-                  <td className="p-4 text-center text-neutral-700">
-                    {formatDate(milestone.target_date)}
-                  </td>
-                  <td className="p-4 text-center">
-                    <span className="font-semibold text-neutral-900">
-                      {milestone.completion_percentage || 0}%
-                    </span>
-                  </td>
-                  <td className="p-4 text-center">
-                    {milestone.is_overdue ? (
-                      <span className="text-red-600 font-semibold">
-                        {milestone.days_delayed || 0} days
-                      </span>
-                    ) : (
-                      <span className="text-green-600">On track</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
-  const renderReportContent = () => {
+  // ========== DATA TABLE ==========
+  const renderDataTable = () => {
     if (!reportData) return null;
 
-    console.log("📊 Rendering report content for:", reportData.report_type);
+    let headers: string[] = [];
+    let rows: (string | number | React.ReactNode)[][] = [];
+    let title = "";
+
+    if (reportData.projects?.length) {
+      title = "Projects";
+      headers = [
+        "Project",
+        "Client",
+        "Status",
+        "Total Cost",
+        "Received",
+        "Balance",
+        "Completion",
+      ];
+      rows = reportData.projects.map((p) => [
+        <span key="name" style={{ fontWeight: 600 }}>
+          {p.name ?? "N/A"}
+        </span>,
+        p.client ?? "N/A",
+        <StatusBadge key="status" status={p.status ?? ""} />,
+        formatCurrency(p.total_cost ?? 0),
+        <span key="recv" style={{ color: "#065f46", fontWeight: 600 }}>
+          {formatCurrency(p.received ?? 0)}
+        </span>,
+        <span key="bal" style={{ color: "#92400e", fontWeight: 600 }}>
+          {formatCurrency(p.balance ?? 0)}
+        </span>,
+        p.completion ?? "0%",
+      ]);
+    } else if (reportData.employees?.length) {
+      title = "Employee Performance";
+      headers = [
+        "Name",
+        "Role",
+        "Department",
+        "Present / Absent",
+        "Attendance",
+        "Hours",
+        "Projects",
+      ];
+      rows = reportData.employees.map((e) => [
+        <span key="name" style={{ fontWeight: 600 }}>
+          {e.name ?? "N/A"}
+        </span>,
+        e.role ?? "N/A",
+        e.department ?? "N/A",
+        <span key="pa">
+          {e.attendance?.present ?? 0} / {e.attendance?.absent ?? 0}
+        </span>,
+        `${e.attendance?.rate ?? 0}%`,
+        (e.hours_worked ?? 0).toFixed(2),
+        e.projects_assigned ?? 0,
+      ]);
+    } else if (reportData.clients?.length) {
+      title = "Client Analysis";
+      headers = [
+        "Client",
+        "Email",
+        "Projects",
+        "Completed",
+        "Revenue",
+        "Paid",
+        "Rating",
+      ];
+      rows = reportData.clients.map((c) => [
+        <span key="name" style={{ fontWeight: 600 }}>
+          {c.name ?? "N/A"}
+        </span>,
+        c.email ?? "N/A",
+        c.total_projects ?? 0,
+        <span key="comp" style={{ color: "#065f46", fontWeight: 600 }}>
+          {c.completed_projects ?? 0}
+        </span>,
+        formatCurrency(c.total_revenue ?? 0),
+        <span key="paid" style={{ color: "#065f46", fontWeight: 600 }}>
+          {formatCurrency(c.total_paid ?? 0)}
+        </span>,
+        <span key="rating">
+          ⭐ {(c.average_rating ?? 0).toFixed(1)}{" "}
+          <span
+            style={{ color: "var(--color-neutral-400)", fontSize: "0.75rem" }}
+          >
+            ({c.review_count ?? 0})
+          </span>
+        </span>,
+      ]);
+    } else if (reportData.milestones?.length) {
+      title = "Milestone Completion";
+      headers = [
+        "Project",
+        "Milestone",
+        "Status",
+        "Progress",
+        "Target Date",
+        "Overdue",
+      ];
+      rows = reportData.milestones.map((m) => [
+        <span key="proj" style={{ fontWeight: 600 }}>
+          {m.project ?? "N/A"}
+        </span>,
+        m.title ?? "N/A",
+        <StatusBadge key="status" status={m.status ?? ""} />,
+        `${m.completion_percentage ?? 0}%`,
+        formatDate(m.target_date ?? ""),
+        m.is_overdue ? (
+          <span key="ov" style={{ color: "#991b1b", fontWeight: 600 }}>
+            {m.days_delayed ?? 0}d late
+          </span>
+        ) : (
+          <span key="ov" style={{ color: "#065f46" }}>
+            On track
+          </span>
+        ),
+      ]);
+    } else if (reportData.payment_details?.length) {
+      title = "Payment Details";
+      headers = [
+        "Date",
+        "Project",
+        "Type",
+        "Amount",
+        "Method",
+        "Transaction ID",
+      ];
+      rows = reportData.payment_details.map((p) => [
+        formatDate(p.date ?? ""),
+        <span key="proj" style={{ fontWeight: 600 }}>
+          {p.project ?? "N/A"}
+        </span>,
+        <span
+          key="type"
+          style={{
+            background: GREEN_TINT,
+            color: GREEN,
+            borderRadius: 9999,
+            padding: "0.15rem 0.6rem",
+            fontSize: "0.75rem",
+            fontWeight: 600,
+          }}
+        >
+          {p.type ?? "N/A"}
+        </span>,
+        <span key="amt" style={{ color: "#065f46", fontWeight: 600 }}>
+          {formatCurrency(p.amount ?? 0)}
+        </span>,
+        p.method ?? "N/A",
+        <span key="tid" style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+          {p.transaction_id ?? "N/A"}
+        </span>,
+      ]);
+    }
+
+    if (!rows.length) return null;
 
     return (
-      <div className="space-y-6">
-        {/* Render summary cards */}
-        {renderSummaryCards(reportData.summary)}
-
-        {/* Projects Summary Report */}
-        {reportData.report_type === "Projects Summary" &&
-          reportData.projects &&
-          reportData.projects.length > 0 &&
-          renderProjectsTable(reportData.projects)}
-
-        {/* Employee Performance Report */}
-        {reportData.report_type === "Employee Performance" &&
-          reportData.employees &&
-          reportData.employees.length > 0 &&
-          renderEmployeeTable(reportData.employees)}
-
-        {/* Client Analysis Report */}
-        {reportData.report_type === "Client Analysis" &&
-          reportData.clients &&
-          reportData.clients.length > 0 &&
-          renderClientTable(reportData.clients)}
-
-        {/* Milestone Completion Report */}
-        {reportData.report_type === "Milestone Completion" &&
-          reportData.milestones &&
-          reportData.milestones.length > 0 &&
-          renderMilestoneTable(reportData.milestones)}
-
-        {/* Financial Report - Payment Details */}
-        {reportData.report_type === "Financial Report" &&
-          reportData.payment_details &&
-          reportData.payment_details.length > 0 && (
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
-              <div className="p-6 border-b border-neutral-200 bg-gradient-to-r from-primary-50 to-secondary-50">
-                <h3 className="heading-4">Payment Details</h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-neutral-100">
-                    <tr>
-                      <th className="text-left p-4 font-semibold text-neutral-700">
-                        Date
-                      </th>
-                      <th className="text-left p-4 font-semibold text-neutral-700">
-                        Project
-                      </th>
-                      <th className="text-left p-4 font-semibold text-neutral-700">
-                        Type
-                      </th>
-                      <th className="text-right p-4 font-semibold text-neutral-700">
-                        Amount
-                      </th>
-                      <th className="text-left p-4 font-semibold text-neutral-700">
-                        Method
-                      </th>
-                      <th className="text-left p-4 font-semibold text-neutral-700">
-                        Transaction ID
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reportData.payment_details.map(
-                      (payment: any, idx: number) => (
-                        <tr
-                          key={idx}
-                          className="border-t border-neutral-200 hover:bg-neutral-50"
-                        >
-                          <td className="p-4 text-neutral-700">
-                            {formatDate(payment.date)}
-                          </td>
-                          <td className="p-4 text-neutral-900 font-semibold">
-                            {payment.project || "N/A"}
-                          </td>
-                          <td className="p-4">
-                            <span className="px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
-                              {payment.type || "Unknown"}
-                            </span>
-                          </td>
-                          <td className="p-4 text-right font-semibold text-green-600">
-                            {formatCurrency(payment.amount || 0)}
-                          </td>
-                          <td className="p-4 text-neutral-700">
-                            {payment.method || "N/A"}
-                          </td>
-                          <td className="p-4 text-neutral-700">
-                            {payment.transaction_id || "N/A"}
-                          </td>
-                        </tr>
-                      ),
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: "1rem",
+          border: "1px solid var(--color-neutral-200)",
+          overflow: "hidden",
+        }}
+      >
+        <SectionHeader title={title} />
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: "var(--color-neutral-50)" }}>
+                {headers.map((h, i) => (
+                  <th
+                    key={i}
+                    style={{
+                      textAlign: "left",
+                      padding: "0.875rem 1rem",
+                      fontWeight: 600,
+                      fontSize: "0.8125rem",
+                      color: "var(--color-neutral-600)",
+                      borderBottom: "1px solid var(--color-neutral-200)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, ri) => (
+                <tr
+                  key={ri}
+                  style={{
+                    borderBottom: "1px solid var(--color-neutral-100)",
+                    transition: "background 0.1s",
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background =
+                      "var(--color-neutral-50)")
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = "transparent")
+                  }
+                >
+                  {row.map((cell, ci) => (
+                    <td
+                      key={ci}
+                      style={{
+                        padding: "0.875rem 1rem",
+                        fontSize: "0.875rem",
+                        color: "var(--color-neutral-700)",
+                      }}
+                    >
+                      {cell}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   };
 
-  // ========== LOADING & ERROR STATES ==========
-
+  // ========== LOADING ==========
   if (typesLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-          <p className="text-neutral-600">Loading reports...</p>
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "var(--color-neutral-50)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <div
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: "50%",
+              border: `3px solid ${GREEN}`,
+              borderTopColor: "transparent",
+              margin: "0 auto 1rem",
+              animation: "spin 0.8s linear infinite",
+            }}
+          />
+          <p style={{ color: "var(--color-neutral-600)" }}>Loading reports…</p>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       </div>
     );
   }
 
-  if (typesError) {
-    return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
-          <div className="flex items-center gap-3 mb-4">
-            <FontAwesomeIcon
-              icon={faExclamationTriangle}
-              className="text-red-600 text-2xl"
-            />
-            <h3 className="text-red-800 font-semibold">
-              Error Loading Reports
-            </h3>
-          </div>
-          <p className="text-red-600 mb-4">
-            {(typesError as any)?.message || "Unknown error"}
-          </p>
-          <button
-            onClick={() => window.location.reload()}
-            className="btn-primary w-full"
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ========== MAIN RENDER ==========
+  const currentReportType = reportTypes?.find((r) => r.id === selectedReport);
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h1 className="heading-2 text-neutral-900 mb-1">Reports</h1>
-            <p className="text-neutral-600 body-regular">
-              Generate comprehensive reports for your business
-            </p>
+    <div style={{ minHeight: "100vh", background: "var(--color-neutral-50)" }}>
+      {/* ── Header ── */}
+      <div
+        style={{
+          background: "#fff",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.5rem 2rem",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "1rem",
+          }}
+        >
+          <div
+            style={{ display: "flex", alignItems: "center", gap: "0.875rem" }}
+          >
+            {selectedReport && (
+              <button
+                onClick={() => {
+                  setSelectedReport(null);
+                  setReportData(null);
+                  setShowFilters(false);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--color-neutral-500)",
+                  fontSize: "0.875rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.375rem",
+                  padding: "0.25rem 0",
+                }}
+              >
+                <FontAwesomeIcon icon={faArrowLeft} />
+                Back
+              </button>
+            )}
+            <div>
+              <h1
+                style={{
+                  fontSize: "1.5rem",
+                  fontWeight: 700,
+                  color: "var(--color-neutral-900)",
+                  margin: 0,
+                }}
+              >
+                {selectedReport
+                  ? (currentReportType?.name ?? "Report")
+                  : "Reports"}
+              </h1>
+              {!selectedReport && (
+                <p
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--color-neutral-500)",
+                    margin: "0.125rem 0 0",
+                  }}
+                >
+                  Generate comprehensive business reports
+                </p>
+              )}
+              {reportData && (
+                <p
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "var(--color-neutral-400)",
+                    margin: "0.125rem 0 0",
+                  }}
+                >
+                  Generated: {formatDateTime(reportData.generated_at)}
+                </p>
+              )}
+            </div>
           </div>
 
-          {selectedReport && reportData && (
-            <div className="flex items-center gap-3">
+          {/* Action buttons */}
+          {selectedReport && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.625rem",
+                flexWrap: "wrap",
+              }}
+            >
               <button
-                onClick={() => setShowFilters(!showFilters)}
-                className="btn-secondary flex items-center gap-2"
+                onClick={() => setShowFilters((v) => !v)}
+                className="btn btn-secondary"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.375rem",
+                }}
               >
                 <FontAwesomeIcon icon={faFilter} />
                 Filters
                 <FontAwesomeIcon
-                  icon={showFilters ? faChevronUp : faChevronDown}
+                  icon={faChevronDown}
+                  style={{
+                    fontSize: "0.75rem",
+                    transition: "transform 0.2s",
+                    transform: showFilters ? "rotate(180deg)" : "none",
+                  }}
                 />
               </button>
+
+              {reportData && (
+                <>
+                  <button
+                    onClick={() => window.print()}
+                    className="btn btn-secondary"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.375rem",
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faPrint} /> Print
+                  </button>
+                  <button
+                    onClick={exportToCSV}
+                    disabled={isExporting}
+                    className="btn btn-secondary"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.375rem",
+                    }}
+                  >
+                    <FontAwesomeIcon
+                      icon={faFileCsv}
+                      style={{ color: "#16a34a" }}
+                    />{" "}
+                    CSV
+                  </button>
+                  <button
+                    onClick={exportToExcel}
+                    disabled={isExporting}
+                    className="btn btn-secondary"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.375rem",
+                    }}
+                  >
+                    <FontAwesomeIcon
+                      icon={faFileExcel}
+                      style={{ color: "#15803d" }}
+                    />{" "}
+                    Excel
+                  </button>
+                  <button
+                    onClick={exportToPDF}
+                    disabled={isExporting}
+                    className="btn btn-primary"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.375rem",
+                    }}
+                  >
+                    {isExporting ? (
+                      <FontAwesomeIcon icon={faSpinner} spin />
+                    ) : (
+                      <FontAwesomeIcon icon={faFilePdf} />
+                    )}
+                    PDF
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      <div className="p-8 max-w-7xl mx-auto">
-        {/* Filters Panel */}
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "2rem" }}>
+        {/* ── Filters Panel ── */}
         {showFilters && selectedReport && (
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="heading-4">Filters</h3>
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: "1rem",
+              border: "1px solid var(--color-neutral-200)",
+              marginBottom: "1.5rem",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                padding: "1.25rem 1.5rem",
+                borderBottom: "1px solid var(--color-neutral-200)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.75rem",
+                }}
+              >
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: "0.5rem",
+                    background: GREEN_TINT,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faFilter}
+                    style={{ color: GREEN, fontSize: 13 }}
+                  />
+                </div>
+                <span
+                  style={{ fontWeight: 700, color: "var(--color-neutral-900)" }}
+                >
+                  Filter Report
+                </span>
+              </div>
               <button
                 onClick={() => setShowFilters(false)}
-                className="text-neutral-500 hover:text-neutral-700"
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--color-neutral-400)",
+                  fontSize: "1rem",
+                }}
               >
                 <FontAwesomeIcon icon={faTimes} />
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div
+              style={{
+                padding: "1.5rem",
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+                gap: "1rem",
+              }}
+            >
+              {/* Start Date */}
               <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                <label
+                  style={{
+                    display: "block",
+                    fontSize: "0.8125rem",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-700)",
+                    marginBottom: "0.375rem",
+                  }}
+                >
                   <FontAwesomeIcon
                     icon={faCalendar}
-                    className="mr-2 text-primary-600"
+                    style={{ marginRight: 6, color: GREEN }}
                   />
                   Start Date
                 </label>
                 <input
                   type="date"
-                  value={filters.start_date || ""}
+                  value={filters.start_date ?? ""}
                   onChange={(e) =>
-                    handleFilterChange("start_date", e.target.value)
+                    setFilters((f) => ({ ...f, start_date: e.target.value }))
                   }
-                  className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                  style={inputStyle("start_date")}
+                  {...focusHandlers("start_date")}
                 />
               </div>
 
+              {/* End Date */}
               <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                <label
+                  style={{
+                    display: "block",
+                    fontSize: "0.8125rem",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-700)",
+                    marginBottom: "0.375rem",
+                  }}
+                >
                   <FontAwesomeIcon
                     icon={faCalendar}
-                    className="mr-2 text-primary-600"
+                    style={{ marginRight: 6, color: GREEN }}
                   />
                   End Date
                 </label>
                 <input
                   type="date"
-                  value={filters.end_date || ""}
+                  value={filters.end_date ?? ""}
                   onChange={(e) =>
-                    handleFilterChange("end_date", e.target.value)
+                    setFilters((f) => ({ ...f, end_date: e.target.value }))
                   }
-                  className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                  style={inputStyle("end_date")}
+                  {...focusHandlers("end_date")}
                 />
               </div>
 
+              {/* Status — for projects-summary */}
               {selectedReport === "projects-summary" && (
                 <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.8125rem",
+                      fontWeight: 600,
+                      color: "var(--color-neutral-700)",
+                      marginBottom: "0.375rem",
+                    }}
+                  >
                     Status
                   </label>
                   <select
-                    value={filters.status || ""}
+                    value={filters.status ?? ""}
                     onChange={(e) =>
-                      handleFilterChange("status", e.target.value)
+                      setFilters((f) => ({ ...f, status: e.target.value }))
                     }
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 cursor-pointer"
+                    style={{ ...inputStyle("status"), cursor: "pointer" }}
+                    {...focusHandlers("status")}
                   >
                     <option value="">All Statuses</option>
                     <option value="pending">Pending</option>
@@ -1178,78 +1281,201 @@ export default function ReportsPage() {
                 </div>
               )}
 
+              {/* Client selector — for client-analysis */}
               {selectedReport === "client-analysis" && clientsList && (
                 <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.8125rem",
+                      fontWeight: 600,
+                      color: "var(--color-neutral-700)",
+                      marginBottom: "0.375rem",
+                    }}
+                  >
                     <FontAwesomeIcon
                       icon={faUserTie}
-                      className="mr-2 text-primary-600"
+                      style={{ marginRight: 6, color: GREEN }}
                     />
-                    Select Client
+                    Client
                   </label>
                   <select
-                    value={filters.client_id || ""}
+                    value={filters.client_id ?? ""}
                     onChange={(e) =>
-                      handleFilterChange(
-                        "client_id",
-                        e.target.value ? parseInt(e.target.value) : undefined,
-                      )
+                      setFilters((f) => ({
+                        ...f,
+                        client_id: e.target.value
+                          ? parseInt(e.target.value)
+                          : undefined,
+                      }))
                     }
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 cursor-pointer"
+                    style={{ ...inputStyle("client_id"), cursor: "pointer" }}
+                    {...focusHandlers("client_id")}
                   >
                     <option value="">All Clients</option>
-                    {clientsList.map((client) => (
-                      <option key={client.id} value={client.id}>
-                        {client.name} ({client.email})
+                    {clientsList.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.email})
                       </option>
                     ))}
                   </select>
                 </div>
               )}
+
+              {/* Project selector — for detailed project report */}
+              {(selectedReport === "projects-summary" ||
+                selectedReport === "milestone-completion" ||
+                selectedReport === "financial-report") &&
+                projectsList && (
+                  <div>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.8125rem",
+                        fontWeight: 600,
+                        color: "var(--color-neutral-700)",
+                        marginBottom: "0.375rem",
+                      }}
+                    >
+                      <FontAwesomeIcon
+                        icon={faProjectDiagram}
+                        style={{ marginRight: 6, color: GREEN }}
+                      />
+                      Project (Detailed)
+                    </label>
+                    <select
+                      value={filters.project_id ?? ""}
+                      onChange={(e) =>
+                        setFilters((f) => ({
+                          ...f,
+                          project_id: e.target.value
+                            ? parseInt(e.target.value)
+                            : undefined,
+                        }))
+                      }
+                      style={{ ...inputStyle("project_id"), cursor: "pointer" }}
+                      {...focusHandlers("project_id")}
+                    >
+                      <option value="">All Projects</option>
+                      {projectsList.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
             </div>
 
-            <div className="flex gap-3 mt-4">
-              <button onClick={handleApplyFilters} className="btn-primary">
+            <div
+              style={{
+                padding: "1rem 1.5rem",
+                borderTop: "1px solid var(--color-neutral-100)",
+                background: "var(--color-neutral-50)",
+                display: "flex",
+                gap: "0.75rem",
+              }}
+            >
+              <button onClick={handleApplyFilters} className="btn btn-primary">
                 Apply Filters
               </button>
-              <button onClick={handleResetFilters} className="btn-secondary">
+              <button
+                onClick={handleResetFilters}
+                className="btn btn-secondary"
+              >
                 Reset
               </button>
             </div>
           </div>
         )}
 
-        {/* Report Type Selection */}
+        {/* ── Report Type Grid ── */}
         {!selectedReport && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {reportTypes?.map((reportType) => (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+              gap: "1.25rem",
+            }}
+          >
+            {reportTypes?.map((rt) => (
               <div
-                key={reportType.id}
-                className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 hover:shadow-lg transition-all cursor-pointer"
-                onClick={() => handleGenerateReport(reportType.id)}
+                key={rt.id}
+                onClick={() => handleGenerateReport(rt.id)}
+                style={{
+                  background: "#fff",
+                  border: "1px solid var(--color-neutral-200)",
+                  borderRadius: "1rem",
+                  padding: "1.5rem",
+                  cursor: "pointer",
+                  transition: "box-shadow 0.2s, border-color 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLDivElement).style.boxShadow =
+                    "0 8px 24px rgba(0,0,0,0.08)";
+                  (e.currentTarget as HTMLDivElement).style.borderColor = GREEN;
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLDivElement).style.boxShadow = "none";
+                  (e.currentTarget as HTMLDivElement).style.borderColor =
+                    "var(--color-neutral-200)";
+                }}
               >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
-                    <FontAwesomeIcon
-                      icon={iconMapping[reportType.icon]}
-                      className="text-2xl text-primary-600"
-                    />
-                  </div>
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: "0.625rem",
+                    background: GREEN_TINT,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginBottom: "1rem",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={iconMapping[rt.icon] as never}
+                    style={{ color: GREEN, fontSize: 18 }}
+                  />
                 </div>
-
-                <h3 className="heading-4 mb-2">{reportType.name}</h3>
-                <p className="text-neutral-600 text-sm mb-4">
-                  {reportType.description}
+                <h3
+                  style={{
+                    fontWeight: 700,
+                    fontSize: "1rem",
+                    color: "var(--color-neutral-900)",
+                    marginBottom: "0.375rem",
+                  }}
+                >
+                  {rt.name}
+                </h3>
+                <p
+                  style={{
+                    fontSize: "0.8125rem",
+                    color: "var(--color-neutral-500)",
+                    marginBottom: "1rem",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {rt.description}
                 </p>
-
-                <div className="flex flex-wrap gap-2">
-                  {reportType.available_formats.map((format) => (
+                <div
+                  style={{ display: "flex", flexWrap: "wrap", gap: "0.375rem" }}
+                >
+                  {rt.available_formats.map((fmt) => (
                     <span
-                      key={format}
-                      className="px-3 py-1 bg-neutral-100 text-neutral-700 rounded-full text-xs font-semibold flex items-center gap-1"
+                      key={fmt}
+                      style={{
+                        background: "var(--color-neutral-100)",
+                        color: "var(--color-neutral-600)",
+                        borderRadius: 9999,
+                        padding: "0.2rem 0.65rem",
+                        fontSize: "0.7rem",
+                        fontWeight: 600,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                      }}
                     >
-                      <FontAwesomeIcon icon={formatIconMapping[format]} />
-                      {format.toUpperCase()}
+                      {fmt}
                     </span>
                   ))}
                 </div>
@@ -1258,961 +1484,100 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {/* Selected Report View */}
+        {/* ── Report View ── */}
         {selectedReport && (
-          <div>
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 mb-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-4">
-                  <button
-                    onClick={() => {
-                      setSelectedReport(null);
-                      setReportData(null);
-                    }}
-                    className="text-neutral-600 hover:text-neutral-900"
-                  >
-                    ← Back to Reports
-                  </button>
-                  <div className="h-6 w-px bg-neutral-300"></div>
-                  <h2 className="heading-3">
-                    {reportTypes?.find((r) => r.id === selectedReport)?.name}
-                  </h2>
-                </div>
-
-                {reportData && (
-                  <div className="flex items-center gap-3">
-                    {reportTypes
-                      ?.find((r) => r.id === selectedReport)
-                      ?.available_formats.map((format) => (
-                        <button
-                          key={format}
-                          onClick={() => handleExport(format)}
-                          disabled={exportingFormat === format}
-                          className="btn-secondary flex items-center gap-2 disabled:opacity-50"
-                        >
-                          {exportingFormat === format ? (
-                            <FontAwesomeIcon icon={faSpinner} spin />
-                          ) : (
-                            <FontAwesomeIcon icon={formatIconMapping[format]} />
-                          )}
-                          Export {format.toUpperCase()}
-                        </button>
-                      ))}
-                  </div>
-                )}
-              </div>
-
-              {reportData && (
-                <div className="text-sm text-neutral-600">
-                  Generated: {formatDateTime(reportData.generated_at)}
-                </div>
-              )}
-            </div>
-
-            {generateReportMutation.isPending && (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-                <p className="text-neutral-600">Generating report...</p>
+          <div ref={printRef}>
+            {isGenerating && (
+              <div
+                style={{
+                  background: "#fff",
+                  borderRadius: "1rem",
+                  border: "1px solid var(--color-neutral-200)",
+                  padding: "4rem",
+                  textAlign: "center",
+                }}
+              >
+                <div
+                  style={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: "50%",
+                    border: `3px solid ${GREEN}`,
+                    borderTopColor: "transparent",
+                    margin: "0 auto 1rem",
+                    animation: "spin 0.8s linear infinite",
+                  }}
+                />
+                <p style={{ color: "var(--color-neutral-500)" }}>
+                  Generating report…
+                </p>
+                <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
               </div>
             )}
 
-            {!generateReportMutation.isPending &&
-              reportData &&
-              renderReportContent()}
+            {!isGenerating && reportData && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "1.25rem",
+                }}
+              >
+                {renderSummaryCards()}
+                {renderDataTable()}
+              </div>
+            )}
 
-            {!generateReportMutation.isPending && !reportData && (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
+            {!isGenerating && !reportData && (
+              <div
+                style={{
+                  background: "#fff",
+                  borderRadius: "1rem",
+                  border: "1px solid var(--color-neutral-200)",
+                  padding: "4rem",
+                  textAlign: "center",
+                }}
+              >
                 <FontAwesomeIcon
                   icon={faFileAlt}
-                  className="text-6xl text-neutral-300 mb-4"
+                  style={{
+                    fontSize: 48,
+                    color: "var(--color-neutral-200)",
+                    marginBottom: "1rem",
+                  }}
                 />
-                <h3 className="heading-4 text-neutral-900 mb-2">
-                  No Report Generated
+                <h3
+                  style={{
+                    fontWeight: 700,
+                    fontSize: "1rem",
+                    color: "var(--color-neutral-900)",
+                    marginBottom: "0.375rem",
+                  }}
+                >
+                  No Data Available
                 </h3>
-                <p className="text-neutral-600">
-                  Click "Apply Filters" to generate this report
+                <p
+                  style={{
+                    color: "var(--color-neutral-500)",
+                    fontSize: "0.875rem",
+                  }}
+                >
+                  Use <strong>Filters</strong> to adjust the date range or
+                  parameters, then regenerate.
                 </p>
               </div>
             )}
           </div>
         )}
       </div>
+
+      {/* Print styles */}
+      <style>{`
+        @media print {
+          body > *:not([data-print]) { display: none; }
+          .btn, button { display: none !important; }
+        }
+      `}</style>
     </div>
   );
 }
-
-// "use client";
-
-// import { useState, useEffect, useRef } from "react";
-// import { useRouter } from "next/navigation";
-// import { useQuery } from "@tanstack/react-query";
-// import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-// import {
-//   faFileAlt,
-//   faFilter,
-//   faCalendar,
-//   faProjectDiagram,
-//   faChartLine,
-//   faUsers,
-//   faUserTie,
-//   faCheckCircle,
-//   faFilePdf,
-//   faFileExcel,
-//   faFileCsv,
-//   faSpinner,
-//   faChevronDown,
-//   faChevronUp,
-//   faTimes,
-//   faPrint,
-// } from "@fortawesome/free-solid-svg-icons";
-// import jsPDF from "jspdf";
-// import autoTable from "jspdf-autotable";
-// import * as XLSX from "xlsx";
-// import { saveAs } from "file-saver";
-// import { api } from "@/lib/api";
-// import { isAuthenticated } from "@/lib/auth";
-
-// // ========== INTERFACES ==========
-// interface ReportType {
-//   id: string;
-//   name: string;
-//   description: string;
-//   icon: string;
-//   available_formats: string[];
-// }
-
-// interface ReportData {
-//   report_type: string;
-//   generated_at: string;
-//   summary: any;
-//   projects?: any[];
-//   employees?: any[];
-//   clients?: any[];
-//   milestones?: any[];
-//   payment_details?: any[];
-//   [key: string]: any;
-// }
-
-// interface ReportFilters {
-//   start_date?: string;
-//   end_date?: string;
-//   status?: string;
-//   client_id?: number;
-// }
-
-// // ========== ICON MAPPING ==========
-// const iconMapping: { [key: string]: any } = {
-//   faProjectDiagram: faProjectDiagram,
-//   faChartLine: faChartLine,
-//   faUsers: faUsers,
-//   faUserTie: faUserTie,
-//   faCheckCircle: faCheckCircle,
-// };
-
-// // ========== HELPER FUNCTIONS ==========
-// const formatCurrency = (value: number) => {
-//   return new Intl.NumberFormat("en-US", {
-//     style: "currency",
-//     currency: "USD",
-//   }).format(value);
-// };
-
-// const formatDate = (dateString: string) => {
-//   if (!dateString) return "N/A";
-//   return new Date(dateString).toLocaleDateString("en-US", {
-//     year: "numeric",
-//     month: "short",
-//     day: "numeric",
-//   });
-// };
-
-// export default function ReportsPage() {
-//   const router = useRouter();
-//   const printRef = useRef<HTMLDivElement>(null);
-
-//   // ========== STATE ==========
-//   const [selectedReport, setSelectedReport] = useState<string | null>(null);
-//   const [showFilters, setShowFilters] = useState(false);
-//   const [filters, setFilters] = useState<ReportFilters>({
-//     start_date: "2024-01-01",
-//     end_date: new Date().toISOString().split("T")[0],
-//   });
-//   const [reportData, setReportData] = useState<ReportData | null>(null);
-//   const [isGenerating, setIsGenerating] = useState(false);
-//   const [isExporting, setIsExporting] = useState(false);
-
-//   // ========== AUTHENTICATION CHECK ==========
-//   useEffect(() => {
-//     if (!isAuthenticated()) {
-//       router.push("/login?type=service_provider&session=expired");
-//     }
-//   }, [router]);
-
-//   // ========== API QUERIES ==========
-//   const { data: reportTypes, isLoading: typesLoading } = useQuery({
-//     queryKey: ["report-types"],
-//     queryFn: async () => {
-//       const data = await api.get<ReportType[]>("/api/v1/reports/types/");
-//       return data;
-//     },
-//     retry: 1,
-//   });
-
-//   const { data: clientsList } = useQuery({
-//     queryKey: ["clients-for-reports"],
-//     queryFn: async () => {
-//       const data = await api.get<any[]>("/api/v1/reports/clients/");
-//       return data;
-//     },
-//     retry: 1,
-//   });
-
-//   // ========== GENERATE REPORT ==========
-//   const handleGenerateReport = async (reportId: string) => {
-//     setSelectedReport(reportId);
-//     setReportData(null);
-//     setIsGenerating(true);
-
-//     try {
-//       const queryParams = new URLSearchParams();
-//       if (filters.start_date)
-//         queryParams.append("start_date", filters.start_date);
-//       if (filters.end_date) queryParams.append("end_date", filters.end_date);
-//       if (filters.status) queryParams.append("status", filters.status);
-//       if (filters.client_id)
-//         queryParams.append("client_id", filters.client_id.toString());
-
-//       const data = await api.get<ReportData>(
-//         `/api/v1/reports/${reportId}/?${queryParams.toString()}`,
-//       );
-
-//       setReportData(data);
-//     } catch (error: any) {
-//       alert(error.message || "Failed to generate report");
-//     } finally {
-//       setIsGenerating(false);
-//     }
-//   };
-
-//   // ========== EXPORT TO PDF ==========
-//   const exportToPDF = () => {
-//     if (!reportData) return;
-//     setIsExporting(true);
-
-//     try {
-//       const doc = new jsPDF();
-//       const pageWidth = doc.internal.pageSize.getWidth();
-
-//       // Title
-//       doc.setFontSize(18);
-//       doc.setTextColor(30, 64, 175);
-//       doc.text(reportData.report_type, pageWidth / 2, 20, { align: "center" });
-
-//       // Generated date
-//       doc.setFontSize(10);
-//       doc.setTextColor(100);
-//       doc.text(
-//         `Generated: ${formatDate(reportData.generated_at)}`,
-//         pageWidth / 2,
-//         28,
-//         {
-//           align: "center",
-//         },
-//       );
-
-//       let yPos = 40;
-
-//       // Summary Section
-//       if (reportData.summary) {
-//         doc.setFontSize(14);
-//         doc.setTextColor(30, 64, 175);
-//         doc.text("Summary", 14, yPos);
-//         yPos += 8;
-
-//         doc.setFontSize(10);
-//         doc.setTextColor(0);
-//         const summary = reportData.summary;
-//         Object.keys(summary).forEach((key) => {
-//           const label = key
-//             .replace(/_/g, " ")
-//             .replace(/\b\w/g, (l) => l.toUpperCase());
-//           let value = summary[key];
-//           if (
-//             (typeof value === "number" && key.includes("revenue")) ||
-//             key.includes("income") ||
-//             key.includes("expense") ||
-//             key.includes("profit") ||
-//             key.includes("paid")
-//           ) {
-//             value = formatCurrency(value);
-//           }
-//           doc.text(`${label}: ${value}`, 14, yPos);
-//           yPos += 6;
-//         });
-//         yPos += 5;
-//       }
-
-//       // Projects Table
-//       if (reportData.projects && reportData.projects.length > 0) {
-//         autoTable(doc, {
-//           startY: yPos,
-//           head: [
-//             [
-//               "Project",
-//               "Client",
-//               "Status",
-//               "Total Cost",
-//               "Received",
-//               "Balance",
-//             ],
-//           ],
-//           body: reportData.projects.map((p: any) => [
-//             p.name || "N/A",
-//             p.client || "N/A",
-//             p.status || "N/A",
-//             formatCurrency(p.total_cost || 0),
-//             formatCurrency(p.received || 0),
-//             formatCurrency(p.balance || 0),
-//           ]),
-//           theme: "grid",
-//           headStyles: { fillColor: [30, 64, 175] },
-//         });
-//       }
-
-//       // Employees Table
-//       if (reportData.employees && reportData.employees.length > 0) {
-//         autoTable(doc, {
-//           startY: yPos,
-//           head: [
-//             ["Name", "Role", "Attendance Rate", "Hours Worked", "Projects"],
-//           ],
-//           body: reportData.employees.map((e: any) => [
-//             e.name || "N/A",
-//             e.role || "N/A",
-//             `${e.attendance?.rate || 0}%`,
-//             (e.hours_worked || 0).toFixed(2),
-//             e.projects_assigned || 0,
-//           ]),
-//           theme: "grid",
-//           headStyles: { fillColor: [30, 64, 175] },
-//         });
-//       }
-
-//       // Clients Table
-//       if (reportData.clients && reportData.clients.length > 0) {
-//         autoTable(doc, {
-//           startY: yPos,
-//           head: [["Client", "Projects", "Revenue", "Paid", "Rating"]],
-//           body: reportData.clients.map((c: any) => [
-//             c.name || "N/A",
-//             c.total_projects || 0,
-//             formatCurrency(c.total_revenue || 0),
-//             formatCurrency(c.total_paid || 0),
-//             `${(c.average_rating || 0).toFixed(1)} ★`,
-//           ]),
-//           theme: "grid",
-//           headStyles: { fillColor: [30, 64, 175] },
-//         });
-//       }
-
-//       // Milestones Table
-//       if (reportData.milestones && reportData.milestones.length > 0) {
-//         autoTable(doc, {
-//           startY: yPos,
-//           head: [["Project", "Milestone", "Status", "Progress", "Target Date"]],
-//           body: reportData.milestones.map((m: any) => [
-//             m.project || "N/A",
-//             m.title || "N/A",
-//             m.status || "N/A",
-//             `${m.completion_percentage || 0}%`,
-//             formatDate(m.target_date),
-//           ]),
-//           theme: "grid",
-//           headStyles: { fillColor: [30, 64, 175] },
-//         });
-//       }
-
-//       // Payment Details Table
-//       if (reportData.payment_details && reportData.payment_details.length > 0) {
-//         autoTable(doc, {
-//           startY: yPos,
-//           head: [["Date", "Project", "Type", "Amount", "Method"]],
-//           body: reportData.payment_details.map((p: any) => [
-//             formatDate(p.date),
-//             p.project || "N/A",
-//             p.type || "N/A",
-//             formatCurrency(p.amount || 0),
-//             p.method || "N/A",
-//           ]),
-//           theme: "grid",
-//           headStyles: { fillColor: [30, 64, 175] },
-//         });
-//       }
-
-//       doc.save(
-//         `${reportData.report_type.replace(/\s+/g, "_")}_${Date.now()}.pdf`,
-//       );
-//     } catch (error) {
-//       console.error("PDF generation error:", error);
-//       alert("Failed to generate PDF");
-//     } finally {
-//       setIsExporting(false);
-//     }
-//   };
-
-//   // ========== EXPORT TO EXCEL ==========
-//   const exportToExcel = () => {
-//     if (!reportData) return;
-//     setIsExporting(true);
-
-//     try {
-//       const wb = XLSX.utils.book_new();
-
-//       // Summary Sheet
-//       if (reportData.summary) {
-//         const summaryData = Object.entries(reportData.summary).map(
-//           ([key, value]) => ({
-//             Metric: key
-//               .replace(/_/g, " ")
-//               .replace(/\b\w/g, (l) => l.toUpperCase()),
-//             Value: value,
-//           }),
-//         );
-//         const summarySheet = XLSX.utils.json_to_sheet(summaryData);
-//         XLSX.utils.book_append_sheet(wb, summarySheet, "Summary");
-//       }
-
-//       // Projects Sheet
-//       if (reportData.projects && reportData.projects.length > 0) {
-//         const projectsSheet = XLSX.utils.json_to_sheet(reportData.projects);
-//         XLSX.utils.book_append_sheet(wb, projectsSheet, "Projects");
-//       }
-
-//       // Employees Sheet
-//       if (reportData.employees && reportData.employees.length > 0) {
-//         const employeesSheet = XLSX.utils.json_to_sheet(reportData.employees);
-//         XLSX.utils.book_append_sheet(wb, employeesSheet, "Employees");
-//       }
-
-//       // Clients Sheet
-//       if (reportData.clients && reportData.clients.length > 0) {
-//         const clientsSheet = XLSX.utils.json_to_sheet(reportData.clients);
-//         XLSX.utils.book_append_sheet(wb, clientsSheet, "Clients");
-//       }
-
-//       // Milestones Sheet
-//       if (reportData.milestones && reportData.milestones.length > 0) {
-//         const milestonesSheet = XLSX.utils.json_to_sheet(reportData.milestones);
-//         XLSX.utils.book_append_sheet(wb, milestonesSheet, "Milestones");
-//       }
-
-//       // Payment Details Sheet
-//       if (reportData.payment_details && reportData.payment_details.length > 0) {
-//         const paymentsSheet = XLSX.utils.json_to_sheet(
-//           reportData.payment_details,
-//         );
-//         XLSX.utils.book_append_sheet(wb, paymentsSheet, "Payments");
-//       }
-
-//       const fileName = `${reportData.report_type.replace(/\s+/g, "_")}_${Date.now()}.xlsx`;
-//       XLSX.writeFile(wb, fileName);
-//     } catch (error) {
-//       console.error("Excel generation error:", error);
-//       alert("Failed to generate Excel file");
-//     } finally {
-//       setIsExporting(false);
-//     }
-//   };
-
-//   // ========== EXPORT TO CSV ==========
-//   const exportToCSV = () => {
-//     if (!reportData) return;
-//     setIsExporting(true);
-
-//     try {
-//       let csvContent = `${reportData.report_type}\nGenerated: ${formatDate(reportData.generated_at)}\n\n`;
-
-//       // Summary
-//       if (reportData.summary) {
-//         csvContent += "SUMMARY\n";
-//         Object.entries(reportData.summary).forEach(([key, value]) => {
-//           csvContent += `${key.replace(/_/g, " ")},${value}\n`;
-//         });
-//         csvContent += "\n";
-//       }
-
-//       // Projects
-//       if (reportData.projects && reportData.projects.length > 0) {
-//         csvContent += "PROJECTS\n";
-//         csvContent += "Name,Client,Status,Total Cost,Received,Balance\n";
-//         reportData.projects.forEach((p: any) => {
-//           csvContent += `"${p.name || "N/A"}","${p.client || "N/A"}","${p.status || "N/A"}",${p.total_cost || 0},${p.received || 0},${p.balance || 0}\n`;
-//         });
-//         csvContent += "\n";
-//       }
-
-//       // Employees
-//       if (reportData.employees && reportData.employees.length > 0) {
-//         csvContent += "EMPLOYEES\n";
-//         csvContent += "Name,Role,Attendance Rate,Hours Worked,Projects\n";
-//         reportData.employees.forEach((e: any) => {
-//           csvContent += `"${e.name || "N/A"}","${e.role || "N/A"}",${e.attendance?.rate || 0}%,${e.hours_worked || 0},${e.projects_assigned || 0}\n`;
-//         });
-//         csvContent += "\n";
-//       }
-
-//       // Clients
-//       if (reportData.clients && reportData.clients.length > 0) {
-//         csvContent += "CLIENTS\n";
-//         csvContent += "Name,Projects,Revenue,Paid,Rating\n";
-//         reportData.clients.forEach((c: any) => {
-//           csvContent += `"${c.name || "N/A"}",${c.total_projects || 0},${c.total_revenue || 0},${c.total_paid || 0},${c.average_rating || 0}\n`;
-//         });
-//       }
-
-//       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-//       saveAs(
-//         blob,
-//         `${reportData.report_type.replace(/\s+/g, "_")}_${Date.now()}.csv`,
-//       );
-//     } catch (error) {
-//       console.error("CSV generation error:", error);
-//       alert("Failed to generate CSV");
-//     } finally {
-//       setIsExporting(false);
-//     }
-//   };
-
-//   // ========== PRINT ==========
-//   const handlePrint = () => {
-//     window.print();
-//   };
-
-//   // ========== RENDER SUMMARY CARDS ==========
-//   const renderSummaryCards = () => {
-//     if (!reportData?.summary) return null;
-
-//     const summary = reportData.summary;
-//     const cards = [];
-
-//     if (reportData.report_type === "Projects Summary") {
-//       cards.push(
-//         {
-//           label: "Total Projects",
-//           value: summary.total_projects || 0,
-//           color: "blue",
-//         },
-//         {
-//           label: "Total Revenue",
-//           value: formatCurrency(summary.total_revenue || 0),
-//           color: "green",
-//         },
-//         {
-//           label: "Received",
-//           value: formatCurrency(summary.total_received || 0),
-//           color: "purple",
-//         },
-//         {
-//           label: "Pending",
-//           value: formatCurrency(summary.total_pending || 0),
-//           color: "orange",
-//         },
-//       );
-//     } else if (reportData.report_type === "Financial Report") {
-//       cards.push(
-//         {
-//           label: "Total Income",
-//           value: formatCurrency(summary.total_income || 0),
-//           color: "green",
-//         },
-//         {
-//           label: "Total Expenses",
-//           value: formatCurrency(summary.total_expenses || 0),
-//           color: "red",
-//         },
-//         {
-//           label: "Net Profit",
-//           value: formatCurrency(summary.net_profit || 0),
-//           color: "blue",
-//         },
-//         {
-//           label: "Profit Margin",
-//           value: `${summary.profit_margin || 0}%`,
-//           color: "purple",
-//         },
-//       );
-//     } else if (reportData.report_type === "Employee Performance") {
-//       cards.push(
-//         {
-//           label: "Total Employees",
-//           value: summary.total_employees || 0,
-//           color: "blue",
-//         },
-//         {
-//           label: "Avg Attendance",
-//           value: `${summary.avg_attendance_rate || 0}%`,
-//           color: "green",
-//         },
-//         {
-//           label: "Total Hours",
-//           value: (summary.total_hours_worked || 0).toLocaleString(),
-//           color: "purple",
-//         },
-//       );
-//     } else if (reportData.report_type === "Client Analysis") {
-//       cards.push(
-//         {
-//           label: "Total Clients",
-//           value: summary.total_clients || 0,
-//           color: "blue",
-//         },
-//         {
-//           label: "Total Revenue",
-//           value: formatCurrency(summary.total_revenue || 0),
-//           color: "green",
-//         },
-//         {
-//           label: "Avg Revenue/Client",
-//           value: formatCurrency(summary.avg_revenue_per_client || 0),
-//           color: "purple",
-//         },
-//       );
-//     } else if (reportData.report_type === "Milestone Completion") {
-//       cards.push(
-//         {
-//           label: "Total Milestones",
-//           value: summary.total_milestones || 0,
-//           color: "blue",
-//         },
-//         { label: "Completed", value: summary.completed || 0, color: "green" },
-//         {
-//           label: "Completion Rate",
-//           value: `${summary.completion_rate || 0}%`,
-//           color: "purple",
-//         },
-//       );
-//     }
-
-//     return (
-//       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6">
-//         {cards.map((card, idx) => (
-//           <div
-//             key={idx}
-//             className={`bg-gradient-to-br from-${card.color}-50 to-${card.color}-100 rounded-xl p-6 border border-${card.color}-200`}
-//           >
-//             <div
-//               className={`text-${card.color}-600 text-sm font-semibold mb-1`}
-//             >
-//               {card.label}
-//             </div>
-//             <div className={`text-3xl font-bold text-${card.color}-900`}>
-//               {card.value}
-//             </div>
-//           </div>
-//         ))}
-//       </div>
-//     );
-//   };
-
-//   // ========== RENDER DATA TABLE ==========
-//   const renderDataTable = () => {
-//     if (!reportData) return null;
-
-//     let headers: string[] = [];
-//     let rows: any[][] = [];
-//     let title = "";
-
-//     if (reportData.projects && reportData.projects.length > 0) {
-//       title = "Projects";
-//       headers = [
-//         "Project",
-//         "Client",
-//         "Status",
-//         "Total Cost",
-//         "Received",
-//         "Balance",
-//         "Completion",
-//       ];
-//       rows = reportData.projects.map((p: any) => [
-//         p.name || "N/A",
-//         p.client || "N/A",
-//         p.status || "N/A",
-//         formatCurrency(p.total_cost || 0),
-//         formatCurrency(p.received || 0),
-//         formatCurrency(p.balance || 0),
-//         p.completion || "0%",
-//       ]);
-//     } else if (reportData.employees && reportData.employees.length > 0) {
-//       title = "Employees";
-//       headers = [
-//         "Name",
-//         "Role",
-//         "Department",
-//         "Attendance",
-//         "Hours",
-//         "Projects",
-//       ];
-//       rows = reportData.employees.map((e: any) => [
-//         e.name || "N/A",
-//         e.role || "N/A",
-//         e.department || "N/A",
-//         `${e.attendance?.rate || 0}%`,
-//         (e.hours_worked || 0).toFixed(2),
-//         e.projects_assigned || 0,
-//       ]);
-//     } else if (reportData.clients && reportData.clients.length > 0) {
-//       title = "Clients";
-//       headers = ["Client", "Email", "Projects", "Revenue", "Paid", "Rating"];
-//       rows = reportData.clients.map((c: any) => [
-//         c.name || "N/A",
-//         c.email || "N/A",
-//         c.total_projects || 0,
-//         formatCurrency(c.total_revenue || 0),
-//         formatCurrency(c.total_paid || 0),
-//         `${(c.average_rating || 0).toFixed(1)} ★`,
-//       ]);
-//     } else if (reportData.milestones && reportData.milestones.length > 0) {
-//       title = "Milestones";
-//       headers = [
-//         "Project",
-//         "Milestone",
-//         "Status",
-//         "Progress",
-//         "Target Date",
-//         "Overdue",
-//       ];
-//       rows = reportData.milestones.map((m: any) => [
-//         m.project || "N/A",
-//         m.title || "N/A",
-//         m.status || "N/A",
-//         `${m.completion_percentage || 0}%`,
-//         formatDate(m.target_date),
-//         m.is_overdue ? `${m.days_delayed || 0} days` : "No",
-//       ]);
-//     } else if (
-//       reportData.payment_details &&
-//       reportData.payment_details.length > 0
-//     ) {
-//       title = "Payment Details";
-//       headers = [
-//         "Date",
-//         "Project",
-//         "Type",
-//         "Amount",
-//         "Method",
-//         "Transaction ID",
-//       ];
-//       rows = reportData.payment_details.map((p: any) => [
-//         formatDate(p.date),
-//         p.project || "N/A",
-//         p.type || "N/A",
-//         formatCurrency(p.amount || 0),
-//         p.method || "N/A",
-//         p.transaction_id || "N/A",
-//       ]);
-//     }
-
-//     if (rows.length === 0) return null;
-
-//     return (
-//       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-//         <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-blue-100">
-//           <h3 className="text-xl font-bold text-gray-800">{title}</h3>
-//         </div>
-//         <div className="overflow-x-auto">
-//           <table className="w-full">
-//             <thead className="bg-gray-100">
-//               <tr>
-//                 {headers.map((header, idx) => (
-//                   <th
-//                     key={idx}
-//                     className="text-left p-4 font-semibold text-gray-700"
-//                   >
-//                     {header}
-//                   </th>
-//                 ))}
-//               </tr>
-//             </thead>
-//             <tbody>
-//               {rows.map((row, idx) => (
-//                 <tr
-//                   key={idx}
-//                   className="border-t border-gray-200 hover:bg-gray-50"
-//                 >
-//                   {row.map((cell, cellIdx) => (
-//                     <td key={cellIdx} className="p-4 text-gray-700">
-//                       {cell}
-//                     </td>
-//                   ))}
-//                 </tr>
-//               ))}
-//             </tbody>
-//           </table>
-//         </div>
-//       </div>
-//     );
-//   };
-
-//   // ========== LOADING STATE ==========
-//   if (typesLoading) {
-//     return (
-//       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-//         <div className="text-center">
-//           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-//           <p className="text-gray-600">Loading reports...</p>
-//         </div>
-//       </div>
-//     );
-//   }
-
-//   // ========== MAIN RENDER ==========
-//   return (
-//     <div className="min-h-screen bg-gray-50">
-//       {/* Header */}
-//       <div className="bg-white border-b border-gray-200 px-8 py-6">
-//         <div className="flex items-center justify-between">
-//           <div>
-//             <h1 className="text-3xl font-bold text-gray-900 mb-1">Reports</h1>
-//             <p className="text-gray-600">
-//               Generate comprehensive business reports
-//             </p>
-//           </div>
-
-//           {selectedReport && reportData && (
-//             <div className="flex items-center gap-3">
-//               <button
-//                 onClick={handlePrint}
-//                 className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center gap-2"
-//               >
-//                 <FontAwesomeIcon icon={faPrint} />
-//                 Print
-//               </button>
-//               <button
-//                 onClick={exportToCSV}
-//                 disabled={isExporting}
-//                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:opacity-50"
-//               >
-//                 <FontAwesomeIcon icon={faFileCsv} />
-//                 CSV
-//               </button>
-//               <button
-//                 onClick={exportToExcel}
-//                 disabled={isExporting}
-//                 className="px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-800 flex items-center gap-2 disabled:opacity-50"
-//               >
-//                 <FontAwesomeIcon icon={faFileExcel} />
-//                 Excel
-//               </button>
-//               <button
-//                 onClick={exportToPDF}
-//                 disabled={isExporting}
-//                 className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2 disabled:opacity-50"
-//               >
-//                 {isExporting ? (
-//                   <FontAwesomeIcon icon={faSpinner} spin />
-//                 ) : (
-//                   <FontAwesomeIcon icon={faFilePdf} />
-//                 )}
-//                 PDF
-//               </button>
-//             </div>
-//           )}
-//         </div>
-//       </div>
-
-//       <div className="p-8 max-w-7xl mx-auto">
-//         {/* Report Type Selection */}
-//         {!selectedReport && (
-//           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-//             {reportTypes?.map((reportType) => (
-//               <div
-//                 key={reportType.id}
-//                 onClick={() => handleGenerateReport(reportType.id)}
-//                 className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-all cursor-pointer"
-//               >
-//                 <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
-//                   <FontAwesomeIcon
-//                     icon={iconMapping[reportType.icon]}
-//                     className="text-2xl text-blue-600"
-//                   />
-//                 </div>
-//                 <h3 className="text-xl font-bold text-gray-900 mb-2">
-//                   {reportType.name}
-//                 </h3>
-//                 <p className="text-gray-600 text-sm mb-4">
-//                   {reportType.description}
-//                 </p>
-//                 <div className="flex flex-wrap gap-2">
-//                   {reportType.available_formats.map((format) => (
-//                     <span
-//                       key={format}
-//                       className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-semibold"
-//                     >
-//                       {format.toUpperCase()}
-//                     </span>
-//                   ))}
-//                 </div>
-//               </div>
-//             ))}
-//           </div>
-//         )}
-
-//         {/* Report View */}
-//         {selectedReport && (
-//           <div ref={printRef}>
-//             <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6 print:shadow-none">
-//               <div className="flex items-center justify-between mb-4">
-//                 <button
-//                   onClick={() => {
-//                     setSelectedReport(null);
-//                     setReportData(null);
-//                   }}
-//                   className="text-gray-600 hover:text-gray-900 print:hidden"
-//                 >
-//                   ← Back to Reports
-//                 </button>
-//                 <h2 className="text-2xl font-bold text-gray-900">
-//                   {reportTypes?.find((r) => r.id === selectedReport)?.name}
-//                 </h2>
-//                 <div className="w-32"></div>
-//               </div>
-
-//               {reportData && (
-//                 <p className="text-sm text-gray-600">
-//                   Generated: {formatDate(reportData.generated_at)}
-//                 </p>
-//               )}
-//             </div>
-
-//             {isGenerating && (
-//               <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-//                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-//                 <p className="text-gray-600">Generating report...</p>
-//               </div>
-//             )}
-
-//             {!isGenerating && reportData && (
-//               <div className="space-y-6">
-//                 {renderSummaryCards()}
-//                 {renderDataTable()}
-//               </div>
-//             )}
-
-//             {!isGenerating && !reportData && (
-//               <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-//                 <FontAwesomeIcon
-//                   icon={faFileAlt}
-//                   className="text-6xl text-gray-300 mb-4"
-//                 />
-//                 <h3 className="text-xl font-bold text-gray-900 mb-2">
-//                   No Data
-//                 </h3>
-//                 <p className="text-gray-600">Failed to load report data</p>
-//               </div>
-//             )}
-//           </div>
-//         )}
-//       </div>
-//     </div>
-//   );
-// }

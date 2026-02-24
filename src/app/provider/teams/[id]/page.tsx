@@ -12,11 +12,9 @@ import {
   faIdCard,
   faCalendar,
   faMapMarkerAlt,
-  faFileAlt,
   faDollarSign,
   faExclamationTriangle,
   faUserGroup,
-  faMessage,
   faFolder,
   faSpinner,
   faTimes,
@@ -27,6 +25,9 @@ import { useRouter, useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
+/* ─────────────────────────────────────────── */
+/* Types                                        */
+/* ─────────────────────────────────────────── */
 interface TeamMember {
   id: number;
   full_name: string;
@@ -51,21 +52,234 @@ interface TeamMember {
   is_active: boolean;
   projects_count: number;
   current_projects: Array<{ id: number; name: string }>;
-  created_at: string;
-  updated_at: string;
 }
 
+/* ─────────────────────────────────────────── */
+/* Helpers                                      */
+/* ─────────────────────────────────────────── */
+const getInitials = (name: string) =>
+  name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+
+const AVATAR_COLORS = [
+  "#1ab189",
+  "#3b82f6",
+  "#f59e0b",
+  "#8b5cf6",
+  "#10b981",
+  "#06b6d4",
+  "#f97316",
+  "#ec4899",
+  "#6366f1",
+  "#14b8a6",
+];
+const avatarColor = (id: number) => AVATAR_COLORS[id % AVATAR_COLORS.length];
+
+const STATUS_STYLES: Record<
+  string,
+  { background: string; color: string; border: string }
+> = {
+  active: {
+    background: "rgba(22,163,74,0.1)",
+    color: "#16a34a",
+    border: "1px solid rgba(22,163,74,0.2)",
+  },
+  inactive: {
+    background: "rgba(115,115,115,0.1)",
+    color: "#737373",
+    border: "1px solid rgba(115,115,115,0.2)",
+  },
+  on_leave: {
+    background: "rgba(217,119,6,0.1)",
+    color: "#d97706",
+    border: "1px solid rgba(217,119,6,0.2)",
+  },
+};
+
+const SKILL_COLORS: Record<
+  string,
+  { bg: string; color: string; border: string }
+> = {
+  Electrical: {
+    bg: "rgba(234,179,8,0.1)",
+    color: "#a16207",
+    border: "1px solid rgba(234,179,8,0.2)",
+  },
+  Plumbing: {
+    bg: "rgba(59,130,246,0.1)",
+    color: "#1d4ed8",
+    border: "1px solid rgba(59,130,246,0.2)",
+  },
+  HVAC: {
+    bg: "rgba(249,115,22,0.1)",
+    color: "#c2410c",
+    border: "1px solid rgba(249,115,22,0.2)",
+  },
+  Carpentry: {
+    bg: "rgba(245,158,11,0.1)",
+    color: "#b45309",
+    border: "1px solid rgba(245,158,11,0.2)",
+  },
+  "Project Management": {
+    bg: "rgba(26,177,137,0.1)",
+    color: "#0d9060",
+    border: "1px solid rgba(26,177,137,0.2)",
+  },
+  Supervision: {
+    bg: "rgba(168,85,247,0.1)",
+    color: "#7c3aed",
+    border: "1px solid rgba(168,85,247,0.2)",
+  },
+  Design: {
+    bg: "rgba(236,72,153,0.1)",
+    color: "#be185d",
+    border: "1px solid rgba(236,72,153,0.2)",
+  },
+  Landscaping: {
+    bg: "rgba(34,197,94,0.1)",
+    color: "#15803d",
+    border: "1px solid rgba(34,197,94,0.2)",
+  },
+};
+const DEFAULT_SKILL = {
+  bg: "rgba(115,115,115,0.08)",
+  color: "var(--color-neutral-600)",
+  border: "1px solid var(--color-neutral-200)",
+};
+
+const formatStatus = (status: string) =>
+  ({ active: "Active", inactive: "Inactive", on_leave: "On Leave" })[status] ??
+  status;
+
+const formatCurrency = (amount: string | number) =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+    typeof amount === "string" ? parseFloat(amount) : amount,
+  );
+
+/* ─────────────────────────────────────────── */
+/* Small reusable pieces                       */
+/* ─────────────────────────────────────────── */
+function InfoRow({
+  icon,
+  label,
+  value,
+  href,
+}: {
+  icon: any;
+  label: string;
+  value: string;
+  href?: string;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <div
+        className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+        style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+      >
+        <FontAwesomeIcon
+          icon={icon}
+          style={{ color: "#1ab189", fontSize: "0.75rem" }}
+        />
+      </div>
+      <div className="min-w-0">
+        <p
+          style={{
+            fontSize: "0.72rem",
+            color: "var(--color-neutral-500)",
+            marginBottom: "0.125rem",
+          }}
+        >
+          {label}
+        </p>
+        {href ? (
+          <a
+            href={href}
+            className="font-semibold truncate block"
+            style={{
+              fontSize: "0.875rem",
+              color: "var(--color-neutral-900)",
+              textDecoration: "none",
+            }}
+          >
+            {value || "—"}
+          </a>
+        ) : (
+          <p
+            className="font-semibold"
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-900)" }}
+          >
+            {value || "—"}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SectionCard({
+  icon,
+  title,
+  children,
+}: {
+  icon: any;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="rounded-2xl"
+      style={{
+        backgroundColor: "var(--color-neutral-0)",
+        border: "1px solid var(--color-neutral-200)",
+        padding: "1.5rem",
+      }}
+    >
+      <div className="flex items-center gap-3 mb-5">
+        <div
+          className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+        >
+          <FontAwesomeIcon
+            icon={icon}
+            style={{ color: "#1ab189", fontSize: "0.875rem" }}
+          />
+        </div>
+        <h2
+          className="font-semibold"
+          style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+        >
+          {title}
+        </h2>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────── */
+/* Component                                   */
+/* ─────────────────────────────────────────── */
 export default function ViewTeamMemberPage() {
   const router = useRouter();
   const params = useParams();
   const queryClient = useQueryClient();
-  const employeeId = params.id as string;
+  const employeeId = Number(params.id);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
-  const [successMessage, setSuccessMessage] = useState("");
+  const [showToast, setShowToast] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
 
-  // Fetch employee details
+  const notify = (msg: string) => {
+    setToastMsg(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
+
+  /* ── Query ── */
   const {
     data: member,
     isLoading,
@@ -73,121 +287,64 @@ export default function ViewTeamMemberPage() {
     error,
   } = useQuery<TeamMember>({
     queryKey: ["team-member", employeeId],
-    queryFn: async () => {
-      const response = await api.get<TeamMember>(
-        `/api/v1/employees/${employeeId}/`
-      );
-      return response;
-    },
+    queryFn: () => api.get<TeamMember>(`/api/v1/employees/${employeeId}/`),
     enabled: !!employeeId,
   });
 
-  // Delete mutation
+  /* ── Delete mutation ── */
   const deleteMutation = useMutation({
-    mutationFn: async () => {
-      await api.delete(`/api/v1/employees/${employeeId}/`);
-    },
+    mutationFn: () => api.delete(`/api/v1/employees/${employeeId}/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["team-members"] });
-      showSuccessNotification("Team member deleted successfully");
-      setTimeout(() => {
-        router.push("/provider/teams");
-      }, 1000);
+      notify("Team member deleted successfully");
+      setTimeout(() => router.push("/provider/teams"), 1000);
     },
-    onError: (error: any) => {
-      alert(`Failed to delete team member: ${error.message}`);
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
+      alert(
+        `Failed to delete: ${e.data?.detail ?? e.message ?? "Unknown error"}`,
+      );
     },
   });
 
-  const showSuccessNotification = (message: string) => {
-    setSuccessMessage(message);
-    setShowSuccessMessage(true);
-    setTimeout(() => {
-      setShowSuccessMessage(false);
-    }, 3000);
-  };
-
-  const handleDelete = () => {
-    deleteMutation.mutate();
-    setShowDeleteModal(false);
-  };
-
-  const handleEdit = () => {
-    router.push(`/provider/teams/${employeeId}/edit`);
-  };
-
-  const getStatusBadgeColor = (status: string) => {
-    const colors = {
-      active: "bg-green-100 text-green-700 border-green-200",
-      inactive: "bg-neutral-100 text-neutral-600 border-neutral-200",
-      on_leave: "bg-yellow-100 text-yellow-700 border-yellow-200",
-    };
-    return colors[status as keyof typeof colors] || colors.inactive;
-  };
-
-  const getSkillColor = (skill: string) => {
-    const colors: { [key: string]: string } = {
-      Electrical: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      Plumbing: "bg-blue-100 text-blue-700 border-blue-200",
-      HVAC: "bg-orange-100 text-orange-700 border-orange-200",
-      Carpentry: "bg-amber-100 text-amber-700 border-amber-200",
-      "Project Management": "bg-primary-50 text-primary-700 border-primary-200",
-      Supervision: "bg-purple-100 text-purple-700 border-purple-200",
-      Design: "bg-pink-100 text-pink-700 border-pink-200",
-      Landscaping: "bg-green-100 text-green-700 border-green-200",
-    };
-    return (
-      colors[skill] || "bg-neutral-100 text-neutral-600 border-neutral-200"
-    );
-  };
-
-  const formatStatusDisplay = (status: string) => {
-    const displays: { [key: string]: string } = {
-      active: "Active",
-      inactive: "Inactive",
-      on_leave: "On Leave",
-    };
-    return displays[status] || status;
-  };
-
-  const formatCurrency = (amount: string | number) => {
-    const numAmount = typeof amount === "string" ? parseFloat(amount) : amount;
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(numAmount);
-  };
-
-  // Loading state
+  /* ── Loading ── */
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading team member details...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading team member details…
+          </p>
         </div>
       </div>
     );
   }
 
-  // Error state
+  /* ── Error ── */
   if (isError || !member) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FontAwesomeIcon icon={faTimes} className="text-red-600 text-2xl" />
-          </div>
-          <h3 className="text-lg font-semibold text-red-900 mb-2">
-            Error Loading Team Member
-          </h3>
-          <p className="text-red-700 mb-4">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
+        <div className="text-center">
+          <p className="mb-4" style={{ color: "#ef4444" }}>
             {error instanceof Error ? error.message : "Team member not found"}
           </p>
-          <button onClick={() => router.back()} className="btn-primary">
+          <button
+            onClick={() => router.back()}
+            className="btn btn-primary btn-md"
+          >
             Go Back
           </button>
         </div>
@@ -196,493 +353,664 @@ export default function ViewTeamMemberPage() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Success Toast */}
-      {showSuccessMessage && (
-        <div className="fixed top-8 right-8 z-[60] animate-slide-in-right">
-          <div className="bg-green-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 min-w-[300px]">
-            <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
-              <FontAwesomeIcon icon={faCheck} />
-            </div>
-            <div className="flex-1">
-              <p className="font-semibold">{successMessage}</p>
-            </div>
-            <button
-              onClick={() => setShowSuccessMessage(false)}
-              className="text-neutral-0 hover:text-neutral-200 transition-colors"
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* Toast */}
+      {showToast && (
+        <div
+          className="fixed top-5 right-5 z-[60]"
+          style={{ minWidth: "17rem" }}
+        >
+          <div
+            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+            style={{
+              backgroundColor: "var(--color-neutral-900)",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div
+              className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: "#1ab189" }}
             >
-              <FontAwesomeIcon icon={faTimes} />
+              <FontAwesomeIcon
+                icon={faCheck}
+                style={{ color: "white", fontSize: "0.6rem" }}
+              />
+            </div>
+            <p
+              className="flex-1 font-medium"
+              style={{ fontSize: "0.875rem", color: "white" }}
+            >
+              {toastMsg}
+            </p>
+            <button
+              onClick={() => setShowToast(false)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "rgba(255,255,255,0.5)",
+                padding: 0,
+              }}
+            >
+              <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
             </button>
           </div>
         </div>
       )}
 
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-4">
+      {/* Page header */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.125rem 2rem",
+        }}
+      >
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => router.back()}
-              className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
               aria-label="Go back"
+              style={{
+                width: "2.25rem",
+                height: "2.25rem",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "transparent",
+                border: "1px solid var(--color-neutral-200)",
+                borderRadius: "0.625rem",
+                cursor: "pointer",
+                color: "var(--color-neutral-500)",
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "var(--color-neutral-100)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "transparent";
+              }}
             >
               <FontAwesomeIcon
                 icon={faArrowLeft}
-                className="text-neutral-600 text-lg"
+                style={{ fontSize: "0.85rem" }}
               />
             </button>
             <div>
-              <h1 className="heading-2 text-neutral-900">{member.full_name}</h1>
-              <p className="text-neutral-600 body-regular mt-1">
+              <h1
+                className="font-bold"
+                style={{
+                  fontSize: "1.375rem",
+                  color: "var(--color-neutral-900)",
+                  lineHeight: 1.2,
+                }}
+              >
+                {member.full_name}
+              </h1>
+              <p
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--color-neutral-500)",
+                  marginTop: "0.125rem",
+                }}
+              >
                 Team Member Details
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={handleEdit}
-              className="btn-secondary flex items-center gap-2"
+              onClick={() => router.push(`/provider/teams/${employeeId}/edit`)}
+              className="btn btn-ghost btn-md flex items-center gap-2"
             >
-              <FontAwesomeIcon icon={faPenToSquare} />
+              <FontAwesomeIcon
+                icon={faPenToSquare}
+                style={{ fontSize: "0.8rem" }}
+              />
               Edit Member
             </button>
             <button
               onClick={() => setShowDeleteModal(true)}
-              className="px-5 py-3 bg-red-600 text-neutral-0 rounded-lg font-medium hover:bg-red-700 transition-colors flex items-center gap-2"
+              className="btn btn-md flex items-center gap-2"
+              style={{
+                backgroundColor: "#ef4444",
+                color: "white",
+                border: "none",
+              }}
             >
-              <FontAwesomeIcon icon={faTrash} />
+              <FontAwesomeIcon icon={faTrash} style={{ fontSize: "0.8rem" }} />
               Delete
             </button>
           </div>
         </div>
       </div>
 
-      <div className="p-8 max-w-7xl mx-auto">
+      {/* Body */}
+      <div
+        style={{ padding: "1.75rem 2rem", maxWidth: "72rem", margin: "0 auto" }}
+      >
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Sidebar - Member Overview */}
+          {/* ── Sidebar ── */}
           <div className="lg:col-span-1">
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 sticky top-8">
+            <div
+              className="rounded-2xl sticky top-8"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                border: "1px solid var(--color-neutral-200)",
+                padding: "1.5rem",
+              }}
+            >
               {/* Avatar */}
-              <div className="flex justify-center mb-6">
-                <div className="w-32 h-32 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center text-4xl font-bold">
-                  {member.initials}
+              <div className="flex justify-center mb-4">
+                <div
+                  className="w-24 h-24 rounded-full flex items-center justify-center font-bold"
+                  style={{
+                    backgroundColor: avatarColor(member.id),
+                    color: "white",
+                    fontSize: "2rem",
+                  }}
+                >
+                  {member.initials || getInitials(member.full_name)}
                 </div>
               </div>
 
-              {/* Name and Role */}
-              <div className="text-center mb-6">
-                <h2 className="heading-3 text-neutral-900 mb-2">
+              {/* Name + role */}
+              <div className="text-center mb-4">
+                <h2
+                  className="font-bold"
+                  style={{
+                    fontSize: "1.125rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
                   {member.full_name}
                 </h2>
-                <p className="text-neutral-600 body-regular mb-1">
-                  {member.role}
+                <p
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--color-neutral-600)",
+                    marginTop: "0.125rem",
+                  }}
+                >
+                  {member.role || "—"}
                 </p>
-                <p className="text-neutral-500 text-sm">{member.department}</p>
+                <p
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
+                  {member.department || "—"}
+                </p>
               </div>
 
-              {/* Status Badge */}
-              <div className="flex justify-center mb-6 pb-6 border-b border-neutral-100">
+              {/* Status */}
+              <div
+                className="flex justify-center pb-4 mb-4"
+                style={{ borderBottom: "1px solid var(--color-neutral-100)" }}
+              >
                 <span
-                  className={`px-4 py-2 rounded-lg text-sm font-semibold border ${getStatusBadgeColor(
-                    member.status
-                  )}`}
+                  style={{
+                    padding: "0.3rem 0.875rem",
+                    borderRadius: "9999px",
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    ...(STATUS_STYLES[member.status] ?? STATUS_STYLES.inactive),
+                  }}
                 >
-                  {formatStatusDisplay(member.status)}
+                  {formatStatus(member.status)}
                 </span>
               </div>
 
-              {/* Quick Stats */}
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="text-center p-4 bg-primary-50 rounded-lg border border-primary-200">
+              {/* Quick stats */}
+              <div
+                className="grid grid-cols-2 gap-3 pb-4 mb-4"
+                style={{ borderBottom: "1px solid var(--color-neutral-100)" }}
+              >
+                <div
+                  className="rounded-xl text-center"
+                  style={{
+                    padding: "0.875rem 0.5rem",
+                    backgroundColor: "rgba(26,177,137,0.06)",
+                    border: "1px solid rgba(26,177,137,0.12)",
+                  }}
+                >
                   <FontAwesomeIcon
                     icon={faFolder}
-                    className="text-primary-600 text-xl mb-2"
+                    style={{
+                      color: "#1ab189",
+                      fontSize: "1rem",
+                      marginBottom: "0.375rem",
+                      display: "block",
+                    }}
                   />
-                  <p className="heading-4 text-neutral-900 mb-1">
+                  <p
+                    className="font-bold"
+                    style={{
+                      fontSize: "1.125rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
                     {member.projects_count}
                   </p>
-                  <p className="text-neutral-600 text-sm">Projects</p>
+                  <p
+                    style={{
+                      fontSize: "0.7rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    Projects
+                  </p>
                 </div>
-                <div className="text-center p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <div
+                  className="rounded-xl text-center"
+                  style={{
+                    padding: "0.875rem 0.5rem",
+                    backgroundColor: "rgba(59,130,246,0.06)",
+                    border: "1px solid rgba(59,130,246,0.12)",
+                  }}
+                >
                   <FontAwesomeIcon
                     icon={faCalendar}
-                    className="text-blue-600 text-xl mb-2"
+                    style={{
+                      color: "#3b82f6",
+                      fontSize: "1rem",
+                      marginBottom: "0.375rem",
+                      display: "block",
+                    }}
                   />
-                  <p className="heading-4 text-neutral-900 mb-1">
+                  <p
+                    className="font-bold"
+                    style={{
+                      fontSize: "1.125rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
                     {member.join_date
-                      ? new Date().getFullYear() -
-                        new Date(member.join_date).getFullYear()
-                      : 0}
-                    y
+                      ? `${new Date().getFullYear() - new Date(member.join_date).getFullYear()}y`
+                      : "—"}
                   </p>
-                  <p className="text-neutral-600 text-sm">Tenure</p>
+                  <p
+                    style={{
+                      fontSize: "0.7rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    Tenure
+                  </p>
                 </div>
               </div>
 
               {/* Skills */}
               {member.skills && member.skills.length > 0 && (
-                <div className="mb-6">
-                  <p className="text-neutral-600 font-semibold mb-3 text-sm">
-                    Skills & Certifications
+                <div className="mb-4">
+                  <p
+                    style={{
+                      fontSize: "0.7rem",
+                      fontWeight: 700,
+                      color: "var(--color-neutral-400)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      marginBottom: "0.5rem",
+                    }}
+                  >
+                    Skills
                   </p>
-                  <div className="flex flex-wrap gap-2">
-                    {member.skills.map((skill, idx) => (
-                      <span
-                        key={idx}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${getSkillColor(
-                          skill
-                        )}`}
-                      >
-                        {skill}
-                      </span>
-                    ))}
+                  <div className="flex flex-wrap gap-1.5">
+                    {member.skills.map((skill) => {
+                      const s = SKILL_COLORS[skill] ?? DEFAULT_SKILL;
+                      return (
+                        <span
+                          key={skill}
+                          style={{
+                            padding: "0.2rem 0.6rem",
+                            borderRadius: "9999px",
+                            fontSize: "0.72rem",
+                            fontWeight: 500,
+                            backgroundColor: s.bg,
+                            color: s.color,
+                            border: s.border,
+                          }}
+                        >
+                          {skill}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               )}
 
-              {/* Quick Actions */}
-              <div className="space-y-2">
-                <button className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary-600 text-neutral-0 rounded-lg hover:bg-primary-700 transition-colors font-medium">
-                  <FontAwesomeIcon icon={faMessage} />
-                  Send Message
-                </button>
-                <button className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-neutral-0 border-2 border-neutral-200 text-neutral-700 rounded-lg hover:bg-neutral-50 transition-colors font-medium">
-                  <FontAwesomeIcon icon={faPhone} />
-                  Call Member
-                </button>
-              </div>
+              {/* Employee ID */}
+              {member.employee_id && (
+                <div
+                  className="rounded-xl px-4 py-3"
+                  style={{
+                    backgroundColor: "rgba(26,177,137,0.06)",
+                    border: "1px solid rgba(26,177,137,0.12)",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: "0.7rem",
+                      color: "var(--color-neutral-500)",
+                      marginBottom: "0.125rem",
+                    }}
+                  >
+                    Employee ID
+                  </p>
+                  <p
+                    className="font-semibold"
+                    style={{ fontSize: "0.875rem", color: "#1ab189" }}
+                  >
+                    {member.employee_id}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Contact Information Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                <FontAwesomeIcon icon={faUser} className="text-primary-600" />
-                Contact Information
-              </h2>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faEnvelope}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">Email</p>
-                    <a
-                      href={`mailto:${member.email}`}
-                      className="text-neutral-900 font-semibold hover:text-primary-600 transition-colors"
-                    >
-                      {member.email || "N/A"}
-                    </a>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faPhone}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">Phone</p>
-                    <a
-                      href={`tel:${member.phone}`}
-                      className="text-neutral-900 font-semibold hover:text-primary-600 transition-colors"
-                    >
-                      {member.phone || "N/A"}
-                    </a>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faUser}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">
-                      Emergency Contact
-                    </p>
-                    <p className="text-neutral-900 font-semibold">
-                      {member.emergency_contact || "N/A"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faPhone}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">
-                      Emergency Phone
-                    </p>
-                    <p className="text-neutral-900 font-semibold">
-                      {member.emergency_phone || "N/A"}
-                    </p>
-                  </div>
-                </div>
+          {/* ── Main content ── */}
+          <div className="lg:col-span-2 space-y-5">
+            {/* Contact information */}
+            <SectionCard icon={faUser} title="Contact Information">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <InfoRow
+                  icon={faEnvelope}
+                  label="Email"
+                  value={member.email}
+                  href={member.email ? `mailto:${member.email}` : undefined}
+                />
+                <InfoRow
+                  icon={faPhone}
+                  label="Phone"
+                  value={member.phone}
+                  href={member.phone ? `tel:${member.phone}` : undefined}
+                />
+                <InfoRow
+                  icon={faUser}
+                  label="Emergency Contact"
+                  value={member.emergency_contact}
+                />
+                <InfoRow
+                  icon={faPhone}
+                  label="Emergency Phone"
+                  value={member.emergency_phone}
+                />
               </div>
-            </div>
+            </SectionCard>
 
-            {/* Employment Details Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                <FontAwesomeIcon
+            {/* Employment details */}
+            <SectionCard icon={faBriefcase} title="Employment Details">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <InfoRow
+                  icon={faIdCard}
+                  label="Employee ID"
+                  value={member.employee_id}
+                />
+                <InfoRow
                   icon={faBriefcase}
-                  className="text-primary-600"
+                  label="Department"
+                  value={member.department}
                 />
-                Employment Details
-              </h2>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faIdCard}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">
-                      Employee ID
-                    </p>
-                    <p className="text-neutral-900 font-semibold">
-                      {member.employee_id || "N/A"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faBriefcase}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">
-                      Department
-                    </p>
-                    <p className="text-neutral-900 font-semibold">
-                      {member.department || "N/A"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faCalendar}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">
-                      Join Date
-                    </p>
-                    <p className="text-neutral-900 font-semibold">
-                      {member.join_date
-                        ? new Date(member.join_date).toLocaleDateString(
-                            "en-US",
-                            {
-                              month: "long",
-                              day: "numeric",
-                              year: "numeric",
-                            }
-                          )
-                        : "N/A"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faDollarSign}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">Salary</p>
-                    <p className="text-neutral-900 font-semibold">
-                      {member.salary ? formatCurrency(member.salary) : "N/A"}
-                    </p>
-                  </div>
-                </div>
+                <InfoRow
+                  icon={faCalendar}
+                  label="Join Date"
+                  value={
+                    member.join_date
+                      ? new Date(member.join_date).toLocaleDateString("en-US", {
+                          month: "long",
+                          day: "numeric",
+                          year: "numeric",
+                        })
+                      : "—"
+                  }
+                />
+                <InfoRow
+                  icon={faDollarSign}
+                  label="Salary"
+                  value={member.salary ? formatCurrency(member.salary) : "—"}
+                />
               </div>
-            </div>
+            </SectionCard>
 
-            {/* Address Information Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                <FontAwesomeIcon
-                  icon={faMapMarkerAlt}
-                  className="text-primary-600"
-                />
-                Address Details
-              </h2>
-
-              <div className="space-y-4">
+            {/* Address */}
+            <SectionCard icon={faMapMarkerAlt} title="Address Details">
+              <div className="space-y-3">
                 <div>
-                  <p className="text-neutral-600 body-small mb-1">
+                  <p
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--color-neutral-500)",
+                      marginBottom: "0.25rem",
+                    }}
+                  >
                     Street Address
                   </p>
-                  <p className="text-neutral-900 font-semibold">
-                    {member.address || "N/A"}
+                  <p
+                    className="font-semibold"
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    {member.address || "—"}
                   </p>
                 </div>
                 <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">City</p>
-                    <p className="text-neutral-900 font-semibold">
-                      {member.city || "N/A"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">State</p>
-                    <p className="text-neutral-900 font-semibold">
-                      {member.state || "N/A"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">Zip Code</p>
-                    <p className="text-neutral-900 font-semibold">
-                      {member.zip_code || "N/A"}
-                    </p>
-                  </div>
+                  {[
+                    { label: "City", value: member.city },
+                    { label: "State", value: member.state },
+                    { label: "Zip Code", value: member.zip_code },
+                  ].map(({ label, value }) => (
+                    <div key={label}>
+                      <p
+                        style={{
+                          fontSize: "0.72rem",
+                          color: "var(--color-neutral-500)",
+                          marginBottom: "0.25rem",
+                        }}
+                      >
+                        {label}
+                      </p>
+                      <p
+                        className="font-semibold"
+                        style={{
+                          fontSize: "0.875rem",
+                          color: "var(--color-neutral-900)",
+                        }}
+                      >
+                        {value || "—"}
+                      </p>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </div>
+            </SectionCard>
 
-            {/* Notes Card */}
+            {/* Notes */}
             {member.notes && (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-                <h2 className="heading-4 text-neutral-900 mb-4 flex items-center gap-3">
-                  <FontAwesomeIcon
-                    icon={faFileAlt}
-                    className="text-primary-600"
-                  />
-                  Notes
-                </h2>
-                <div className="bg-neutral-50 rounded-lg p-4 border border-neutral-200">
-                  <p className="text-neutral-700 body-regular leading-relaxed whitespace-pre-wrap">
+              <SectionCard icon={faBriefcase} title="Notes">
+                <div
+                  className="rounded-xl px-4 py-3"
+                  style={{
+                    backgroundColor: "var(--color-neutral-50)",
+                    border: "1px solid var(--color-neutral-200)",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-700)",
+                      lineHeight: 1.7,
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
                     {member.notes}
                   </p>
                 </div>
-              </div>
+              </SectionCard>
             )}
 
-            {/* Projects Summary Card */}
-            <div className="bg-gradient-to-br from-primary-50 to-secondary-50 rounded-xl border border-primary-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-4 flex items-center gap-3">
-                <FontAwesomeIcon
-                  icon={faUserGroup}
-                  className="text-primary-600"
-                />
-                Project Assignments
-              </h2>
-              <div className="mb-4">
-                <p className="text-neutral-600 body-small mb-1">
-                  Active Projects
-                </p>
-                <p className="heading-3 text-neutral-900">
-                  {member.projects_count}
-                </p>
+            {/* Projects */}
+            <SectionCard icon={faUserGroup} title="Project Assignments">
+              <div className="flex items-center gap-4 mb-4">
+                <div
+                  className="rounded-xl text-center"
+                  style={{
+                    padding: "1rem 1.5rem",
+                    backgroundColor: "rgba(26,177,137,0.06)",
+                    border: "1px solid rgba(26,177,137,0.12)",
+                  }}
+                >
+                  <p
+                    className="font-bold"
+                    style={{
+                      fontSize: "1.5rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    {member.projects_count}
+                  </p>
+                  <p
+                    style={{
+                      fontSize: "0.75rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    Active Projects
+                  </p>
+                </div>
               </div>
+
               {member.current_projects &&
                 member.current_projects.length > 0 && (
-                  <div className="mb-4">
-                    <p className="text-neutral-600 body-small mb-2">
-                      Current Assignments:
-                    </p>
-                    <div className="space-y-2">
-                      {member.current_projects.map((project) => (
-                        <div
-                          key={project.id}
-                          className="bg-neutral-0 rounded-lg p-3 border border-neutral-200"
+                  <div className="space-y-2 mb-4">
+                    {member.current_projects.map((project) => (
+                      <div
+                        key={project.id}
+                        className="flex items-center gap-3 rounded-xl px-4 py-3"
+                        style={{
+                          backgroundColor: "var(--color-neutral-50)",
+                          border: "1px solid var(--color-neutral-200)",
+                        }}
+                      >
+                        <FontAwesomeIcon
+                          icon={faFolder}
+                          style={{
+                            color: "#1ab189",
+                            fontSize: "0.8rem",
+                            flexShrink: 0,
+                          }}
+                        />
+                        <p
+                          className="font-semibold"
+                          style={{
+                            fontSize: "0.875rem",
+                            color: "var(--color-neutral-900)",
+                          }}
                         >
-                          <p className="text-neutral-900 font-semibold">
-                            {project.name}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
+                          {project.name}
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 )}
-              <button className="w-full btn-primary flex items-center justify-center gap-2">
-                <FontAwesomeIcon icon={faFolder} />
+
+              <button className="btn btn-primary btn-md w-full flex items-center justify-center gap-2">
+                <FontAwesomeIcon
+                  icon={faFolder}
+                  style={{ fontSize: "0.8rem" }}
+                />
                 View All Projects
               </button>
-            </div>
+            </SectionCard>
           </div>
         </div>
       </div>
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete modal */}
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-md w-full">
-            <div className="p-6">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-2xl max-w-md w-full"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div style={{ padding: "1.75rem" }}>
+              <div
+                className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+                style={{ backgroundColor: "#fef2f2" }}
+              >
                 <FontAwesomeIcon
                   icon={faExclamationTriangle}
-                  className="text-red-600 text-xl"
+                  style={{ color: "#ef4444", fontSize: "1.1rem" }}
                 />
               </div>
-              <h3 className="heading-4 text-neutral-900 text-center mb-2">
+              <h3
+                className="font-semibold text-center mb-2"
+                style={{
+                  fontSize: "1.0625rem",
+                  color: "var(--color-neutral-900)",
+                }}
+              >
                 Delete Team Member?
               </h3>
-              <p className="text-neutral-600 text-center mb-6">
+              <p
+                className="text-center mb-6"
+                style={{
+                  fontSize: "0.875rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
                 Are you sure you want to delete &quot;{member.full_name}&quot;?
-                This action cannot be undone and will permanently remove all
-                member data and project assignments.
+                This action cannot be undone and will remove all data and
+                project assignments.
               </p>
-
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-                <p className="text-red-700 text-sm font-medium flex items-center gap-2">
-                  <FontAwesomeIcon icon={faExclamationTriangle} />
-                  Warning: This will affect {member.projects_count} assigned
-                  projects
-                </p>
-              </div>
-
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setShowDeleteModal(false)}
                   disabled={deleteMutation.isPending}
-                  className="flex-1 px-5 py-3 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-50 transition-colors disabled:opacity-50"
+                  className="btn btn-ghost btn-md flex-1 justify-center"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleDelete}
+                  onClick={() => deleteMutation.mutate()}
                   disabled={deleteMutation.isPending}
-                  className="flex-1 px-5 py-3 bg-red-600 text-neutral-0 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="btn btn-md flex-1 justify-center flex items-center gap-2"
+                  style={{
+                    backgroundColor: "#ef4444",
+                    color: "white",
+                    border: "none",
+                    opacity: deleteMutation.isPending ? 0.6 : 1,
+                  }}
                 >
                   {deleteMutation.isPending ? (
                     <>
                       <FontAwesomeIcon
                         icon={faSpinner}
                         className="animate-spin"
-                      />
-                      Deleting...
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
+                      Deleting…
                     </>
                   ) : (
                     <>
-                      <FontAwesomeIcon icon={faTrash} />
-                      Delete Member
+                      <FontAwesomeIcon
+                        icon={faTrash}
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
+                      Delete
                     </>
                   )}
                 </button>

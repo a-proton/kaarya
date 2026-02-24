@@ -7,7 +7,6 @@ import {
   faCheckDouble,
   faTrash,
   faTimesCircle,
-  faFileCheck,
   faSpinner,
   faExclamationTriangle,
   faInbox,
@@ -30,8 +29,9 @@ import {
   faUserTie,
   faInfo,
   faChevronDown,
+  faTimes,
 } from "@fortawesome/free-solid-svg-icons";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useRouter } from "next/navigation";
@@ -104,6 +104,40 @@ const iconMap: Record<string, any> = {
 };
 
 // ==================================================================================
+// DESIGN TOKENS
+// ==================================================================================
+
+const ICON_COLOR_STYLES: Record<string, { bg: string; color: string }> = {
+  blue: { bg: "rgba(59,130,246,0.1)", color: "#2563eb" },
+  green: { bg: "rgba(26,177,137,0.1)", color: "#1ab189" },
+  red: { bg: "rgba(239,68,68,0.1)", color: "#dc2626" },
+  yellow: { bg: "rgba(217,119,6,0.1)", color: "#d97706" },
+  purple: { bg: "rgba(139,92,246,0.1)", color: "#7c3aed" },
+  orange: { bg: "rgba(249,115,22,0.1)", color: "#ea580c" },
+};
+
+const PRIORITY_STYLES: Record<
+  string,
+  { bg: string; color: string; border: string }
+> = {
+  high: { bg: "#fef2f2", color: "#dc2626", border: "#fecaca" },
+  normal: { bg: "#eff6ff", color: "#2563eb", border: "#bfdbfe" },
+  low: { bg: "#f9fafb", color: "#6b7280", border: "#e5e7eb" },
+};
+
+// ==================================================================================
+// HELPERS
+// ==================================================================================
+
+const getNotificationIcon = (iconName: string) => iconMap[iconName] || faBell;
+
+const getIconStyle = (color: string) =>
+  ICON_COLOR_STYLES[color] ?? { bg: "rgba(26,177,137,0.1)", color: "#1ab189" };
+
+const getPriorityStyle = (priority: string) =>
+  PRIORITY_STYLES[priority] ?? PRIORITY_STYLES.low;
+
+// ==================================================================================
 // MAIN COMPONENT
 // ==================================================================================
 
@@ -117,12 +151,23 @@ export default function NotificationsPage() {
     [],
   );
   const [currentPage, setCurrentPage] = useState(1);
+  const [showToast, setShowToast] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
+
+  // ==================================================================================
+  // TOAST
+  // ==================================================================================
+
+  const notify = (msg: string) => {
+    setToastMsg(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
 
   // ==================================================================================
   // DATA FETCHING
   // ==================================================================================
 
-  // Fetch notifications
   const {
     data: notificationsData,
     isLoading: notificationsLoading,
@@ -132,24 +177,16 @@ export default function NotificationsPage() {
     queryFn: async () => {
       const params = new URLSearchParams();
       params.append("page", currentPage.toString());
-
-      if (selectedFilter === "Unread") {
-        params.append("is_read", "false");
-      } else if (selectedFilter === "Read") {
-        params.append("is_read", "true");
-      }
-
-      if (selectedPriority !== "All Priorities") {
+      if (selectedFilter === "Unread") params.append("is_read", "false");
+      else if (selectedFilter === "Read") params.append("is_read", "true");
+      if (selectedPriority !== "All Priorities")
         params.append("priority", selectedPriority.toLowerCase());
-      }
-
       return api.get<NotificationsResponse>(
         `/api/v1/notifications/?${params.toString()}`,
       );
     },
   });
 
-  // Fetch stats
   const { data: statsData } = useQuery<NotificationStats>({
     queryKey: ["notification-stats"],
     queryFn: () => api.get<NotificationStats>("/api/v1/notifications/stats/"),
@@ -159,65 +196,57 @@ export default function NotificationsPage() {
   // MUTATIONS
   // ==================================================================================
 
-  // Mark as read mutation
   const markAsReadMutation = useMutation({
-    mutationFn: async (notificationId: number) => {
-      return api.patch(`/api/v1/notifications/${notificationId}/read/`, {
+    mutationFn: (notificationId: number) =>
+      api.patch(`/api/v1/notifications/${notificationId}/read/`, {
         is_read: true,
-      });
-    },
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
       queryClient.invalidateQueries({ queryKey: ["notification-stats"] });
     },
   });
 
-  // Mark all as read mutation
   const markAllReadMutation = useMutation({
-    mutationFn: async () => {
-      return api.post("/api/v1/notifications/mark-all-read/");
-    },
+    mutationFn: () => api.post("/api/v1/notifications/mark-all-read/"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
       queryClient.invalidateQueries({ queryKey: ["notification-stats"] });
       setSelectedNotifications([]);
+      notify("All notifications marked as read");
     },
   });
 
-  // Delete notification mutation
   const deleteNotificationMutation = useMutation({
-    mutationFn: async (notificationId: number) => {
-      return api.delete(`/api/v1/notifications/${notificationId}/delete/`);
-    },
+    mutationFn: (notificationId: number) =>
+      api.delete(`/api/v1/notifications/${notificationId}/delete/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
       queryClient.invalidateQueries({ queryKey: ["notification-stats"] });
+      notify("Notification deleted");
     },
   });
 
-  // Bulk delete mutation
   const bulkDeleteMutation = useMutation({
-    mutationFn: async (notificationIds: number[]) => {
-      return api.post("/api/v1/notifications/bulk-action/", {
+    mutationFn: (notificationIds: number[]) =>
+      api.post("/api/v1/notifications/bulk-action/", {
         notification_ids: notificationIds,
         action: "delete",
-      });
-    },
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
       queryClient.invalidateQueries({ queryKey: ["notification-stats"] });
       setSelectedNotifications([]);
+      notify("Selected notifications deleted");
     },
   });
 
-  // Delete all read mutation
   const deleteAllReadMutation = useMutation({
-    mutationFn: async () => {
-      return api.delete("/api/v1/notifications/delete-all-read/");
-    },
+    mutationFn: () => api.delete("/api/v1/notifications/delete-all-read/"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
       queryClient.invalidateQueries({ queryKey: ["notification-stats"] });
+      notify("All read notifications cleared");
     },
   });
 
@@ -226,30 +255,22 @@ export default function NotificationsPage() {
   // ==================================================================================
 
   const handleNotificationClick = async (notification: Notification) => {
-    // Mark as read
     if (!notification.is_read) {
       await markAsReadMutation.mutateAsync(notification.id);
     }
-
-    // Navigate to action URL if available
     if (notification.action_url) {
       router.push(notification.action_url);
     }
   };
 
-  const handleSelectNotification = (notificationId: number) => {
+  const handleSelectNotification = (id: number) => {
     setSelectedNotifications((prev) =>
-      prev.includes(notificationId)
-        ? prev.filter((id) => id !== notificationId)
-        : [...prev, notificationId],
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
   };
 
   const handleSelectAll = () => {
-    if (
-      selectedNotifications.length === notificationsData?.results.length &&
-      notificationsData
-    ) {
+    if (selectedNotifications.length === notificationsData?.results.length) {
       setSelectedNotifications([]);
     } else {
       setSelectedNotifications(
@@ -258,72 +279,42 @@ export default function NotificationsPage() {
     }
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (
       selectedNotifications.length > 0 &&
-      confirm(
-        `Are you sure you want to delete ${selectedNotifications.length} notification(s)?`,
-      )
+      confirm(`Delete ${selectedNotifications.length} notification(s)?`)
     ) {
-      await bulkDeleteMutation.mutateAsync(selectedNotifications);
+      bulkDeleteMutation.mutate(selectedNotifications);
     }
   };
 
-  const handleDeleteAllRead = async () => {
-    if (
-      confirm(
-        "Are you sure you want to delete all read notifications? This action cannot be undone.",
-      )
-    ) {
-      await deleteAllReadMutation.mutateAsync();
+  const handleDeleteAllRead = () => {
+    if (confirm("Delete all read notifications? This cannot be undone.")) {
+      deleteAllReadMutation.mutate();
     }
-  };
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case "high":
-        return "bg-red-100 text-red-700 border-red-200";
-      case "normal":
-        return "bg-blue-100 text-blue-700 border-blue-200";
-      case "low":
-        return "bg-neutral-100 text-neutral-600 border-neutral-200";
-      default:
-        return "bg-neutral-100 text-neutral-600 border-neutral-200";
-    }
-  };
-
-  const getNotificationIcon = (iconName: string) => {
-    return iconMap[iconName] || faBell;
-  };
-
-  const getIconColorClasses = (color: string) => {
-    const colorMap: Record<string, string> = {
-      blue: "bg-blue-100 text-blue-600",
-      green: "bg-green-100 text-green-600",
-      red: "bg-red-100 text-red-600",
-      yellow: "bg-yellow-100 text-yellow-600",
-      purple: "bg-purple-100 text-purple-600",
-      orange: "bg-orange-100 text-orange-600",
-    };
-    return colorMap[color] || "bg-neutral-100 text-neutral-600";
   };
 
   // ==================================================================================
-  // LOADING & ERROR STATES
+  // LOADING / ERROR
   // ==================================================================================
 
-  const isLoading = notificationsLoading;
-
-  if (isLoading) {
+  if (notificationsLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            spin
-            className="text-4xl text-primary-600 mb-4"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading notifications...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading notifications…
+          </p>
         </div>
       </div>
     );
@@ -331,25 +322,28 @@ export default function NotificationsPage() {
 
   if (notificationsError) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center max-w-md">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
+        <div className="text-center">
+          <div
+            className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+            style={{ backgroundColor: "#fef2f2" }}
+          >
             <FontAwesomeIcon
               icon={faExclamationTriangle}
-              className="text-red-600 text-2xl"
+              style={{ color: "#ef4444", fontSize: "1.1rem" }}
             />
           </div>
-          <h2 className="heading-3 text-neutral-900 mb-2">
-            Error Loading Notifications
-          </h2>
-          <p className="text-neutral-600 mb-4">
-            Failed to load your notifications. Please try again.
+          <p className="mb-4" style={{ color: "#ef4444" }}>
+            Failed to load notifications
           </p>
           <button
             onClick={() => window.location.reload()}
-            className="btn-primary"
+            className="btn btn-primary btn-md"
           >
-            Try Again
+            Retry
           </button>
         </div>
       </div>
@@ -358,30 +352,117 @@ export default function NotificationsPage() {
 
   const notifications = notificationsData?.results || [];
   const hasNotifications = notifications.length > 0;
+  const allSelected =
+    notifications.length > 0 &&
+    selectedNotifications.length === notifications.length;
 
   // ==================================================================================
   // RENDER
   // ==================================================================================
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* Toast */}
+      {showToast && (
+        <div
+          className="fixed top-5 right-5 z-[60]"
+          style={{ minWidth: "17rem" }}
+        >
+          <div
+            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+            style={{
+              backgroundColor: "var(--color-neutral-900)",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div
+              className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: "#1ab189" }}
+            >
+              <FontAwesomeIcon
+                icon={faCheck}
+                style={{ color: "white", fontSize: "0.6rem" }}
+              />
+            </div>
+            <p
+              className="flex-1 font-medium"
+              style={{ fontSize: "0.875rem", color: "white" }}
+            >
+              {toastMsg}
+            </p>
+            <button
+              onClick={() => setShowToast(false)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "rgba(255,255,255,0.5)",
+                padding: 0,
+              }}
+            >
+              <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Page Header */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.125rem 2rem",
+        }}
+      >
+        <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h1 className="heading-2 text-neutral-900 mb-1">Notifications</h1>
-            <p className="text-neutral-600 body-regular">
+            <h1
+              className="font-bold"
+              style={{
+                fontSize: "1.375rem",
+                color: "var(--color-neutral-900)",
+                lineHeight: 1.2,
+              }}
+            >
+              Notifications
+            </h1>
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--color-neutral-500)",
+                marginTop: "0.125rem",
+              }}
+            >
               Stay updated with your latest activities
+              {statsData?.unread ? (
+                <span
+                  className="ml-2 font-semibold rounded-full px-2 py-0.5"
+                  style={{
+                    fontSize: "0.7rem",
+                    backgroundColor: "#1ab189",
+                    color: "white",
+                  }}
+                >
+                  {statsData.unread} unread
+                </span>
+              ) : null}
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
             {statsData && statsData.unread > 0 && (
               <button
                 onClick={() => markAllReadMutation.mutate()}
                 disabled={markAllReadMutation.isPending}
-                className="btn-secondary flex items-center gap-2"
+                className="btn btn-ghost btn-md flex items-center gap-2"
+                style={{ opacity: markAllReadMutation.isPending ? 0.6 : 1 }}
               >
-                <FontAwesomeIcon icon={faCheckDouble} />
+                <FontAwesomeIcon
+                  icon={faCheckDouble}
+                  style={{ fontSize: "0.8rem" }}
+                />
                 Mark All Read
               </button>
             )}
@@ -389,292 +470,585 @@ export default function NotificationsPage() {
               <button
                 onClick={handleBulkDelete}
                 disabled={bulkDeleteMutation.isPending}
-                className="btn-danger flex items-center gap-2"
+                className="btn btn-md flex items-center gap-2"
+                style={{
+                  backgroundColor: "#fef2f2",
+                  color: "#dc2626",
+                  border: "1px solid #fecaca",
+                  opacity: bulkDeleteMutation.isPending ? 0.6 : 1,
+                  cursor: bulkDeleteMutation.isPending
+                    ? "not-allowed"
+                    : "pointer",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "#fee2e2";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "#fef2f2";
+                }}
               >
-                <FontAwesomeIcon icon={faTrash} />
-                Delete Selected ({selectedNotifications.length})
+                <FontAwesomeIcon
+                  icon={faTrash}
+                  style={{ fontSize: "0.8rem" }}
+                />
+                Delete ({selectedNotifications.length})
               </button>
             )}
           </div>
         </div>
       </div>
 
-      <div className="p-8 max-w-7xl mx-auto">
+      <div style={{ padding: "1.75rem 2rem" }}>
         {/* Stats Cards */}
         {statsData && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 bg-blue-50 rounded-lg flex items-center justify-center">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            {[
+              {
+                label: "Total",
+                value: statsData.total,
+                iconBg: "rgba(59,130,246,0.1)",
+                iconColor: "#2563eb",
+                icon: faBell,
+              },
+              {
+                label: "Unread",
+                value: statsData.unread,
+                iconBg: "rgba(26,177,137,0.1)",
+                iconColor: "#1ab189",
+                icon: faEnvelope,
+                highlight: statsData.unread > 0,
+              },
+              {
+                label: "High Priority",
+                value: statsData.by_priority.high,
+                iconBg: "rgba(239,68,68,0.1)",
+                iconColor: "#dc2626",
+                icon: faExclamationTriangle,
+              },
+              {
+                label: "Read",
+                value: statsData.total - statsData.unread,
+                iconBg: "rgba(22,163,74,0.1)",
+                iconColor: "#16a34a",
+                icon: faCheckCircle,
+              },
+            ].map(({ label, value, iconBg, iconColor, icon, highlight }) => (
+              <div
+                key={label}
+                className="rounded-2xl p-5"
+                style={{
+                  backgroundColor: "var(--color-neutral-0)",
+                  border: highlight
+                    ? "1px solid rgba(26,177,137,0.3)"
+                    : "1px solid var(--color-neutral-200)",
+                }}
+              >
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center mb-4"
+                  style={{ backgroundColor: iconBg }}
+                >
                   <FontAwesomeIcon
-                    icon={faBell}
-                    className="text-2xl text-blue-600"
+                    icon={icon}
+                    style={{ color: iconColor, fontSize: "1rem" }}
                   />
                 </div>
+                <p
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "var(--color-neutral-500)",
+                    marginBottom: "0.25rem",
+                  }}
+                >
+                  {label}
+                </p>
+                <p
+                  style={{
+                    fontSize: "1.375rem",
+                    fontWeight: 700,
+                    color: highlight ? "#1ab189" : "var(--color-neutral-900)",
+                    lineHeight: 1,
+                  }}
+                >
+                  {value}
+                </p>
               </div>
-              <h3 className="text-neutral-600 body-small mb-1">
-                Total Notifications
-              </h3>
-              <p className="heading-3 text-neutral-900 mb-0">
-                {statsData.total}
-              </p>
-            </div>
-
-            <div className="bg-gradient-to-br from-primary-600 to-primary-700 rounded-xl p-6 text-neutral-0 shadow-lg">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 bg-neutral-0/20 rounded-lg flex items-center justify-center">
-                  <FontAwesomeIcon icon={faEnvelope} className="text-2xl" />
-                </div>
-              </div>
-              <h3 className="text-neutral-0/80 body-small mb-1">Unread</h3>
-              <p className="heading-2 mb-0">{statsData.unread}</p>
-            </div>
-
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 bg-red-50 rounded-lg flex items-center justify-center">
-                  <FontAwesomeIcon
-                    icon={faExclamationTriangle}
-                    className="text-2xl text-red-600"
-                  />
-                </div>
-              </div>
-              <h3 className="text-neutral-600 body-small mb-1">
-                High Priority
-              </h3>
-              <p className="heading-3 text-neutral-900 mb-0">
-                {statsData.by_priority.high}
-              </p>
-            </div>
-
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 bg-green-50 rounded-lg flex items-center justify-center">
-                  <FontAwesomeIcon
-                    icon={faCheckCircle}
-                    className="text-2xl text-green-600"
-                  />
-                </div>
-              </div>
-              <h3 className="text-neutral-600 body-small mb-1">Read</h3>
-              <p className="heading-3 text-neutral-900 mb-0">
-                {statsData.total - statsData.unread}
-              </p>
-            </div>
+            ))}
           </div>
         )}
 
-        {/* Filters and Actions */}
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-neutral-200">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleSelectAll}
-                  className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
-                  title={
-                    selectedNotifications.length === notifications.length
-                      ? "Deselect All"
-                      : "Select All"
-                  }
-                >
+        {/* Main Card */}
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{
+            backgroundColor: "var(--color-neutral-0)",
+            border: "1px solid var(--color-neutral-200)",
+          }}
+        >
+          {/* Toolbar */}
+          <div
+            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 flex-wrap"
+            style={{
+              padding: "1rem 1.5rem",
+              borderBottom: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            {/* Left — select all + filter tabs */}
+            <div className="flex items-center gap-3">
+              {/* Select all checkbox */}
+              <button
+                onClick={handleSelectAll}
+                title={allSelected ? "Deselect all" : "Select all"}
+                style={{
+                  width: "2rem",
+                  height: "2rem",
+                  borderRadius: "0.5rem",
+                  border: allSelected
+                    ? "2px solid #1ab189"
+                    : "1px solid var(--color-neutral-200)",
+                  backgroundColor: allSelected ? "#1ab189" : "transparent",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                  transition: "all 120ms",
+                }}
+              >
+                {allSelected && (
                   <FontAwesomeIcon
-                    icon={
-                      selectedNotifications.length === notifications.length
-                        ? faCheckDouble
-                        : faCheck
-                    }
-                    className="text-neutral-600"
+                    icon={faCheck}
+                    style={{ color: "white", fontSize: "0.65rem" }}
                   />
-                </button>
+                )}
+              </button>
 
-                <div className="h-6 w-px bg-neutral-200" />
+              <div
+                style={{
+                  width: "1px",
+                  height: "1.25rem",
+                  backgroundColor: "var(--color-neutral-200)",
+                }}
+              />
 
-                <div className="flex items-center gap-2">
-                  {["All", "Unread", "Read"].map((filter) => (
+              {/* Filter tabs */}
+              <div className="flex items-center" style={{ gap: "0.25rem" }}>
+                {["All", "Unread", "Read"].map((filter) => {
+                  const active = selectedFilter === filter;
+                  return (
                     <button
                       key={filter}
                       onClick={() => {
                         setSelectedFilter(filter);
                         setCurrentPage(1);
                       }}
-                      className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-                        selectedFilter === filter
-                          ? "bg-primary-600 text-neutral-0"
-                          : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200"
-                      }`}
+                      style={{
+                        padding: "0.375rem 0.875rem",
+                        borderRadius: "0.5rem",
+                        fontSize: "0.8125rem",
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        border: "none",
+                        backgroundColor: active ? "#1ab189" : "transparent",
+                        color: active ? "white" : "var(--color-neutral-600)",
+                        transition: "background-color 120ms, color 120ms",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!active)
+                          (
+                            e.currentTarget as HTMLButtonElement
+                          ).style.backgroundColor = "var(--color-neutral-100)";
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!active)
+                          (
+                            e.currentTarget as HTMLButtonElement
+                          ).style.backgroundColor = "transparent";
+                      }}
                     >
                       {filter}
                     </button>
-                  ))}
-                </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Right — priority filter + clear read */}
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <select
+                  value={selectedPriority}
+                  onChange={(e) => {
+                    setSelectedPriority(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  style={{
+                    appearance: "none",
+                    padding: "0.4rem 2.25rem 0.4rem 0.875rem",
+                    fontFamily: "var(--font-sans)",
+                    fontSize: "0.8125rem",
+                    color: "var(--color-neutral-700)",
+                    backgroundColor: "var(--color-neutral-0)",
+                    border: "1px solid var(--color-neutral-200)",
+                    borderRadius: "0.625rem",
+                    outline: "none",
+                    cursor: "pointer",
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = "#1ab189";
+                    e.currentTarget.style.boxShadow =
+                      "0 0 0 3px rgba(26,177,137,0.12)";
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor =
+                      "var(--color-neutral-200)";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                >
+                  <option>All Priorities</option>
+                  <option>High</option>
+                  <option>Normal</option>
+                  <option>Low</option>
+                </select>
+                <FontAwesomeIcon
+                  icon={faChevronDown}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                  style={{
+                    color: "var(--color-neutral-400)",
+                    fontSize: "0.65rem",
+                  }}
+                />
               </div>
 
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <select
-                    value={selectedPriority}
-                    onChange={(e) => {
-                      setSelectedPriority(e.target.value);
-                      setCurrentPage(1);
-                    }}
-                    className="appearance-none pl-4 pr-10 py-2 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-small cursor-pointer"
-                  >
-                    <option>All Priorities</option>
-                    <option>High</option>
-                    <option>Normal</option>
-                    <option>Low</option>
-                  </select>
+              {statsData && statsData.total - statsData.unread > 0 && (
+                <button
+                  onClick={handleDeleteAllRead}
+                  disabled={deleteAllReadMutation.isPending}
+                  className="btn btn-ghost btn-md flex items-center gap-2"
+                  style={{
+                    color: "#dc2626",
+                    opacity: deleteAllReadMutation.isPending ? 0.6 : 1,
+                  }}
+                >
                   <FontAwesomeIcon
-                    icon={faChevronDown}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 text-xs pointer-events-none"
+                    icon={faTrash}
+                    style={{ fontSize: "0.75rem" }}
                   />
-                </div>
-
-                {statsData && statsData.total - statsData.unread > 0 && (
-                  <button
-                    onClick={handleDeleteAllRead}
-                    disabled={deleteAllReadMutation.isPending}
-                    className="btn-secondary flex items-center gap-2"
-                  >
-                    <FontAwesomeIcon icon={faTrash} />
-                    Clear Read
-                  </button>
-                )}
-              </div>
+                  Clear Read
+                </button>
+              )}
             </div>
           </div>
 
           {/* Notifications List */}
           {!hasNotifications ? (
-            <div className="text-center py-16">
-              <div className="w-20 h-20 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <div className="text-center" style={{ padding: "4rem 2rem" }}>
+              <div
+                className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4"
+                style={{ backgroundColor: "var(--color-neutral-100)" }}
+              >
                 <FontAwesomeIcon
                   icon={faInbox}
-                  className="text-4xl text-neutral-400"
+                  style={{
+                    fontSize: "1.5rem",
+                    color: "var(--color-neutral-400)",
+                  }}
                 />
               </div>
-              <h3 className="heading-4 text-neutral-900 mb-2">
-                No notifications
-              </h3>
-              <p className="text-neutral-600">
+              <h3
+                className="font-semibold mb-1"
+                style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+              >
                 {selectedFilter === "Unread"
                   ? "You're all caught up!"
+                  : "No notifications"}
+              </h3>
+              <p
+                style={{
+                  fontSize: "0.875rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
+                {selectedFilter === "Unread"
+                  ? "No unread notifications at the moment."
                   : "You don't have any notifications yet."}
               </p>
             </div>
           ) : (
-            <div className="divide-y divide-neutral-100">
-              {notifications.map((notification) => (
-                <div
-                  key={notification.id}
-                  className={`px-6 py-4 hover:bg-neutral-50 transition-colors ${
-                    !notification.is_read ? "bg-blue-50/30" : ""
-                  }`}
-                >
-                  <div className="flex items-start gap-4">
-                    {/* Checkbox */}
-                    <input
-                      type="checkbox"
-                      checked={selectedNotifications.includes(notification.id)}
-                      onChange={() => handleSelectNotification(notification.id)}
-                      className="mt-1 w-4 h-4 text-primary-600 rounded border-neutral-300 focus:ring-2 focus:ring-primary-500/20"
-                    />
+            <div>
+              {notifications.map((notification, idx) => {
+                const iconStyle = getIconStyle(notification.notification_color);
+                const priorityStyle = getPriorityStyle(notification.priority);
+                const isSelected = selectedNotifications.includes(
+                  notification.id,
+                );
+                const isLast = idx === notifications.length - 1;
 
-                    {/* Icon */}
+                return (
+                  <div
+                    key={notification.id}
+                    style={{
+                      borderBottom: isLast
+                        ? "none"
+                        : "1px solid var(--color-neutral-100)",
+                      backgroundColor: !notification.is_read
+                        ? "rgba(26,177,137,0.03)"
+                        : "transparent",
+                      transition: "background-color 120ms",
+                    }}
+                    onMouseEnter={(e) => {
+                      (
+                        e.currentTarget as HTMLDivElement
+                      ).style.backgroundColor = "var(--color-neutral-50)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (
+                        e.currentTarget as HTMLDivElement
+                      ).style.backgroundColor = !notification.is_read
+                        ? "rgba(26,177,137,0.03)"
+                        : "transparent";
+                    }}
+                  >
                     <div
-                      className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 ${getIconColorClasses(
-                        notification.notification_color,
-                      )}`}
+                      className="flex items-start gap-4"
+                      style={{ padding: "1rem 1.5rem" }}
                     >
-                      <FontAwesomeIcon
-                        icon={getNotificationIcon(
-                          notification.notification_icon,
+                      {/* Checkbox */}
+                      <button
+                        onClick={() =>
+                          handleSelectNotification(notification.id)
+                        }
+                        style={{
+                          width: "1.25rem",
+                          height: "1.25rem",
+                          borderRadius: "0.375rem",
+                          border: isSelected
+                            ? "2px solid #1ab189"
+                            : "1px solid var(--color-neutral-300)",
+                          backgroundColor: isSelected
+                            ? "#1ab189"
+                            : "transparent",
+                          cursor: "pointer",
+                          flexShrink: 0,
+                          marginTop: "0.25rem",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          transition: "all 120ms",
+                        }}
+                      >
+                        {isSelected && (
+                          <FontAwesomeIcon
+                            icon={faCheck}
+                            style={{ color: "white", fontSize: "0.55rem" }}
+                          />
                         )}
-                        className="text-xl"
-                      />
-                    </div>
+                      </button>
 
-                    {/* Content */}
-                    <div
-                      className="flex-1 cursor-pointer"
-                      onClick={() => handleNotificationClick(notification)}
-                    >
-                      <div className="flex items-start justify-between gap-4 mb-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="font-semibold text-neutral-900">
-                            {notification.title}
-                          </h4>
-                          {!notification.is_read && (
-                            <span className="w-2 h-2 bg-primary-600 rounded-full" />
+                      {/* Icon */}
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                        style={{ backgroundColor: iconStyle.bg }}
+                      >
+                        <FontAwesomeIcon
+                          icon={getNotificationIcon(
+                            notification.notification_icon,
                           )}
-                        </div>
-                        <span className="text-neutral-500 text-sm whitespace-nowrap">
-                          {notification.time_ago}
-                        </span>
+                          style={{
+                            color: iconStyle.color,
+                            fontSize: "0.95rem",
+                          }}
+                        />
                       </div>
-                      <p className="text-neutral-600 body-regular mb-2">
-                        {notification.message}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-semibold border ${getPriorityColor(
-                            notification.priority,
-                          )}`}
-                        >
-                          {notification.priority}
-                        </span>
-                      </div>
-                    </div>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-2">
-                      {!notification.is_read && (
+                      {/* Content */}
+                      <div
+                        className="flex-1 min-w-0"
+                        style={{
+                          cursor: notification.action_url
+                            ? "pointer"
+                            : "default",
+                        }}
+                        onClick={() => handleNotificationClick(notification)}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <h4
+                              className="font-semibold truncate"
+                              style={{
+                                fontSize: "0.875rem",
+                                color: "var(--color-neutral-900)",
+                              }}
+                            >
+                              {notification.title}
+                            </h4>
+                            {!notification.is_read && (
+                              <span
+                                className="flex-shrink-0"
+                                style={{
+                                  width: "0.5rem",
+                                  height: "0.5rem",
+                                  borderRadius: "9999px",
+                                  backgroundColor: "#1ab189",
+                                  display: "inline-block",
+                                }}
+                              />
+                            )}
+                          </div>
+                          <span
+                            className="flex-shrink-0 whitespace-nowrap"
+                            style={{
+                              fontSize: "0.75rem",
+                              color: "var(--color-neutral-400)",
+                            }}
+                          >
+                            {notification.time_ago}
+                          </span>
+                        </div>
+
+                        <p
+                          style={{
+                            fontSize: "0.8125rem",
+                            color: "var(--color-neutral-600)",
+                            marginTop: "0.25rem",
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          {notification.message}
+                        </p>
+
+                        <div className="flex items-center gap-2 mt-2">
+                          <span
+                            style={{
+                              padding: "0.15rem 0.5rem",
+                              borderRadius: "9999px",
+                              fontSize: "0.65rem",
+                              fontWeight: 700,
+                              backgroundColor: priorityStyle.bg,
+                              color: priorityStyle.color,
+                              border: `1px solid ${priorityStyle.border}`,
+                              textTransform: "capitalize",
+                            }}
+                          >
+                            {notification.priority}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Row Actions */}
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {!notification.is_read && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              markAsReadMutation.mutate(notification.id);
+                            }}
+                            title="Mark as read"
+                            style={{
+                              width: "2rem",
+                              height: "2rem",
+                              borderRadius: "0.5rem",
+                              border: "none",
+                              backgroundColor: "transparent",
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              color: "var(--color-neutral-400)",
+                              transition: "background-color 120ms, color 120ms",
+                            }}
+                            onMouseEnter={(e) => {
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.backgroundColor = "rgba(26,177,137,0.1)";
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.color = "#1ab189";
+                            }}
+                            onMouseLeave={(e) => {
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.backgroundColor = "transparent";
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.color = "var(--color-neutral-400)";
+                            }}
+                          >
+                            <FontAwesomeIcon
+                              icon={faCheck}
+                              style={{ fontSize: "0.75rem" }}
+                            />
+                          </button>
+                        )}
+
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            markAsReadMutation.mutate(notification.id);
+                            if (confirm("Delete this notification?")) {
+                              deleteNotificationMutation.mutate(
+                                notification.id,
+                              );
+                            }
                           }}
-                          className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
-                          title="Mark as read"
+                          title="Delete"
+                          style={{
+                            width: "2rem",
+                            height: "2rem",
+                            borderRadius: "0.5rem",
+                            border: "none",
+                            backgroundColor: "transparent",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            color: "var(--color-neutral-300)",
+                            transition: "background-color 120ms, color 120ms",
+                          }}
+                          onMouseEnter={(e) => {
+                            (
+                              e.currentTarget as HTMLButtonElement
+                            ).style.backgroundColor = "#fef2f2";
+                            (e.currentTarget as HTMLButtonElement).style.color =
+                              "#dc2626";
+                          }}
+                          onMouseLeave={(e) => {
+                            (
+                              e.currentTarget as HTMLButtonElement
+                            ).style.backgroundColor = "transparent";
+                            (e.currentTarget as HTMLButtonElement).style.color =
+                              "var(--color-neutral-300)";
+                          }}
                         >
                           <FontAwesomeIcon
-                            icon={faCheck}
-                            className="text-neutral-600"
+                            icon={faTrash}
+                            style={{ fontSize: "0.75rem" }}
                           />
                         </button>
-                      )}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (
-                            confirm(
-                              "Are you sure you want to delete this notification?",
-                            )
-                          ) {
-                            deleteNotificationMutation.mutate(notification.id);
-                          }
-                        }}
-                        className="p-2 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Delete"
-                      >
-                        <FontAwesomeIcon
-                          icon={faTrash}
-                          className="text-red-600"
-                        />
-                      </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
           {/* Pagination */}
           {notificationsData && notificationsData.count > 20 && (
-            <div className="px-6 py-4 border-t border-neutral-200 flex items-center justify-between">
-              <p className="text-neutral-600 body-small">
-                Showing {(currentPage - 1) * 20 + 1} to{" "}
+            <div
+              className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+              style={{
+                padding: "0.875rem 1.5rem",
+                borderTop: "1px solid var(--color-neutral-200)",
+              }}
+            >
+              <p
+                style={{
+                  fontSize: "0.78rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
+                Showing {(currentPage - 1) * 20 + 1}–
                 {Math.min(currentPage * 20, notificationsData.count)} of{" "}
                 {notificationsData.count} notifications
               </p>
@@ -682,14 +1056,16 @@ export default function NotificationsPage() {
                 <button
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                   disabled={!notificationsData.previous}
-                  className="btn-secondary disabled:opacity-50"
+                  className="btn btn-ghost btn-md"
+                  style={{ opacity: !notificationsData.previous ? 0.4 : 1 }}
                 >
                   Previous
                 </button>
                 <button
                   onClick={() => setCurrentPage((p) => p + 1)}
                   disabled={!notificationsData.next}
-                  className="btn-primary disabled:opacity-50"
+                  className="btn btn-primary btn-md"
+                  style={{ opacity: !notificationsData.next ? 0.4 : 1 }}
                 >
                   Next
                 </button>

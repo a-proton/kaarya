@@ -75,9 +75,6 @@ function LoginContent() {
     setToast(null);
   };
 
-  // src/app/(auth)/login/page.tsx
-  // Replace your onSubmit function with this:
-
   const onSubmit = async (data: LoginFormData) => {
     try {
       setToast(null);

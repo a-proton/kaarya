@@ -3,27 +3,36 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faCreditCard,
-  faDownload,
   faEye,
   faCheckCircle,
-  faExclamationCircle,
   faClock,
   faCalendar,
   faReceipt,
-  faFileInvoice,
-  faDollarSign,
   faChartPie,
-  faFilter,
   faTimes,
   faChevronDown,
-  faSpinner,
   faPlus,
+  faCheck,
+  faArrowUp,
+  faDollarSign,
+  faEllipsisVertical,
+  faDownload,
+  faSpinner,
+  faExclamationTriangle,
+  faFilter,
+  faFileInvoice,
+  faExclamationCircle,
+  faChartLine,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isAuthenticated } from "@/lib/auth";
 import { useRouter } from "next/navigation";
+
+// ==================================================================================
+// TYPES
+// ==================================================================================
 
 interface Payment {
   id: number;
@@ -34,7 +43,6 @@ interface Payment {
   transaction_id?: string;
   payment_type: "advance" | "milestone" | "final" | "other";
   payment_status: "pending" | "completed" | "failed";
-  receipt_url?: string;
   notes?: string;
   posted_by_name: string;
   created_at: string;
@@ -44,30 +52,277 @@ interface Project {
   id: number;
   project_name: string;
   total_cost: string | null;
-  advance_payment: string | null;
-  balance_payment: string | null;
   status: string;
   service_provider: {
     id: number;
     full_name: string;
     business_name?: string;
-    profile_image?: string;
   };
 }
+
+// ==================================================================================
+// HELPERS
+// ==================================================================================
+
+const fmt = (n: number | string | null | undefined) => {
+  if (n === null || n === undefined || n === "") return "0.00";
+  const num = typeof n === "string" ? parseFloat(n) : n;
+  if (isNaN(num)) return "0.00";
+  return num.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
+
+const fmtDate = (d: string) =>
+  new Date(d).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
+// Two-letter initials from project name
+const getInitials = (name: string) =>
+  name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+
+// Deterministic color per project id — same palette as provider page
+const PROJECT_COLORS = [
+  "#1ab189",
+  "#8b5cf6",
+  "#f59e0b",
+  "#3b82f6",
+  "#10b981",
+  "#ec4899",
+  "#f97316",
+  "#06b6d4",
+];
+const projectColor = (id: number) => PROJECT_COLORS[id % PROJECT_COLORS.length];
+
+const STATUS_CFG = {
+  completed: {
+    bg: "#f0fdf4",
+    color: "#16a34a",
+    border: "#bbf7d0",
+    icon: faCheckCircle,
+    label: "Completed",
+  },
+  pending: {
+    bg: "#fefce8",
+    color: "#ca8a04",
+    border: "#fef08a",
+    icon: faClock,
+    label: "Pending",
+  },
+  failed: {
+    bg: "#fef2f2",
+    color: "#dc2626",
+    border: "#fecaca",
+    icon: faExclamationCircle,
+    label: "Failed",
+  },
+} as const;
+
+const TYPE_CFG: Record<string, { bg: string; color: string; border: string }> =
+  {
+    advance: {
+      bg: "rgba(99,102,241,0.08)",
+      color: "#4338ca",
+      border: "rgba(99,102,241,0.25)",
+    },
+    milestone: {
+      bg: "rgba(20,184,166,0.08)",
+      color: "#0f766e",
+      border: "rgba(20,184,166,0.25)",
+    },
+    final: {
+      bg: "rgba(239,68,68,0.08)",
+      color: "#b91c1c",
+      border: "rgba(239,68,68,0.25)",
+    },
+    other: {
+      bg: "rgba(107,114,128,0.08)",
+      color: "#374151",
+      border: "rgba(107,114,128,0.25)",
+    },
+  };
+
+// ==================================================================================
+// SMALL SHARED COMPONENTS
+// ==================================================================================
+
+function StatusPill({ status }: { status: string }) {
+  const s = STATUS_CFG[status as keyof typeof STATUS_CFG] ?? STATUS_CFG.pending;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "0.3rem",
+        padding: "0.25rem 0.625rem",
+        borderRadius: 9999,
+        fontSize: "0.7rem",
+        fontWeight: 600,
+        backgroundColor: s.bg,
+        color: s.color,
+        border: `1px solid ${s.border}`,
+        whiteSpace: "nowrap",
+      }}
+    >
+      <FontAwesomeIcon icon={s.icon} style={{ fontSize: "0.58rem" }} />
+      {s.label}
+    </span>
+  );
+}
+
+function TypePill({ type }: { type: string }) {
+  const t = TYPE_CFG[type] ?? TYPE_CFG.other;
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "0.2rem 0.5rem",
+        borderRadius: "0.3rem",
+        fontSize: "0.7rem",
+        fontWeight: 600,
+        textTransform: "capitalize",
+        backgroundColor: t.bg,
+        color: t.color,
+        border: `1px solid ${t.border}`,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {type}
+    </span>
+  );
+}
+
+function Toast({ msg, onClose }: { msg: string; onClose: () => void }) {
+  return (
+    <div className="fixed top-5 right-5 z-[60]" style={{ minWidth: "17rem" }}>
+      <div
+        className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+        style={{
+          backgroundColor: "var(--color-neutral-900)",
+          boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+        }}
+      >
+        <div
+          className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: "#1ab189" }}
+        >
+          <FontAwesomeIcon
+            icon={faCheck}
+            style={{ color: "white", fontSize: "0.6rem" }}
+          />
+        </div>
+        <p
+          className="flex-1 font-medium"
+          style={{ fontSize: "0.875rem", color: "white" }}
+        >
+          {msg}
+        </p>
+        <button
+          onClick={onClose}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: "rgba(255,255,255,0.5)",
+            padding: 0,
+          }}
+        >
+          <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Input base — longhands to avoid React border/borderColor conflict warning
+const inputBase: React.CSSProperties = {
+  width: "100%",
+  padding: "0.75rem 1rem",
+  fontFamily: "var(--font-sans)",
+  fontSize: "0.875rem",
+  color: "var(--color-neutral-900)",
+  backgroundColor: "var(--color-neutral-0)",
+  borderWidth: "1px",
+  borderStyle: "solid",
+  borderColor: "var(--color-neutral-200)",
+  borderRadius: "0.625rem",
+  outline: "none",
+  boxSizing: "border-box" as const,
+  transition: "border-color 150ms, box-shadow 150ms",
+};
+const iFocus = (
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+  >,
+) => {
+  e.currentTarget.style.borderColor = "#1ab189";
+  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(26,177,137,0.12)";
+};
+const iBlur = (
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+  >,
+) => {
+  e.currentTarget.style.borderColor = "var(--color-neutral-200)";
+  e.currentTarget.style.boxShadow = "none";
+};
+
+// ==================================================================================
+// MAIN PAGE
+// ==================================================================================
 
 export default function ClientPaymentsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
-  const [selectedProject, setSelectedProject] = useState<number | null>(null);
-  const [paymentError, setPaymentError] = useState<string | null>(null);
 
-  // Fetch projects
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [selectedProject, setSelectedProject] = useState<number | null>(null);
+  const [openActionsMenu, setOpenActionsMenu] = useState<number | null>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [showToast, setShowToast] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
+
+  const [form, setForm] = useState({
+    amount: "",
+    payment_date: new Date().toISOString().split("T")[0],
+    payment_method: "Bank Transfer",
+    payment_type: "advance",
+    transaction_id: "",
+    notes: "",
+  });
+
+  const resetForm = () =>
+    setForm({
+      amount: "",
+      payment_date: new Date().toISOString().split("T")[0],
+      payment_method: "Bank Transfer",
+      payment_type: "advance",
+      transaction_id: "",
+      notes: "",
+    });
+
+  const notify = (msg: string) => {
+    setToastMsg(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
+
+  // ── Queries ──────────────────────────────────────────────────────────────
+
   const {
-    data: projectsResponse,
+    data: projectsRes,
     isLoading: projectsLoading,
     error: projectsError,
   } = useQuery({
@@ -77,24 +332,20 @@ export default function ClientPaymentsPage() {
         router.push("/login?type=client&session=expired");
         throw new Error("Not authenticated");
       }
-      return api.get<{ count: number; results: Project[] }>(
+      return api.get<{ count: number; results: Project[] } | Project[]>(
         "/api/v1/projects/",
       );
     },
   });
 
-  // Extract projects array from response
-  const projects = projectsResponse?.results || [];
+  const projects: Project[] = Array.isArray(projectsRes)
+    ? projectsRes
+    : ((projectsRes as any)?.results ?? []);
 
-  // Fetch payments for selected project
-  const {
-    data: paymentsResponse,
-    isLoading: paymentsLoading,
-    error: paymentsError,
-  } = useQuery({
+  const { data: paymentsRes, isLoading: paymentsLoading } = useQuery({
     queryKey: ["project-payments", selectedProject],
     queryFn: async () => {
-      if (!selectedProject) return { count: 0, results: [] };
+      if (!selectedProject) return { results: [] as Payment[] };
       return api.get<{ count: number; results: Payment[] }>(
         `/api/v1/projects/${selectedProject}/payments/`,
       );
@@ -102,50 +353,32 @@ export default function ClientPaymentsPage() {
     enabled: !!selectedProject,
   });
 
-  // Extract payments array from response
-  const paymentsData = paymentsResponse?.results || [];
+  const payments: Payment[] = Array.isArray(paymentsRes)
+    ? (paymentsRes as unknown as Payment[])
+    : ((paymentsRes as any)?.results ?? []);
 
-  // Record payment mutation
-  const recordPaymentMutation = useMutation({
-    mutationFn: async (paymentData: {
-      amount: number;
-      payment_date: string;
-      payment_method?: string;
-      transaction_id?: string;
-      payment_type: string;
-      payment_status: string;
-      receipt_url?: string;
-      notes?: string;
-    }) => {
+  useEffect(() => {
+    if (projects.length > 0 && !selectedProject)
+      setSelectedProject(projects[0].id);
+  }, [projects, selectedProject]);
+
+  // ── Mutation ─────────────────────────────────────────────────────────────
+
+  const mutation = useMutation({
+    mutationFn: async (data: typeof form) => {
       if (!selectedProject) throw new Error("No project selected");
-
-      // Clean up the data - remove empty strings for optional fields
-      const cleanedData = {
-        amount: paymentData.amount,
-        payment_date: paymentData.payment_date,
-        payment_type: paymentData.payment_type,
-        payment_status: paymentData.payment_status,
-        ...(paymentData.payment_method &&
-          paymentData.payment_method.trim() !== "" && {
-            payment_method: paymentData.payment_method,
-          }),
-        ...(paymentData.transaction_id &&
-          paymentData.transaction_id.trim() !== "" && {
-            transaction_id: paymentData.transaction_id,
-          }),
-        ...(paymentData.receipt_url &&
-          paymentData.receipt_url.trim() !== "" && {
-            receipt_url: paymentData.receipt_url,
-          }),
-        ...(paymentData.notes &&
-          paymentData.notes.trim() !== "" && {
-            notes: paymentData.notes,
-          }),
+      const body: Record<string, unknown> = {
+        amount: parseFloat(data.amount),
+        payment_date: data.payment_date,
+        payment_type: data.payment_type,
+        payment_status: "completed",
       };
-
+      if (data.payment_method.trim()) body.payment_method = data.payment_method;
+      if (data.transaction_id.trim()) body.transaction_id = data.transaction_id;
+      if (data.notes.trim()) body.notes = data.notes;
       return api.post(
         `/api/v1/projects/${selectedProject}/payments/record/`,
-        cleanedData,
+        body,
       );
     },
     onSuccess: () => {
@@ -153,173 +386,153 @@ export default function ClientPaymentsPage() {
       queryClient.invalidateQueries({ queryKey: ["client-projects"] });
       setShowPaymentModal(false);
       setPaymentError(null);
+      resetForm();
+      notify("Payment recorded successfully!");
     },
     onError: (error: any) => {
-      console.error("Payment recording failed:", error);
-
-      // Extract error message from different possible error formats
-      let errorMessage = "Failed to record payment";
-
-      if (error?.response?.data) {
-        const errorData = error.response.data;
-
-        // Handle DRF validation errors
-        if (typeof errorData === "object") {
-          if (errorData.error) {
-            errorMessage = errorData.error;
-          } else {
-            // Handle field-specific errors
-            const fieldErrors = Object.entries(errorData)
-              .map(([field, errors]) => {
-                if (Array.isArray(errors)) {
-                  return `${field}: ${errors.join(", ")}`;
-                }
-                return `${field}: ${errors}`;
-              })
-              .join("; ");
-            errorMessage = fieldErrors || errorMessage;
-          }
-        } else if (typeof errorData === "string") {
-          errorMessage = errorData;
-        }
-      } else if (error?.message) {
-        errorMessage = error.message;
-      }
-
-      setPaymentError(errorMessage);
+      let msg = "Failed to record payment";
+      const d = error?.response?.data;
+      if (d)
+        msg =
+          typeof d === "object"
+            ? (d.error ??
+              Object.entries(d)
+                .map(([f, e]) => `${f}: ${Array.isArray(e) ? e.join(", ") : e}`)
+                .join("; "))
+            : String(d);
+      else if (error?.message) msg = error.message;
+      setPaymentError(msg);
     },
   });
 
-  // Set first project as default
-  useEffect(() => {
-    if (projects.length > 0 && !selectedProject) {
-      setSelectedProject(projects[0].id);
-    }
-  }, [projects, selectedProject]);
-
-  const currentProject = projects.find((p) => p.id === selectedProject);
-
-  const formatCurrency = (amount: string | number | null) => {
-    if (!amount) return "$0.00";
-    const num = typeof amount === "string" ? parseFloat(amount) : amount;
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(num);
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  };
-
-  const getStatusBadge = (status: Payment["payment_status"]) => {
-    const styles = {
-      completed: "bg-green-50 text-green-700 border-green-200",
-      pending: "bg-yellow-50 text-yellow-700 border-yellow-200",
-      failed: "bg-red-50 text-red-700 border-red-200",
-    };
-    const icons = {
-      completed: faCheckCircle,
-      pending: faClock,
-      failed: faExclamationCircle,
-    };
-    const labels = {
-      completed: "Paid",
-      pending: "Pending",
-      failed: "Failed",
-    };
-
-    return (
-      <span
-        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${styles[status]}`}
-      >
-        <FontAwesomeIcon icon={icons[status]} className="text-xs" />
-        {labels[status]}
-      </span>
-    );
-  };
-
-  const filteredPayments =
-    filterStatus === "all"
-      ? paymentsData
-      : paymentsData.filter((p) => p.payment_status === filterStatus);
-
-  const handleViewInvoice = (payment: Payment) => {
-    setSelectedPayment(payment);
-    setShowInvoiceModal(true);
-  };
-
-  const handleRecordPayment = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  const handleSubmit = () => {
     setPaymentError(null);
-
-    const formData = new FormData(e.currentTarget);
-
-    const amount = formData.get("amount") as string;
-    if (!amount || parseFloat(amount) <= 0) {
+    if (!form.amount || parseFloat(form.amount) <= 0) {
       setPaymentError("Amount must be greater than 0");
       return;
     }
-
-    recordPaymentMutation.mutate({
-      amount: parseFloat(amount),
-      payment_date: formData.get("payment_date") as string,
-      payment_method: formData.get("payment_method") as string,
-      transaction_id: formData.get("transaction_id") as string,
-      payment_type: formData.get("payment_type") as string,
-      payment_status: "completed",
-      notes: formData.get("notes") as string,
-    });
+    if (!form.payment_date) {
+      setPaymentError("Payment date is required");
+      return;
+    }
+    mutation.mutate(form);
   };
 
-  const totalPaid =
-    paymentsData
-      .filter((p) => p.payment_status === "completed")
-      .reduce((sum, p) => sum + parseFloat(p.amount), 0) || 0;
+  // ── Derived ───────────────────────────────────────────────────────────────
 
-  const totalCost = currentProject?.total_cost
-    ? parseFloat(currentProject.total_cost)
-    : 0;
-  const amountDue = totalCost - totalPaid;
-  const progressPercentage = totalCost > 0 ? (totalPaid / totalCost) * 100 : 0;
+  const currentProject = projects.find((p) => p.id === selectedProject);
+  const totalPaid = payments
+    .filter((p) => p.payment_status === "completed")
+    .reduce((s, p) => s + parseFloat(p.amount || "0"), 0);
+  const totalCost = parseFloat(currentProject?.total_cost ?? "0") || 0;
+  const amountDue = Math.max(0, totalCost - totalPaid);
+  const progressPct =
+    totalCost > 0 ? Math.min(100, (totalPaid / totalCost) * 100) : 0;
+  const filtered =
+    filterStatus === "all"
+      ? payments
+      : payments.filter((p) => p.payment_status === filterStatus);
 
-  if (projectsLoading) {
+  // ── Loading / Error ───────────────────────────────────────────────────────
+
+  if (projectsLoading)
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <FontAwesomeIcon
-          icon={faSpinner}
-          spin
-          className="w-8 h-8 text-primary-600"
-        />
-      </div>
-    );
-  }
-
-  if (projectsError || projects.length === 0) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
-          <p className="text-neutral-600">No projects found</p>
+          <FontAwesomeIcon
+            icon={faSpinner}
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
+          />
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading payments…
+          </p>
         </div>
       </div>
     );
-  }
+
+  if (projectsError)
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
+        <div className="text-center">
+          <div
+            className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+            style={{ backgroundColor: "#fef2f2" }}
+          >
+            <FontAwesomeIcon
+              icon={faExclamationTriangle}
+              style={{ color: "#ef4444", fontSize: "1.1rem" }}
+            />
+          </div>
+          <p className="mb-4" style={{ color: "#ef4444" }}>
+            Failed to load payment data
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: "0.5rem 1.25rem",
+              background: "#1ab189",
+              color: "#fff",
+              border: "none",
+              borderRadius: "0.625rem",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+
+  // ==================================================================================
+  // RENDER
+  // ==================================================================================
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex items-center justify-between">
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {showToast && (
+        <Toast msg={toastMsg} onClose={() => setShowToast(false)} />
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────
+          CONTENT AREA — white card with padding, exactly like provider page
+          ───────────────────────────────────────────────────────────────── */}
+      <div style={{ padding: "1.75rem 2rem" }}>
+        {/* ── Page title row (matches "Earnings" heading + "This Month / Export" buttons) ── */}
+        <div className="flex items-start justify-between flex-wrap gap-4 mb-6">
           <div>
-            <h1 className="heading-2 text-neutral-900 mb-1">
-              Payments & Invoices
+            <h1
+              className="font-bold"
+              style={{
+                fontSize: "1.625rem",
+                color: "var(--color-neutral-900)",
+                lineHeight: 1.25,
+                marginBottom: "0.25rem",
+              }}
+            >
+              Payments &amp; Invoices
             </h1>
-            <p className="text-neutral-600 body-regular">
+            <p
+              style={{
+                fontSize: "0.875rem",
+                color: "var(--color-neutral-500)",
+              }}
+            >
               Track your project costs and payment history
+              {projects.length > 0 &&
+                ` (${projects.length} project${projects.length !== 1 ? "s" : ""})`}
             </p>
           </div>
           <button
@@ -327,578 +540,1373 @@ export default function ClientPaymentsPage() {
               setShowPaymentModal(true);
               setPaymentError(null);
             }}
-            className="btn-primary flex items-center gap-2"
+            disabled={projects.length === 0}
+            className="flex items-center gap-2"
+            style={{
+              padding: "0.5625rem 1.125rem",
+              fontSize: "0.875rem",
+              fontWeight: 600,
+              backgroundColor:
+                projects.length === 0 ? "var(--color-neutral-200)" : "#1ab189",
+              color: "white",
+              border: "none",
+              borderRadius: "0.625rem",
+              cursor: projects.length === 0 ? "not-allowed" : "pointer",
+              boxShadow:
+                projects.length === 0
+                  ? "none"
+                  : "0 2px 8px rgba(26,177,137,0.3)",
+            }}
           >
-            <FontAwesomeIcon icon={faPlus} />
+            <FontAwesomeIcon icon={faPlus} style={{ fontSize: "0.8rem" }} />
             Record Payment
           </button>
         </div>
-      </div>
 
-      <div className="p-8 max-w-7xl mx-auto">
-        {/* Project Selector */}
-        {projects.length > 1 && (
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-neutral-700 mb-2">
-              Select Project
-            </label>
-            <select
-              value={selectedProject || ""}
-              onChange={(e) => setSelectedProject(Number(e.target.value))}
-              className="w-full md:w-96 px-4 py-3 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
-            >
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.project_name}
-                </option>
-              ))}
-            </select>
+        {/* No projects notice */}
+        {projects.length === 0 && (
+          <div
+            className="flex items-center gap-3 rounded-xl mb-6"
+            style={{
+              padding: "0.875rem 1.25rem",
+              backgroundColor: "#fefce8",
+              border: "1px solid #fef08a",
+              fontSize: "0.875rem",
+              color: "#92400e",
+            }}
+          >
+            <FontAwesomeIcon icon={faExclamationTriangle} />
+            No projects linked yet. Payments will appear here once a project has
+            been assigned.
           </div>
         )}
 
-        {/* Project Cost Overview */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          {/* Total Project Cost */}
-          <div className="bg-gradient-to-br from-primary-600 to-primary-700 rounded-xl p-6 text-neutral-0">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
-                <FontAwesomeIcon icon={faChartPie} className="text-2xl" />
+        {/* ── Stat Cards — 4-column layout matching provider page exactly ── */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {/* Card 1 — green accent (Total Project Cost) matches provider "Total Earnings" card */}
+          <div
+            className="rounded-2xl p-5 relative overflow-hidden"
+            style={{
+              backgroundColor: "#1ab189",
+              boxShadow: "0 4px 20px rgba(26,177,137,0.25)",
+            }}
+          >
+            {/* top-right badge */}
+            <div className="flex items-center justify-between mb-4">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ backgroundColor: "rgba(255,255,255,0.2)" }}
+              >
+                <FontAwesomeIcon
+                  icon={faChartPie}
+                  style={{ color: "white", fontSize: "1.1rem" }}
+                />
               </div>
-              <div>
-                <p className="text-neutral-100 text-sm font-medium">
-                  Total Project Cost
-                </p>
-                <p className="text-xs text-neutral-200">
-                  {currentProject?.project_name}
-                </p>
-              </div>
-            </div>
-            <p className="text-4xl font-bold mb-2">
-              {formatCurrency(totalCost)}
-            </p>
-            <div className="mt-4 pt-4 border-t border-white/20">
-              <div className="flex items-center justify-between text-sm mb-2">
-                <span className="text-neutral-100">Payment Progress</span>
-                <span className="font-semibold">
-                  {Math.round(progressPercentage)}%
+              <div
+                className="flex items-center gap-1 rounded-lg px-2 py-0.5"
+                style={{ backgroundColor: "rgba(255,255,255,0.2)" }}
+              >
+                <FontAwesomeIcon
+                  icon={faArrowUp}
+                  style={{ color: "white", fontSize: "0.6rem" }}
+                />
+                <span
+                  style={{
+                    color: "white",
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  {Math.round(progressPct)}%
                 </span>
               </div>
-              <div className="w-full bg-white/20 rounded-full h-2">
+            </div>
+            <p
+              style={{
+                fontSize: "0.75rem",
+                color: "rgba(255,255,255,0.8)",
+                marginBottom: "0.25rem",
+              }}
+            >
+              Total Project Cost
+            </p>
+            <p
+              style={{
+                fontSize: "1.5rem",
+                fontWeight: 700,
+                color: "white",
+                lineHeight: 1,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              ${fmt(totalCost)}
+            </p>
+            {/* mini progress bar */}
+            <div
+              style={{
+                marginTop: "1rem",
+                paddingTop: "0.75rem",
+                borderTop: "1px solid rgba(255,255,255,0.2)",
+              }}
+            >
+              <div
+                style={{
+                  height: 4,
+                  borderRadius: 9999,
+                  backgroundColor: "rgba(255,255,255,0.3)",
+                  overflow: "hidden",
+                }}
+              >
                 <div
-                  className="bg-white rounded-full h-2 transition-all duration-500"
-                  style={{ width: `${progressPercentage}%` }}
-                ></div>
+                  style={{
+                    width: `${progressPct}%`,
+                    height: "100%",
+                    backgroundColor: "white",
+                    borderRadius: 9999,
+                    transition: "width 0.6s ease",
+                  }}
+                />
               </div>
             </div>
           </div>
 
-          {/* Amount Paid */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                <FontAwesomeIcon
-                  icon={faCheckCircle}
-                  className="text-green-600 text-2xl"
-                />
-              </div>
-              <div>
-                <p className="text-neutral-600 text-sm font-medium">
-                  Amount Paid
-                </p>
-                <p className="text-xs text-neutral-500">Completed payments</p>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-green-600 mb-2">
-              {formatCurrency(totalPaid)}
-            </p>
-            <div className="flex items-center gap-2 text-sm text-neutral-600">
+          {/* Card 2 — Amount Paid (matches provider "Pending Payments" white card layout) */}
+          <div
+            className="rounded-2xl p-5"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            <div
+              className="w-10 h-10 rounded-xl flex items-center justify-center mb-4"
+              style={{ backgroundColor: "#f0fdf4" }}
+            >
               <FontAwesomeIcon
                 icon={faCheckCircle}
-                className="text-green-600 text-xs"
+                style={{ color: "#16a34a", fontSize: "1.1rem" }}
               />
-              <span>
-                {
-                  paymentsData.filter((p) => p.payment_status === "completed")
-                    .length
-                }{" "}
-                payments completed
-              </span>
             </div>
+            <p
+              style={{
+                fontSize: "0.75rem",
+                color: "var(--color-neutral-500)",
+                marginBottom: "0.25rem",
+              }}
+            >
+              Amount Paid
+            </p>
+            <p
+              style={{
+                fontSize: "1.375rem",
+                fontWeight: 700,
+                color: "#16a34a",
+                lineHeight: 1,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              ${fmt(totalPaid)}
+            </p>
           </div>
 
-          {/* Amount Due */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
-                <FontAwesomeIcon
-                  icon={faExclamationCircle}
-                  className="text-yellow-600 text-2xl"
-                />
-              </div>
-              <div>
-                <p className="text-neutral-600 text-sm font-medium">
-                  Amount Due
-                </p>
-                <p className="text-xs text-neutral-500">Remaining balance</p>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-yellow-600 mb-2">
-              {formatCurrency(amountDue)}
-            </p>
-            <div className="flex items-center gap-2 text-sm text-neutral-600">
+          {/* Card 3 — Amount Due */}
+          <div
+            className="rounded-2xl p-5"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            <div
+              className="w-10 h-10 rounded-xl flex items-center justify-center mb-4"
+              style={{ backgroundColor: "#fefce8" }}
+            >
               <FontAwesomeIcon
                 icon={faClock}
-                className="text-yellow-600 text-xs"
+                style={{ color: "#ca8a04", fontSize: "1.1rem" }}
               />
-              <span>
-                {
-                  paymentsData.filter((p) => p.payment_status !== "completed")
-                    .length
-                }{" "}
-                pending
-              </span>
             </div>
+            <p
+              style={{
+                fontSize: "0.75rem",
+                color: "var(--color-neutral-500)",
+                marginBottom: "0.25rem",
+              }}
+            >
+              Amount Due
+            </p>
+            <p
+              style={{
+                fontSize: "1.375rem",
+                fontWeight: 700,
+                lineHeight: 1,
+                letterSpacing: "-0.01em",
+                color: amountDue > 0 ? "#ca8a04" : "#16a34a",
+              }}
+            >
+              ${fmt(amountDue)}
+            </p>
+          </div>
+
+          {/* Card 4 — Transactions */}
+          <div
+            className="rounded-2xl p-5"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            <div
+              className="w-10 h-10 rounded-xl flex items-center justify-center mb-4"
+              style={{ backgroundColor: "#eff6ff" }}
+            >
+              <FontAwesomeIcon
+                icon={faChartLine}
+                style={{ color: "#2563eb", fontSize: "1.1rem" }}
+              />
+            </div>
+            <p
+              style={{
+                fontSize: "0.75rem",
+                color: "var(--color-neutral-500)",
+                marginBottom: "0.25rem",
+              }}
+            >
+              Transactions
+            </p>
+            <p
+              style={{
+                fontSize: "1.375rem",
+                fontWeight: 700,
+                color: "var(--color-neutral-900)",
+                lineHeight: 1,
+              }}
+            >
+              {payments.length}
+            </p>
           </div>
         </div>
 
-        {/* Payment History Section */}
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200">
-          {/* Header with Filter */}
-          <div className="p-6 border-b border-neutral-200">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="heading-3 text-neutral-900 flex items-center gap-3">
-                <FontAwesomeIcon
-                  icon={faReceipt}
-                  className="text-primary-600"
-                />
-                Payment History
-                <span className="text-sm font-normal text-neutral-500">
-                  ({filteredPayments.length})
-                </span>
-              </h2>
-
-              {/* Filter Dropdown */}
-              <div className="flex items-center gap-3">
-                <label className="text-neutral-600 font-medium text-sm flex items-center gap-2">
-                  <FontAwesomeIcon icon={faFilter} />
-                  Filter:
-                </label>
+        {/* ── Payment History table card (matches "Projects & Earnings" table card) ── */}
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{
+            backgroundColor: "var(--color-neutral-0)",
+            border: "1px solid var(--color-neutral-200)",
+          }}
+        >
+          {/* Table toolbar */}
+          <div
+            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+            style={{
+              padding: "1rem 1.5rem",
+              borderBottom: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            <h2
+              className="font-bold"
+              style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+            >
+              Payment History
+            </h2>
+            <div className="flex items-center gap-3 flex-wrap">
+              {/* Project selector — only shown when >1 project */}
+              {projects.length > 1 && (
                 <div className="relative">
                   <select
-                    value={filterStatus}
-                    onChange={(e) => setFilterStatus(e.target.value)}
-                    className="appearance-none px-4 py-2 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all text-sm cursor-pointer pr-10"
+                    value={selectedProject || ""}
+                    onChange={(e) => setSelectedProject(Number(e.target.value))}
+                    style={{
+                      appearance: "none",
+                      padding: "0.5rem 2.25rem 0.5rem 1rem",
+                      fontFamily: "var(--font-sans)",
+                      fontSize: "0.8125rem",
+                      color: "var(--color-neutral-700)",
+                      backgroundColor: "var(--color-neutral-0)",
+                      borderWidth: "1px",
+                      borderStyle: "solid",
+                      borderColor: "var(--color-neutral-200)",
+                      borderRadius: "0.625rem",
+                      outline: "none",
+                      cursor: "pointer",
+                    }}
                   >
-                    <option value="all">All Payments</option>
-                    <option value="completed">Completed</option>
-                    <option value="pending">Pending</option>
-                    <option value="failed">Failed</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.project_name}
+                      </option>
+                    ))}
                   </select>
                   <FontAwesomeIcon
                     icon={faChevronDown}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 text-xs pointer-events-none"
+                    style={{
+                      position: "absolute",
+                      right: "0.75rem",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      color: "var(--color-neutral-400)",
+                      fontSize: "0.65rem",
+                      pointerEvents: "none",
+                    }}
                   />
                 </div>
+              )}
+
+              {/* Status filter */}
+              <div className="relative">
+                <select
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                  style={{
+                    appearance: "none",
+                    padding: "0.5rem 2.25rem 0.5rem 1rem",
+                    fontFamily: "var(--font-sans)",
+                    fontSize: "0.8125rem",
+                    color: "var(--color-neutral-700)",
+                    backgroundColor: "var(--color-neutral-0)",
+                    borderWidth: "1px",
+                    borderStyle: "solid",
+                    borderColor: "var(--color-neutral-200)",
+                    borderRadius: "0.625rem",
+                    outline: "none",
+                    cursor: "pointer",
+                  }}
+                >
+                  <option value="all">All Payments</option>
+                  <option value="completed">Completed</option>
+                  <option value="pending">Pending</option>
+                  <option value="failed">Failed</option>
+                </select>
+                <FontAwesomeIcon
+                  icon={faChevronDown}
+                  style={{
+                    position: "absolute",
+                    right: "0.75rem",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    color: "var(--color-neutral-400)",
+                    fontSize: "0.65rem",
+                    pointerEvents: "none",
+                  }}
+                />
               </div>
             </div>
           </div>
 
-          {/* Payment List */}
-          <div className="divide-y divide-neutral-200">
+          {/* Table */}
+          <div style={{ overflowX: "auto" }}>
             {paymentsLoading ? (
-              <div className="p-12 text-center">
+              <div
+                className="flex items-center justify-center"
+                style={{ padding: "4rem 2rem" }}
+              >
                 <FontAwesomeIcon
                   icon={faSpinner}
-                  spin
-                  className="w-8 h-8 text-primary-600"
+                  className="animate-spin"
+                  style={{ fontSize: "1.5rem", color: "#1ab189" }}
                 />
               </div>
-            ) : filteredPayments.length > 0 ? (
-              filteredPayments.map((payment) => (
-                <div
-                  key={payment.id}
-                  className="p-6 hover:bg-neutral-50 transition-colors"
+            ) : filtered.length === 0 ? (
+              <div className="text-center" style={{ padding: "4rem 2rem" }}>
+                <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>💳</div>
+                <h3
+                  className="font-semibold mb-2"
+                  style={{
+                    fontSize: "1rem",
+                    color: "var(--color-neutral-900)",
+                  }}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    {/* Payment Info */}
-                    <div className="flex items-start gap-4 flex-1">
-                      <div className="w-12 h-12 bg-primary-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <FontAwesomeIcon
-                          icon={faFileInvoice}
-                          className="text-primary-600 text-xl"
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h3 className="font-semibold text-neutral-900">
-                            {payment.payment_type.charAt(0).toUpperCase() +
-                              payment.payment_type.slice(1)}{" "}
-                            Payment
-                          </h3>
-                          {getStatusBadge(payment.payment_status)}
-                        </div>
-                        <div className="flex items-center gap-4 text-sm text-neutral-600">
-                          <span className="flex items-center gap-1">
-                            <FontAwesomeIcon
-                              icon={faCalendar}
-                              className="text-xs"
-                            />
-                            {formatDate(payment.payment_date)}
-                          </span>
-                          {payment.payment_method && (
-                            <span className="flex items-center gap-1">
-                              <FontAwesomeIcon
-                                icon={faCreditCard}
-                                className="text-xs"
-                              />
-                              {payment.payment_method}
-                            </span>
-                          )}
-                        </div>
-                        {payment.transaction_id && (
-                          <p className="text-xs text-neutral-500 mt-1">
-                            Transaction ID: {payment.transaction_id}
-                          </p>
-                        )}
-                        {payment.notes && (
-                          <p className="text-sm text-neutral-600 mt-2">
-                            {payment.notes}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Amount and Actions */}
-                    <div className="flex items-center gap-4 flex-shrink-0">
-                      <div className="text-right">
-                        <p className="text-2xl font-bold text-neutral-900">
-                          {formatCurrency(payment.amount)}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleViewInvoice(payment)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="View details"
-                        >
-                          <FontAwesomeIcon icon={faEye} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="p-12 text-center text-neutral-500">
-                <FontAwesomeIcon
-                  icon={faReceipt}
-                  className="text-5xl mb-4 opacity-30"
-                />
-                <p className="font-medium">No payments found</p>
-                <p className="text-sm mt-2">
-                  {filterStatus === "all"
-                    ? "Record your first payment"
-                    : "Try adjusting your filter"}
+                  No payments found
+                </h3>
+                <p
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--color-neutral-500)",
+                  }}
+                >
+                  {filterStatus !== "all"
+                    ? "Try adjusting your filter"
+                    : "Record your first payment above"}
                 </p>
               </div>
+            ) : (
+              <table
+                style={{
+                  width: "100%",
+                  minWidth: "52rem",
+                  borderCollapse: "collapse",
+                }}
+              >
+                <thead>
+                  <tr
+                    style={{
+                      backgroundColor: "var(--color-neutral-50)",
+                      borderBottom: "1px solid var(--color-neutral-200)",
+                    }}
+                  >
+                    {/* Headers match provider page: PROJECT CLIENT TOTAL COST PAID BALANCE STATUS ACTIONS */}
+                    {[
+                      "Payment",
+                      "Type",
+                      "Date",
+                      "Method",
+                      "Amount",
+                      "Status",
+                      "Actions",
+                    ].map((h, i) => (
+                      <th
+                        key={h}
+                        style={{
+                          padding: "0.75rem 1.5rem",
+                          textAlign: i === 6 ? "center" : "left",
+                          fontSize: "0.65rem",
+                          fontWeight: 700,
+                          color: "var(--color-neutral-400)",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.06em",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((payment, idx) => (
+                    <tr
+                      key={payment.id}
+                      style={{
+                        borderTop:
+                          idx === 0
+                            ? "none"
+                            : "1px solid var(--color-neutral-100)",
+                        transition: "background-color 120ms",
+                      }}
+                      onMouseEnter={(e) => {
+                        (
+                          e.currentTarget as HTMLTableRowElement
+                        ).style.backgroundColor = "var(--color-neutral-50)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (
+                          e.currentTarget as HTMLTableRowElement
+                        ).style.backgroundColor = "transparent";
+                      }}
+                    >
+                      {/* Payment — coloured avatar initials pill, exactly like BR / EP / BU in provider table */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-9 h-9 rounded-xl flex items-center justify-center font-semibold flex-shrink-0"
+                            style={{
+                              backgroundColor: projectColor(payment.id),
+                              color: "white",
+                              fontSize: "0.75rem",
+                              letterSpacing: "0.02em",
+                            }}
+                          >
+                            {getInitials(
+                              payment.payment_type === "advance"
+                                ? "Advance Payment"
+                                : payment.payment_type === "milestone"
+                                  ? "Milestone Payment"
+                                  : payment.payment_type === "final"
+                                    ? "Final Payment"
+                                    : "Other Payment",
+                            )}
+                          </div>
+                          <div>
+                            <p
+                              className="font-semibold"
+                              style={{
+                                fontSize: "0.875rem",
+                                color: "var(--color-neutral-900)",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {payment.payment_type.charAt(0).toUpperCase() +
+                                payment.payment_type.slice(1)}{" "}
+                              Payment
+                            </p>
+                            <p
+                              style={{
+                                fontSize: "0.72rem",
+                                color: "var(--color-neutral-400)",
+                                marginTop: "0.1rem",
+                              }}
+                            >
+                              {
+                                payments.filter(
+                                  (p) =>
+                                    p.payment_type === payment.payment_type,
+                                ).length
+                              }{" "}
+                              transaction
+                              {payments.filter(
+                                (p) => p.payment_type === payment.payment_type,
+                              ).length !== 1
+                                ? "s"
+                                : ""}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Type pill */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <TypePill type={payment.payment_type} />
+                      </td>
+
+                      {/* Date */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <span
+                          style={{
+                            fontSize: "0.8125rem",
+                            color: "var(--color-neutral-700)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {fmtDate(payment.payment_date)}
+                        </span>
+                      </td>
+
+                      {/* Method */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <span
+                          style={{
+                            fontSize: "0.8125rem",
+                            color: "var(--color-neutral-700)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {payment.payment_method || "—"}
+                        </span>
+                      </td>
+
+                      {/* Amount — green like "Paid" column in provider, orange for pending */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <p
+                          className="font-semibold"
+                          style={{
+                            fontSize: "0.875rem",
+                            whiteSpace: "nowrap",
+                            color:
+                              payment.payment_status === "completed"
+                                ? "#16a34a"
+                                : payment.payment_status === "failed"
+                                  ? "#dc2626"
+                                  : "#ca8a04",
+                          }}
+                        >
+                          ${fmt(payment.amount)}
+                        </p>
+                        {payment.transaction_id && (
+                          <p
+                            style={{
+                              fontSize: "0.68rem",
+                              color: "var(--color-neutral-400)",
+                              fontFamily: "monospace",
+                              marginTop: "0.1rem",
+                            }}
+                          >
+                            #{payment.transaction_id}
+                          </p>
+                        )}
+                      </td>
+
+                      {/* Status */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <StatusPill status={payment.payment_status} />
+                      </td>
+
+                      {/* Actions — same ⋮ menu as provider */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <div className="flex justify-center">
+                          <div className="relative">
+                            <button
+                              onClick={() =>
+                                setOpenActionsMenu(
+                                  openActionsMenu === payment.id
+                                    ? null
+                                    : payment.id,
+                                )
+                              }
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                padding: "0.5rem",
+                                borderRadius: "0.5rem",
+                                color: "var(--color-neutral-600)",
+                              }}
+                              onMouseEnter={(e) => {
+                                (
+                                  e.currentTarget as HTMLButtonElement
+                                ).style.backgroundColor =
+                                  "var(--color-neutral-100)";
+                              }}
+                              onMouseLeave={(e) => {
+                                (
+                                  e.currentTarget as HTMLButtonElement
+                                ).style.backgroundColor = "transparent";
+                              }}
+                            >
+                              <FontAwesomeIcon
+                                icon={faEllipsisVertical}
+                                style={{ fontSize: "0.9rem" }}
+                              />
+                            </button>
+                            {openActionsMenu === payment.id && (
+                              <>
+                                <div
+                                  className="fixed inset-0 z-10"
+                                  onClick={() => setOpenActionsMenu(null)}
+                                />
+                                <div
+                                  className="absolute right-0 rounded-xl overflow-hidden z-20"
+                                  style={{
+                                    marginTop: "0.5rem",
+                                    width: "11rem",
+                                    backgroundColor: "var(--color-neutral-0)",
+                                    border:
+                                      "1px solid var(--color-neutral-200)",
+                                    boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                                  }}
+                                >
+                                  {[
+                                    {
+                                      icon: faEye,
+                                      color: "#3b82f6",
+                                      label: "View Receipt",
+                                      onClick: () => {
+                                        setSelectedPayment(payment);
+                                        setShowReceiptModal(true);
+                                        setOpenActionsMenu(null);
+                                      },
+                                    },
+                                    {
+                                      icon: faDownload,
+                                      color: "#2563eb",
+                                      label: "Download",
+                                      onClick: () => {
+                                        setOpenActionsMenu(null);
+                                        alert("Download coming soon");
+                                      },
+                                    },
+                                  ].map(({ icon, color, label, onClick }) => (
+                                    <button
+                                      key={label}
+                                      onClick={onClick}
+                                      className="w-full flex items-center gap-3 px-4 py-2.5"
+                                      style={{
+                                        background: "none",
+                                        border: "none",
+                                        cursor: "pointer",
+                                        fontSize: "0.8125rem",
+                                        color: "var(--color-neutral-700)",
+                                        textAlign: "left",
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        (
+                                          e.currentTarget as HTMLButtonElement
+                                        ).style.backgroundColor =
+                                          "var(--color-neutral-50)";
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        (
+                                          e.currentTarget as HTMLButtonElement
+                                        ).style.backgroundColor = "transparent";
+                                      }}
+                                    >
+                                      <FontAwesomeIcon
+                                        icon={icon}
+                                        style={{
+                                          color,
+                                          fontSize: "0.8rem",
+                                          width: "1rem",
+                                        }}
+                                      />
+                                      {label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </div>
       </div>
 
-      {/* Record Payment Modal */}
+      {/* ════════════════════════════════════════════
+          RECORD PAYMENT MODAL
+          ════════════════════════════════════════════ */}
       {showPaymentModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full">
-            <div className="bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between">
-              <h3 className="heading-4 text-neutral-900">Record Payment</h3>
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4 overflow-y-auto"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-2xl max-w-2xl w-full my-8"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div
+              className="flex items-center justify-between"
+              style={{
+                padding: "1.25rem 1.75rem",
+                borderBottom: "1px solid var(--color-neutral-200)",
+              }}
+            >
+              <h3
+                className="font-bold"
+                style={{
+                  fontSize: "1.0625rem",
+                  color: "var(--color-neutral-900)",
+                }}
+              >
+                Record Payment
+              </h3>
               <button
                 onClick={() => {
                   setShowPaymentModal(false);
                   setPaymentError(null);
                 }}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "0.375rem",
+                  borderRadius: "0.5rem",
+                  color: "var(--color-neutral-500)",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "var(--color-neutral-100)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "transparent";
+                }}
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+                <FontAwesomeIcon icon={faTimes} style={{ fontSize: "1rem" }} />
               </button>
             </div>
 
-            <form onSubmit={handleRecordPayment} className="p-6 space-y-4">
-              {/* Error Display */}
-              {paymentError && (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-red-700 text-sm flex items-center gap-2">
-                    <FontAwesomeIcon icon={faExclamationCircle} />
+            <div
+              style={{
+                padding: "1.75rem",
+                maxHeight: "calc(100vh - 220px)",
+                overflowY: "auto",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "1.25rem",
+                }}
+              >
+                {/* Project info banner */}
+                {currentProject && (
+                  <div
+                    className="rounded-xl p-4"
+                    style={{
+                      backgroundColor: "rgba(26,177,137,0.06)",
+                      border: "1px solid rgba(26,177,137,0.2)",
+                    }}
+                  >
+                    <h4
+                      className="font-semibold mb-3"
+                      style={{
+                        fontSize: "0.9rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
+                      {currentProject.project_name}
+                    </h4>
+                    <div className="grid grid-cols-3 gap-4">
+                      {[
+                        {
+                          label: "Total Budget",
+                          value: `$${fmt(totalCost)}`,
+                          color: "var(--color-neutral-900)",
+                        },
+                        {
+                          label: "Paid",
+                          value: `$${fmt(totalPaid)}`,
+                          color: "#16a34a",
+                        },
+                        {
+                          label: "Balance",
+                          value: `$${fmt(amountDue)}`,
+                          color: "#ea580c",
+                        },
+                      ].map(({ label, value, color }) => (
+                        <div key={label}>
+                          <p
+                            style={{
+                              fontSize: "0.72rem",
+                              color: "var(--color-neutral-500)",
+                              marginBottom: "0.125rem",
+                            }}
+                          >
+                            {label}
+                          </p>
+                          <p
+                            style={{
+                              fontSize: "0.9rem",
+                              fontWeight: 700,
+                              color,
+                            }}
+                          >
+                            {value}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Error */}
+                {paymentError && (
+                  <div
+                    className="rounded-xl p-3 flex items-center gap-2"
+                    style={{
+                      backgroundColor: "#fef2f2",
+                      border: "1px solid #fecaca",
+                      fontSize: "0.875rem",
+                      color: "#dc2626",
+                    }}
+                  >
+                    <FontAwesomeIcon
+                      icon={faExclamationTriangle}
+                      style={{ flexShrink: 0 }}
+                    />
                     {paymentError}
-                  </p>
-                </div>
-              )}
+                  </div>
+                )}
 
-              <div className="grid grid-cols-2 gap-4">
+                {/* Amount */}
                 <div>
-                  <label className="block text-sm font-medium text-neutral-700 mb-2">
-                    Amount *
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.8125rem",
+                      fontWeight: 600,
+                      color: "var(--color-neutral-700)",
+                      marginBottom: "0.5rem",
+                    }}
+                  >
+                    Amount <span style={{ color: "#ef4444" }}>*</span>
                   </label>
-                  <input
-                    type="number"
-                    name="amount"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
-                    placeholder="0.00"
-                  />
+                  <div className="relative">
+                    <span
+                      className="absolute left-4 top-1/2 -translate-y-1/2 font-semibold"
+                      style={{ color: "var(--color-neutral-500)" }}
+                    >
+                      $
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={form.amount}
+                      onChange={(e) =>
+                        setForm({ ...form, amount: e.target.value })
+                      }
+                      placeholder="0.00"
+                      style={{ ...inputBase, paddingLeft: "2rem" }}
+                      onFocus={iFocus}
+                      onBlur={iBlur}
+                    />
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-neutral-700 mb-2">
-                    Payment Date *
-                  </label>
-                  <input
-                    type="date"
-                    name="payment_date"
-                    required
-                    defaultValue={new Date().toISOString().split("T")[0]}
-                    className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
-                  />
+                {/* Date + Method */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.8125rem",
+                        fontWeight: 600,
+                        color: "var(--color-neutral-700)",
+                        marginBottom: "0.5rem",
+                      }}
+                    >
+                      Payment Date <span style={{ color: "#ef4444" }}>*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={form.payment_date}
+                      onChange={(e) =>
+                        setForm({ ...form, payment_date: e.target.value })
+                      }
+                      style={inputBase}
+                      onFocus={iFocus}
+                      onBlur={iBlur}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.8125rem",
+                        fontWeight: 600,
+                        color: "var(--color-neutral-700)",
+                        marginBottom: "0.5rem",
+                      }}
+                    >
+                      Payment Method
+                    </label>
+                    <select
+                      value={form.payment_method}
+                      onChange={(e) =>
+                        setForm({ ...form, payment_method: e.target.value })
+                      }
+                      style={{ ...inputBase, cursor: "pointer" }}
+                      onFocus={iFocus}
+                      onBlur={iBlur}
+                    >
+                      <option>Bank Transfer</option>
+                      <option>Credit Card</option>
+                      <option>Cash</option>
+                      <option>Check</option>
+                      <option>Digital Wallet</option>
+                    </select>
+                  </div>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-4">
+                {/* Payment Type */}
                 <div>
-                  <label className="block text-sm font-medium text-neutral-700 mb-2">
-                    Payment Type *
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.8125rem",
+                      fontWeight: 600,
+                      color: "var(--color-neutral-700)",
+                      marginBottom: "0.5rem",
+                    }}
+                  >
+                    Payment Type <span style={{ color: "#ef4444" }}>*</span>
                   </label>
                   <select
-                    name="payment_type"
-                    required
-                    className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                    value={form.payment_type}
+                    onChange={(e) =>
+                      setForm({ ...form, payment_type: e.target.value })
+                    }
+                    style={{ ...inputBase, cursor: "pointer" }}
+                    onFocus={iFocus}
+                    onBlur={iBlur}
                   >
-                    <option value="advance">Advance</option>
-                    <option value="milestone">Milestone</option>
-                    <option value="final">Final</option>
+                    <option value="advance">Advance Payment</option>
+                    <option value="milestone">Milestone Payment</option>
+                    <option value="final">Final Payment</option>
                     <option value="other">Other</option>
                   </select>
                 </div>
 
+                {/* Transaction ID */}
                 <div>
-                  <label className="block text-sm font-medium text-neutral-700 mb-2">
-                    Payment Method
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.8125rem",
+                      fontWeight: 600,
+                      color: "var(--color-neutral-700)",
+                      marginBottom: "0.5rem",
+                    }}
+                  >
+                    Transaction ID
                   </label>
                   <input
                     type="text"
-                    name="payment_method"
-                    className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
-                    placeholder="Credit Card, Bank Transfer, etc."
+                    value={form.transaction_id}
+                    onChange={(e) =>
+                      setForm({ ...form, transaction_id: e.target.value })
+                    }
+                    placeholder="Enter transaction ID…"
+                    style={inputBase}
+                    onFocus={iFocus}
+                    onBlur={iBlur}
+                  />
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.8125rem",
+                      fontWeight: 600,
+                      color: "var(--color-neutral-700)",
+                      marginBottom: "0.5rem",
+                    }}
+                  >
+                    Notes
+                  </label>
+                  <textarea
+                    value={form.notes}
+                    rows={3}
+                    onChange={(e) =>
+                      setForm({ ...form, notes: e.target.value })
+                    }
+                    placeholder="Add payment notes…"
+                    style={{ ...inputBase, resize: "none" }}
+                    onFocus={iFocus}
+                    onBlur={iBlur}
                   />
                 </div>
               </div>
+            </div>
 
-              <div>
-                <label className="block text-sm font-medium text-neutral-700 mb-2">
-                  Transaction ID
-                </label>
-                <input
-                  type="text"
-                  name="transaction_id"
-                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
-                  placeholder="Optional transaction reference"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-neutral-700 mb-2">
-                  Notes
-                </label>
-                <textarea
-                  name="notes"
-                  rows={3}
-                  className="w-full px-4 py-2 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
-                  placeholder="Additional payment details..."
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-neutral-200">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowPaymentModal(false);
-                    setPaymentError(null);
-                  }}
-                  className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={recordPaymentMutation.isPending}
-                  className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {recordPaymentMutation.isPending ? (
-                    <>
-                      <FontAwesomeIcon icon={faSpinner} spin />
-                      Recording...
-                    </>
-                  ) : (
-                    <>
-                      <FontAwesomeIcon icon={faCheckCircle} />
-                      Record Payment
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
+            <div
+              className="flex items-center justify-end gap-3"
+              style={{
+                padding: "1rem 1.75rem",
+                borderTop: "1px solid var(--color-neutral-200)",
+                backgroundColor: "var(--color-neutral-50)",
+                borderRadius: "0 0 1rem 1rem",
+              }}
+            >
+              <button
+                onClick={() => {
+                  setShowPaymentModal(false);
+                  setPaymentError(null);
+                }}
+                disabled={mutation.isPending}
+                style={{
+                  padding: "0.5rem 1.125rem",
+                  fontSize: "0.8125rem",
+                  fontWeight: 600,
+                  color: "var(--color-neutral-700)",
+                  backgroundColor: "transparent",
+                  border: "1px solid var(--color-neutral-200)",
+                  borderRadius: "0.625rem",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={mutation.isPending}
+                className="flex items-center gap-2"
+                style={{
+                  padding: "0.5rem 1.125rem",
+                  fontSize: "0.8125rem",
+                  fontWeight: 600,
+                  backgroundColor: "#1ab189",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "0.625rem",
+                  cursor: mutation.isPending ? "not-allowed" : "pointer",
+                  opacity: mutation.isPending ? 0.6 : 1,
+                }}
+              >
+                {mutation.isPending ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faSpinner}
+                      className="animate-spin"
+                      style={{ fontSize: "0.875rem" }}
+                    />
+                    Recording…
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faPlus}
+                      style={{ fontSize: "0.875rem" }}
+                    />
+                    Record Payment
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* View Invoice Modal */}
-      {showInvoiceModal && selectedPayment && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between z-10">
-              <div>
-                <h3 className="heading-4 text-neutral-900">Payment Details</h3>
-                <p className="text-neutral-600 text-sm mt-1">
-                  {currentProject?.project_name}
-                </p>
+      {/* ════════════════════════════════════════════
+          RECEIPT MODAL
+          ════════════════════════════════════════════ */}
+      {showReceiptModal && selectedPayment && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-2xl max-w-lg w-full"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+              overflow: "hidden",
+            }}
+          >
+            {/* Green gradient header */}
+            <div
+              className="relative overflow-hidden"
+              style={{
+                background: "linear-gradient(135deg, #1ab189 0%, #0e9370 100%)",
+                padding: "1.75rem 2rem",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  top: -30,
+                  right: -30,
+                  width: 120,
+                  height: 120,
+                  borderRadius: "50%",
+                  background: "rgba(255,255,255,0.08)",
+                }}
+              />
+              <div className="flex items-start justify-between">
+                <div>
+                  <p
+                    style={{
+                      fontSize: "0.65rem",
+                      fontWeight: 700,
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      color: "rgba(255,255,255,0.7)",
+                      marginBottom: "0.25rem",
+                    }}
+                  >
+                    Payment Receipt
+                  </p>
+                  <p
+                    style={{
+                      fontSize: "2.25rem",
+                      fontWeight: 800,
+                      color: "white",
+                      lineHeight: 1,
+                      letterSpacing: "-0.03em",
+                    }}
+                  >
+                    ${fmt(selectedPayment.amount)}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowReceiptModal(false)}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: "0.5rem",
+                    background: "rgba(255,255,255,0.2)",
+                    border: "none",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "white",
+                    flexShrink: 0,
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faTimes}
+                    style={{ fontSize: "0.75rem" }}
+                  />
+                </button>
               </div>
-              <button
-                onClick={() => setShowInvoiceModal(false)}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+              <div
+                className="flex items-center gap-3 mt-3"
+                style={{
+                  fontSize: "0.8rem",
+                  color: "rgba(255,255,255,0.8)",
+                  flexWrap: "wrap",
+                }}
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
-              </button>
+                <span>#{selectedPayment.id}</span>
+                <span>·</span>
+                <span>{fmtDate(selectedPayment.payment_date)}</span>
+                <span>·</span>
+                <StatusPill status={selectedPayment.payment_status} />
+              </div>
             </div>
 
-            <div className="p-8">
-              <div className="flex items-start justify-between mb-8 pb-8 border-b border-neutral-200">
-                <div>
-                  <h2 className="text-3xl font-bold text-neutral-900 mb-2">
-                    PAYMENT RECEIPT
-                  </h2>
-                  <p className="text-neutral-600">ID: {selectedPayment.id}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-neutral-600 text-sm mb-1">Date</p>
-                  <p className="font-semibold text-neutral-900">
-                    {formatDate(selectedPayment.payment_date)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-8 mb-8 pb-8 border-b border-neutral-200">
-                <div>
-                  <p className="text-neutral-600 text-sm font-semibold mb-2">
-                    FROM
-                  </p>
-                  <p className="font-semibold text-neutral-900">
-                    {currentProject?.service_provider.business_name ||
-                      currentProject?.service_provider.full_name}
-                  </p>
-                  <p className="text-neutral-600 text-sm">Service Provider</p>
-                </div>
-                <div>
-                  <p className="text-neutral-600 text-sm font-semibold mb-2">
-                    PAYMENT BY
-                  </p>
-                  <p className="font-semibold text-neutral-900">
-                    {selectedPayment.posted_by_name}
-                  </p>
-                  <p className="text-neutral-600 text-sm">Client</p>
-                </div>
-              </div>
-
-              <div className="mb-8">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-neutral-200">
-                      <th className="text-left py-3 text-neutral-600 text-sm font-semibold">
-                        DESCRIPTION
-                      </th>
-                      <th className="text-right py-3 text-neutral-600 text-sm font-semibold">
-                        AMOUNT
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b border-neutral-100">
-                      <td className="py-4 text-neutral-900">
-                        {selectedPayment.payment_type.charAt(0).toUpperCase() +
-                          selectedPayment.payment_type.slice(1)}{" "}
-                        Payment - {currentProject?.project_name}
-                      </td>
-                      <td className="py-4 text-right font-semibold text-neutral-900">
-                        {formatCurrency(selectedPayment.amount)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="flex justify-end mb-8">
-                <div className="w-64">
-                  <div className="flex items-center justify-between py-3 border-t-2 border-neutral-900">
-                    <span className="font-bold text-neutral-900 text-lg">
-                      TOTAL
-                    </span>
-                    <span className="font-bold text-neutral-900 text-2xl">
-                      {formatCurrency(selectedPayment.amount)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-neutral-50 rounded-lg p-4 mb-6">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-semibold text-neutral-700">
-                    Payment Status:
+            <div style={{ padding: "1.5rem 2rem" }}>
+              {/* Project badge */}
+              {currentProject && (
+                <div
+                  className="flex items-center gap-2 rounded-xl mb-4 p-3"
+                  style={{
+                    backgroundColor: "rgba(26,177,137,0.06)",
+                    border: "1px solid rgba(26,177,137,0.15)",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faFileInvoice}
+                    style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                  />
+                  <span
+                    style={{
+                      fontSize: "0.875rem",
+                      fontWeight: 600,
+                      color: "var(--color-neutral-800)",
+                    }}
+                  >
+                    {currentProject.project_name}
                   </span>
-                  {getStatusBadge(selectedPayment.payment_status)}
                 </div>
-                {selectedPayment.payment_method && (
-                  <div className="flex items-center justify-between mt-2">
-                    <span className="text-neutral-600 text-sm">
-                      Payment Method:
+              )}
+
+              {/* Detail rows */}
+              <div
+                className="rounded-xl overflow-hidden"
+                style={{ border: "1px solid var(--color-neutral-200)" }}
+              >
+                {[
+                  {
+                    label: "Payment Type",
+                    value:
+                      selectedPayment.payment_type.charAt(0).toUpperCase() +
+                      selectedPayment.payment_type.slice(1),
+                  },
+                  ...(selectedPayment.payment_method
+                    ? [
+                        {
+                          label: "Method",
+                          value: selectedPayment.payment_method,
+                        },
+                      ]
+                    : []),
+                  ...(selectedPayment.transaction_id
+                    ? [
+                        {
+                          label: "Transaction ID",
+                          value: selectedPayment.transaction_id,
+                          mono: true,
+                        },
+                      ]
+                    : []),
+                  {
+                    label: "Recorded by",
+                    value: selectedPayment.posted_by_name,
+                  },
+                ].map((row, i, arr) => (
+                  <div
+                    key={row.label}
+                    className="flex items-center justify-between"
+                    style={{
+                      padding: "0.75rem 1rem",
+                      borderBottom:
+                        i < arr.length - 1
+                          ? "1px solid var(--color-neutral-100)"
+                          : "none",
+                      backgroundColor:
+                        i % 2 === 0
+                          ? "var(--color-neutral-0)"
+                          : "var(--color-neutral-50)",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "0.8rem",
+                        color: "var(--color-neutral-500)",
+                      }}
+                    >
+                      {row.label}
                     </span>
-                    <span className="font-medium text-neutral-900 text-sm">
-                      {selectedPayment.payment_method}
+                    <span
+                      style={{
+                        fontSize: "0.875rem",
+                        fontWeight: 600,
+                        color: "var(--color-neutral-900)",
+                        fontFamily: (row as any).mono ? "monospace" : "inherit",
+                      }}
+                    >
+                      {row.value}
                     </span>
                   </div>
-                )}
-                {selectedPayment.transaction_id && (
-                  <div className="flex items-center justify-between mt-2">
-                    <span className="text-neutral-600 text-sm">
-                      Transaction ID:
-                    </span>
-                    <span className="font-mono text-neutral-900 text-sm">
-                      {selectedPayment.transaction_id}
-                    </span>
-                  </div>
-                )}
-                {selectedPayment.notes && (
-                  <div className="mt-3 pt-3 border-t border-neutral-200">
-                    <p className="text-neutral-600 text-sm mb-1">Notes:</p>
-                    <p className="text-neutral-900 text-sm">
-                      {selectedPayment.notes}
-                    </p>
-                  </div>
-                )}
+                ))}
+                <div
+                  className="flex items-center justify-between"
+                  style={{
+                    padding: "0.875rem 1rem",
+                    backgroundColor: "var(--color-neutral-50)",
+                    borderTop: "2px solid var(--color-neutral-200)",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "0.875rem",
+                      fontWeight: 700,
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    Total
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "1.25rem",
+                      fontWeight: 800,
+                      color: "#1ab189",
+                      letterSpacing: "-0.02em",
+                    }}
+                  >
+                    ${fmt(selectedPayment.amount)}
+                  </span>
+                </div>
               </div>
 
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-blue-700 text-sm">
-                  <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                  Thank you for your payment! This receipt has been recorded in
-                  the project history.
-                </p>
-              </div>
-            </div>
+              {selectedPayment.notes && (
+                <div
+                  className="rounded-xl mt-4 p-3"
+                  style={{
+                    backgroundColor: "var(--color-neutral-50)",
+                    border: "1px solid var(--color-neutral-200)",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: "0.65rem",
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      color: "var(--color-neutral-400)",
+                      marginBottom: "0.375rem",
+                    }}
+                  >
+                    Notes
+                  </p>
+                  <p
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-700)",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {selectedPayment.notes}
+                  </p>
+                </div>
+              )}
 
-            <div className="sticky bottom-0 bg-neutral-50 border-t border-neutral-200 px-6 py-4 flex items-center justify-end gap-3">
               <button
-                onClick={() => setShowInvoiceModal(false)}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
+                onClick={() => setShowReceiptModal(false)}
+                style={{
+                  width: "100%",
+                  marginTop: "1.25rem",
+                  padding: "0.75rem",
+                  backgroundColor: "var(--color-neutral-100)",
+                  border: "none",
+                  borderRadius: "0.625rem",
+                  fontSize: "0.875rem",
+                  fontWeight: 600,
+                  color: "var(--color-neutral-700)",
+                  cursor: "pointer",
+                }}
               >
                 Close
               </button>

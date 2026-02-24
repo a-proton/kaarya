@@ -13,14 +13,15 @@ import {
   faSpinner,
   faDollarSign,
   faChartLine,
+  faArrowUp,
+  faXmark,
 } from "@fortawesome/free-solid-svg-icons";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useState } from "react";
 
-// ==================================================================================
-// TYPE DEFINITIONS
-// ==================================================================================
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ProjectStats {
   total_projects: number;
@@ -72,14 +73,308 @@ interface DashboardData {
   unread_messages_count: number;
 }
 
-// ==================================================================================
-// MAIN COMPONENT
-// ==================================================================================
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function SectionHeader({
+  title,
+  href,
+  hrefLabel = "View all",
+}: {
+  title: string;
+  href: string;
+  hrefLabel?: string;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: "1.25rem",
+      }}
+    >
+      <h2
+        style={{
+          fontSize: "1rem",
+          fontWeight: 700,
+          color: "var(--color-neutral-900)",
+          margin: 0,
+        }}
+      >
+        {title}
+      </h2>
+      <Link
+        href={href}
+        style={{
+          fontSize: "0.8rem",
+          fontWeight: 600,
+          color: "#1ab189",
+          textDecoration: "none",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLAnchorElement).style.opacity = "0.7";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLAnchorElement).style.opacity = "1";
+        }}
+      >
+        {hrefLabel}
+      </Link>
+    </div>
+  );
+}
+
+// ─── Loading / Error screens ──────────────────────────────────────────────────
+
+function LoadingScreen() {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "var(--color-neutral-50)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <div style={{ textAlign: "center" }}>
+        <FontAwesomeIcon
+          icon={faSpinner}
+          className="animate-spin"
+          style={{ fontSize: "2rem", color: "#1ab189", marginBottom: "1rem" }}
+        />
+        <p
+          style={{
+            fontSize: "0.9rem",
+            fontWeight: 500,
+            color: "var(--color-neutral-500)",
+          }}
+        >
+          Loading your dashboard…
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ErrorScreen({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "var(--color-neutral-50)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "1.5rem",
+      }}
+    >
+      <div
+        style={{
+          background: "#fff",
+          border: "1px solid #fecaca",
+          borderRadius: "1.25rem",
+          padding: "2.5rem",
+          maxWidth: 400,
+          width: "100%",
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            width: 52,
+            height: 52,
+            background: "#fef2f2",
+            borderRadius: "50%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            margin: "0 auto 1.25rem",
+          }}
+        >
+          <FontAwesomeIcon
+            icon={faExclamationTriangle}
+            style={{ color: "#ef4444", fontSize: "1.25rem" }}
+          />
+        </div>
+        <h2
+          style={{
+            fontSize: "1.1rem",
+            fontWeight: 700,
+            color: "var(--color-neutral-900)",
+            marginBottom: "0.5rem",
+          }}
+        >
+          Something went wrong
+        </h2>
+        <p
+          style={{
+            fontSize: "0.875rem",
+            color: "var(--color-neutral-500)",
+            marginBottom: "1.5rem",
+          }}
+        >
+          {message}
+        </p>
+        <button
+          onClick={onRetry}
+          className="btn btn-primary btn-md"
+          style={{ margin: "0 auto" }}
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Stat Card ────────────────────────────────────────────────────────────────
+
+interface StatCardProps {
+  label: string;
+  value: string | number;
+  iconBg: string;
+  iconColor: string;
+  icon: typeof faFolder;
+  valueColor?: string;
+  sublabel?: string;
+  growth?: number;
+  href: string;
+  hrefLabel: string;
+}
+
+function StatCard({
+  label,
+  value,
+  iconBg,
+  iconColor,
+  icon,
+  valueColor,
+  sublabel,
+  growth,
+  href,
+  hrefLabel,
+}: StatCardProps) {
+  return (
+    <div
+      className="rounded-2xl flex flex-col transition-shadow"
+      style={{
+        backgroundColor: "var(--color-neutral-0)",
+        border: "1px solid var(--color-neutral-200)",
+        padding: "1.25rem 1.375rem 1.125rem",
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLDivElement).style.boxShadow =
+          "0 8px 24px rgba(0,0,0,0.07)";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLDivElement).style.boxShadow = "none";
+      }}
+    >
+      <div
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: "0.625rem",
+          backgroundColor: iconBg,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: "0.875rem",
+        }}
+      >
+        <FontAwesomeIcon
+          icon={icon}
+          style={{ color: iconColor, fontSize: "0.9rem" }}
+        />
+      </div>
+      <p
+        style={{
+          fontSize: "0.6rem",
+          fontWeight: 600,
+          color: "var(--color-neutral-400)",
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          marginBottom: "0.375rem",
+        }}
+      >
+        {label}
+      </p>
+      <p
+        style={{
+          fontSize: "1.875rem",
+          fontWeight: 700,
+          color: valueColor || "var(--color-neutral-900)",
+          lineHeight: 1,
+          marginBottom: "0.5rem",
+        }}
+      >
+        {value}
+      </p>
+      {growth !== undefined && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.375rem",
+            fontSize: "0.75rem",
+            fontWeight: 600,
+            color: "#065f46",
+            marginBottom: "0.375rem",
+          }}
+        >
+          <FontAwesomeIcon icon={faArrowUp} style={{ fontSize: "0.625rem" }} />+
+          {growth}%
+        </div>
+      )}
+      {sublabel && (
+        <p
+          style={{
+            fontSize: "0.75rem",
+            color: "var(--color-neutral-500)",
+            marginBottom: "0.5rem",
+          }}
+        >
+          {sublabel}
+        </p>
+      )}
+      <div style={{ marginTop: "auto", paddingTop: "0.5rem" }}>
+        <Link
+          href={href}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.375rem",
+            fontSize: "0.8rem",
+            fontWeight: 600,
+            color: "#1ab189",
+            textDecoration: "none",
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLAnchorElement).style.opacity = "0.7";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLAnchorElement).style.opacity = "1";
+          }}
+        >
+          {hrefLabel}
+          <FontAwesomeIcon icon={faArrowRight} style={{ fontSize: "0.6rem" }} />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ClientDashboard() {
-  // ==================================================================================
-  // DATA FETCHING WITH TANSTACK QUERY
-  // ==================================================================================
+  const [showWelcomeBanner, setShowWelcomeBanner] = useState(true);
 
   const {
     data: dashboardData,
@@ -89,461 +384,922 @@ export default function ClientDashboard() {
     refetch,
   } = useQuery<DashboardData>({
     queryKey: ["client-dashboard"],
-    queryFn: async () => {
-      return api.get<DashboardData>("/api/v1/client/dashboard/");
-    },
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    queryFn: () => api.get<DashboardData>("/api/v1/client/dashboard/"),
+    staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,
   });
 
-  // ==================================================================================
-  // LOADING STATE
-  // ==================================================================================
-
-  if (isLoading) {
+  if (isLoading) return <LoadingScreen />;
+  if (isError)
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center">
-          <FontAwesomeIcon
-            icon={faSpinner}
-            spin
-            className="text-4xl text-primary-600 mb-4"
-          />
-          <p className="text-neutral-600">Loading your dashboard...</p>
-        </div>
-      </div>
+      <ErrorScreen
+        message={
+          error instanceof Error ? error.message : "Failed to load dashboard"
+        }
+        onRetry={refetch}
+      />
     );
-  }
-
-  // ==================================================================================
-  // ERROR STATE
-  // ==================================================================================
-
-  if (isError) {
+  if (!dashboardData)
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center max-w-md">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FontAwesomeIcon
-              icon={faExclamationTriangle}
-              className="text-red-600 text-2xl"
-            />
-          </div>
-          <h2 className="heading-3 text-neutral-900 mb-2">
-            Error Loading Dashboard
-          </h2>
-          <p className="text-neutral-600 mb-4">
-            {error instanceof Error
-              ? error.message
-              : "Failed to load dashboard data"}
-          </p>
-          <button onClick={() => refetch()} className="btn-primary">
-            Try Again
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ==================================================================================
-  // NO DATA STATE
-  // ==================================================================================
-
-  if (!dashboardData) {
-    return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-neutral-600">No dashboard data available</p>
-        </div>
-      </div>
-    );
-  }
-
-  // ==================================================================================
-  // HELPER FUNCTIONS
-  // ==================================================================================
-
-  const getProgressColor = (progress: number) => {
-    if (progress >= 75) return "bg-green-600";
-    if (progress >= 50) return "bg-primary-600";
-    if (progress >= 25) return "bg-yellow-600";
-    return "bg-orange-600";
-  };
-
-  const getProgressBgColor = (progress: number) => {
-    if (progress >= 75) return "bg-green-50 border-green-200";
-    if (progress >= 50) return "bg-primary-50 border-primary-200";
-    if (progress >= 25) return "bg-yellow-50 border-yellow-200";
-    return "bg-orange-50 border-orange-200";
-  };
-
-  // ==================================================================================
-  // RENDER
-  // ==================================================================================
-
-  return (
-    <div className="space-y-6">
-      {/* Welcome Section */}
-      <div className="bg-gradient-to-r from-primary-600 to-primary-700 rounded-xl p-8 text-neutral-0">
-        <h1 className="heading-2 mb-2">Your Projects Dashboard</h1>
-        <p className="text-neutral-100">
-          Track progress, view updates, and communicate with your service
-          providers all in one place.
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: 300,
+        }}
+      >
+        <p style={{ color: "var(--color-neutral-500)" }}>
+          No dashboard data available
         </p>
       </div>
+    );
 
-      {/* Project Stats Section */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        {/* Total Projects */}
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 bg-primary-50 rounded-lg flex items-center justify-center">
+  const {
+    project_stats,
+    active_projects,
+    recent_updates,
+    upcoming_milestones,
+    recent_messages,
+    unread_messages_count,
+  } = dashboardData;
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        backgroundColor: "var(--color-neutral-50)",
+        padding: "1.75rem 2rem",
+      }}
+    >
+      <style>{`
+        .animate-spin { animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .update-row:hover { background: var(--color-neutral-100) !important; }
+        .message-row:hover { background: var(--color-neutral-50) !important; }
+        .project-card:hover { border-color: var(--color-neutral-300) !important; box-shadow: 0 6px 20px rgba(0,0,0,0.07) !important; }
+      `}</style>
+
+      {/* Welcome Banner */}
+      {showWelcomeBanner && (
+        <div
+          className="rounded-2xl mb-6 overflow-hidden"
+          style={{
+            backgroundColor: "var(--color-neutral-0)",
+            border: "1px solid var(--color-neutral-200)",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.05)",
+          }}
+        >
+          <div style={{ height: 4, backgroundColor: "#1ab189" }} />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "1.25rem",
+              padding: "1rem 1.5rem",
+            }}
+          >
+            <div
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: "0.875rem",
+                backgroundColor: "rgba(26,177,137,0.1)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
               <FontAwesomeIcon
                 icon={faFolder}
-                className="text-primary-600 text-lg"
+                style={{ color: "#1ab189", fontSize: "1.1rem" }}
               />
             </div>
-          </div>
-          <p className="text-sm text-neutral-600 mb-1">Total Projects</p>
-          <p className="text-2xl font-bold text-neutral-900">
-            {dashboardData.project_stats.total_projects}
-          </p>
-        </div>
-
-        {/* Active Projects */}
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p
+                style={{
+                  fontSize: "0.9375rem",
+                  fontWeight: 700,
+                  color: "var(--color-neutral-900)",
+                  margin: "0 0 0.2rem",
+                }}
+              >
+                Welcome to your project dashboard
+              </p>
+              <p
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--color-neutral-500)",
+                  margin: 0,
+                }}
+              >
+                Track progress, view updates, and communicate with your service
+                providers.
+              </p>
+            </div>
+            <Link
+              href="/client/project-updates"
+              className="hidden md:flex items-center gap-2 rounded-xl font-semibold flex-shrink-0"
+              style={{
+                padding: "0.55rem 1.1rem",
+                fontSize: "0.8rem",
+                backgroundColor: "#1ab189",
+                color: "white",
+                textDecoration: "none",
+                whiteSpace: "nowrap",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLAnchorElement).style.opacity = "0.88";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLAnchorElement).style.opacity = "1";
+              }}
+            >
+              View Updates
               <FontAwesomeIcon
-                icon={faChartLine}
-                className="text-blue-600 text-lg"
+                icon={faArrowRight}
+                style={{ fontSize: "0.65rem" }}
               />
-            </div>
+            </Link>
+            <button
+              onClick={() => setShowWelcomeBanner(false)}
+              style={{
+                width: "1.875rem",
+                height: "1.875rem",
+                background: "transparent",
+                border: "1px solid var(--color-neutral-200)",
+                borderRadius: "0.5rem",
+                cursor: "pointer",
+                color: "var(--color-neutral-400)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "var(--color-neutral-100)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "transparent";
+              }}
+              aria-label="Dismiss"
+            >
+              <FontAwesomeIcon icon={faXmark} style={{ fontSize: "0.75rem" }} />
+            </button>
           </div>
-          <p className="text-sm text-neutral-600 mb-1">Active</p>
-          <p className="text-2xl font-bold text-neutral-900">
-            {dashboardData.project_stats.active_projects}
-          </p>
         </div>
+      )}
 
-        {/* Completed Projects */}
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center">
-              <FontAwesomeIcon
-                icon={faCheckCircle}
-                className="text-green-600 text-lg"
-              />
-            </div>
-          </div>
-          <p className="text-sm text-neutral-600 mb-1">Completed</p>
-          <p className="text-2xl font-bold text-neutral-900">
-            {dashboardData.project_stats.completed_projects}
-          </p>
-        </div>
-
-        {/* Total Spent */}
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 bg-purple-50 rounded-lg flex items-center justify-center">
-              <FontAwesomeIcon
-                icon={faDollarSign}
-                className="text-purple-600 text-lg"
-              />
-            </div>
-          </div>
-          <p className="text-sm text-neutral-600 mb-1">Total Spent</p>
-          <p className="text-2xl font-bold text-neutral-900">
-            $
-            {dashboardData.project_stats.total_spent.toLocaleString(undefined, {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}
-          </p>
-        </div>
-
-        {/* Pending Payments */}
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 bg-orange-50 rounded-lg flex items-center justify-center">
-              <FontAwesomeIcon
-                icon={faClock}
-                className="text-orange-600 text-lg"
-              />
-            </div>
-          </div>
-          <p className="text-sm text-neutral-600 mb-1">Pending</p>
-          <p className="text-2xl font-bold text-orange-600">
-            $
-            {dashboardData.project_stats.pending_payments.toLocaleString(
-              undefined,
-              {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              },
-            )}
-          </p>
-        </div>
+      {/* Page heading */}
+      <div style={{ marginBottom: "1.5rem" }}>
+        <p
+          style={{
+            fontSize: "0.8rem",
+            fontWeight: 500,
+            color: "var(--color-neutral-500)",
+            marginBottom: "0.25rem",
+          }}
+        >
+          Overview
+        </p>
+        <h1
+          style={{
+            fontSize: "1.625rem",
+            fontWeight: 700,
+            color: "var(--color-neutral-900)",
+            lineHeight: 1.2,
+            margin: 0,
+          }}
+        >
+          {project_stats.active_projects} active project
+          {project_stats.active_projects !== 1 ? "s" : ""}
+          {project_stats.pending_payments > 0 && (
+            <span style={{ color: "var(--color-neutral-400)" }}>
+              {" · "}$
+              {project_stats.pending_payments.toLocaleString(undefined, {
+                minimumFractionDigits: 0,
+              })}{" "}
+              pending
+            </span>
+          )}
+        </h1>
       </div>
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent Updates - Takes 2 columns */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Recent Daily Updates */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="heading-3 text-neutral-900 flex items-center gap-2">
+      {/* Stat cards */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(5, 1fr)",
+          gap: "1rem",
+          marginBottom: "1.5rem",
+        }}
+      >
+        <StatCard
+          label="Total Projects"
+          value={project_stats.total_projects}
+          icon={faFolder}
+          iconBg="rgba(26,177,137,0.1)"
+          iconColor="#1ab189"
+          href="/client/project-updates"
+          hrefLabel="View all"
+        />
+        <StatCard
+          label="Active"
+          value={project_stats.active_projects}
+          icon={faChartLine}
+          iconBg="rgba(59,130,246,0.1)"
+          iconColor="#3b82f6"
+          href="/client/project-updates"
+          hrefLabel="View active"
+        />
+        <StatCard
+          label="Completed"
+          value={project_stats.completed_projects}
+          icon={faCheckCircle}
+          iconBg="rgba(16,185,129,0.1)"
+          iconColor="#10b981"
+          href="/client/project-updates"
+          hrefLabel="View history"
+        />
+        <StatCard
+          label="Total Spent"
+          value={`$${project_stats.total_spent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          icon={faDollarSign}
+          iconBg="rgba(139,92,246,0.1)"
+          iconColor="#8b5cf6"
+          href="/client/payments"
+          hrefLabel="Payments"
+        />
+        <StatCard
+          label="Pending"
+          value={`$${project_stats.pending_payments.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          icon={faClock}
+          iconBg="rgba(245,158,11,0.1)"
+          iconColor="#f59e0b"
+          valueColor="#d97706"
+          href="/client/payments"
+          hrefLabel="Pay now"
+        />
+      </div>
+
+      {/* Main grid */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr 1fr",
+          gap: "1.25rem",
+        }}
+      >
+        {/* Recent Updates — col-span 2 */}
+        <div
+          style={{
+            gridColumn: "span 2",
+            display: "flex",
+            flexDirection: "column",
+            gap: "1.25rem",
+          }}
+        >
+          {/* Recent Updates card */}
+          <div
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "1rem",
+              padding: "1.375rem 1.5rem",
+            }}
+          >
+            <SectionHeader
+              title="Recent Updates"
+              href="/client/project-updates"
+            />
+            {recent_updates.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "2.5rem 0" }}>
                 <FontAwesomeIcon
                   icon={faNewspaper}
-                  className="text-primary-600"
+                  style={{
+                    fontSize: "2rem",
+                    color: "var(--color-neutral-300)",
+                    marginBottom: "0.75rem",
+                  }}
                 />
-                Recent Updates
-              </h2>
-              <Link
-                href="/client/daily-updates"
-                className="text-primary-600 hover:text-primary-700 font-semibold text-sm flex items-center gap-2"
+                <p
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
+                  No recent updates
+                </p>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem",
+                }}
               >
-                View All
-                <FontAwesomeIcon icon={faArrowRight} className="text-xs" />
-              </Link>
-            </div>
-
-            <div className="space-y-4">
-              {dashboardData.recent_updates.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-neutral-500">No recent updates</p>
-                </div>
-              ) : (
-                dashboardData.recent_updates.map((update) => (
+                {recent_updates.map((update) => (
                   <Link
                     key={update.id}
-                    href={`/client/daily-updates/${update.id}`}
-                    className="block p-4 bg-neutral-50 hover:bg-neutral-100 rounded-lg border border-neutral-200 transition-colors"
+                    href={`/client/project-updates/${update.id}`}
+                    className="update-row"
+                    style={{
+                      display: "block",
+                      padding: "0.875rem 1rem",
+                      background: "var(--color-neutral-50)",
+                      borderRadius: "0.75rem",
+                      border: "1px solid var(--color-neutral-200)",
+                      textDecoration: "none",
+                      transition: "background 150ms",
+                    }}
                   >
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-primary-600 bg-primary-50 px-2 py-1 rounded">
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        marginBottom: "0.375rem",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: "0.6875rem",
+                            fontWeight: 600,
+                            padding: "0.2rem 0.625rem",
+                            borderRadius: 9999,
+                            background: "rgba(26,177,137,0.1)",
+                            color: "#065f46",
+                            border: "1px solid rgba(26,177,137,0.2)",
+                          }}
+                        >
                           {update.project}
                         </span>
                         {update.status === "unread" && (
-                          <span className="w-2 h-2 bg-primary-600 rounded-full"></span>
+                          <span
+                            style={{
+                              width: 7,
+                              height: 7,
+                              borderRadius: "50%",
+                              backgroundColor: "#1ab189",
+                              display: "inline-block",
+                              flexShrink: 0,
+                            }}
+                          />
                         )}
                       </div>
-                      <span className="text-xs text-neutral-500">
+                      <span
+                        style={{
+                          fontSize: "0.75rem",
+                          color: "var(--color-neutral-400)",
+                        }}
+                      >
                         {update.date}
                       </span>
                     </div>
-                    <h3 className="font-semibold text-neutral-900">
+                    <p
+                      style={{
+                        fontSize: "0.875rem",
+                        fontWeight: 600,
+                        color: "var(--color-neutral-900)",
+                        margin: 0,
+                      }}
+                    >
                       {update.title}
-                    </h3>
+                    </p>
                   </Link>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Upcoming Milestones */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="heading-3 text-neutral-900 flex items-center gap-2">
+          <div
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "1rem",
+              padding: "1.375rem 1.5rem",
+            }}
+          >
+            <SectionHeader
+              title="Upcoming Milestones"
+              href="/client/milestones"
+            />
+            {upcoming_milestones.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "2.5rem 0" }}>
                 <FontAwesomeIcon
                   icon={faCheckCircle}
-                  className="text-primary-600"
+                  style={{
+                    fontSize: "2rem",
+                    color: "var(--color-neutral-300)",
+                    marginBottom: "0.75rem",
+                  }}
                 />
-                Upcoming Milestones
-              </h2>
-              <Link
-                href="/client/milestones"
-                className="text-primary-600 hover:text-primary-700 font-semibold text-sm flex items-center gap-2"
+                <p
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
+                  No upcoming milestones
+                </p>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem",
+                }}
               >
-                View All
-                <FontAwesomeIcon icon={faArrowRight} className="text-xs" />
-              </Link>
-            </div>
-
-            <div className="space-y-4">
-              {dashboardData.upcoming_milestones.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-neutral-500">No upcoming milestones</p>
-                </div>
-              ) : (
-                dashboardData.upcoming_milestones.map((milestone) => (
+                {upcoming_milestones.map((milestone) => (
                   <div
                     key={milestone.id}
-                    className="p-4 bg-neutral-50 rounded-lg border border-neutral-200"
+                    style={{
+                      padding: "0.875rem 1rem",
+                      background: "var(--color-neutral-50)",
+                      borderRadius: "0.75rem",
+                      border: "1px solid var(--color-neutral-200)",
+                    }}
                   >
-                    <div className="flex items-start justify-between mb-3">
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        marginBottom: "0.5rem",
+                      }}
+                    >
                       <div>
-                        <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                        <span
+                          style={{
+                            fontSize: "0.6875rem",
+                            fontWeight: 600,
+                            padding: "0.2rem 0.625rem",
+                            borderRadius: 9999,
+                            background: "rgba(59,130,246,0.1)",
+                            color: "#1d4ed8",
+                            border: "1px solid rgba(59,130,246,0.2)",
+                          }}
+                        >
                           {milestone.project}
                         </span>
-                        <h3 className="font-semibold text-neutral-900 mt-2">
+                        <p
+                          style={{
+                            fontSize: "0.875rem",
+                            fontWeight: 600,
+                            color: "var(--color-neutral-900)",
+                            margin: "0.375rem 0 0",
+                          }}
+                        >
                           {milestone.title}
-                        </h3>
+                        </p>
                       </div>
                       {milestone.status === "at-risk" && (
                         <FontAwesomeIcon
                           icon={faExclamationTriangle}
-                          className="text-yellow-500"
+                          style={{
+                            color: "#f59e0b",
+                            fontSize: "0.875rem",
+                            flexShrink: 0,
+                          }}
                         />
                       )}
                     </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2 text-neutral-600">
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.375rem",
+                          fontSize: "0.8125rem",
+                          color: "var(--color-neutral-500)",
+                        }}
+                      >
                         <FontAwesomeIcon
                           icon={faCalendar}
-                          className="text-xs"
+                          style={{ fontSize: "0.625rem" }}
                         />
                         Due: {milestone.due_date}
                       </div>
                       <span
-                        className={`font-semibold ${
-                          milestone.status === "on-track"
-                            ? "text-green-600"
-                            : "text-yellow-600"
-                        }`}
+                        style={{
+                          fontSize: "0.8125rem",
+                          fontWeight: 700,
+                          color:
+                            milestone.status === "on-track"
+                              ? "#1ab189"
+                              : "#d97706",
+                        }}
                       >
                         {milestone.days_left} days left
                       </span>
                     </div>
                   </div>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Sidebar - Takes 1 column */}
-        <div className="space-y-6">
+        {/* Sidebar — 1 col */}
+        <div
+          style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
+        >
           {/* Active Projects */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <h2 className="heading-4 text-neutral-900 mb-4 flex items-center gap-2">
-              <FontAwesomeIcon icon={faFolder} className="text-primary-600" />
-              Active Projects
-            </h2>
-            <div className="space-y-3">
-              {dashboardData.active_projects.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-neutral-500 text-sm">No active projects</p>
-                </div>
-              ) : (
-                dashboardData.active_projects.map((project) => (
+          <div
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "1rem",
+              padding: "1.375rem 1.25rem",
+            }}
+          >
+            <SectionHeader
+              title="Active Projects"
+              href="/client/project-updates"
+              hrefLabel="View all"
+            />
+            {active_projects.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "2rem 0" }}>
+                <FontAwesomeIcon
+                  icon={faFolder}
+                  style={{
+                    fontSize: "1.75rem",
+                    color: "var(--color-neutral-300)",
+                    marginBottom: "0.625rem",
+                  }}
+                />
+                <p
+                  style={{
+                    fontSize: "0.8rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
+                  No active projects
+                </p>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.625rem",
+                }}
+              >
+                {active_projects.map((project) => (
                   <Link
                     key={project.id}
                     href={`/client/projects/${project.id}`}
-                    className={`block p-4 hover:opacity-90 rounded-lg border transition-all ${getProgressBgColor(
-                      project.progress,
-                    )}`}
+                    className="project-card"
+                    style={{
+                      display: "block",
+                      padding: "0.875rem 1rem",
+                      border: "1px solid var(--color-neutral-200)",
+                      borderRadius: "0.75rem",
+                      textDecoration: "none",
+                      transition: "border-color 150ms, box-shadow 150ms",
+                    }}
                   >
-                    <h3 className="font-semibold text-neutral-900 mb-1">
+                    <p
+                      style={{
+                        fontSize: "0.875rem",
+                        fontWeight: 700,
+                        color: "var(--color-neutral-900)",
+                        margin: "0 0 0.2rem",
+                      }}
+                    >
                       {project.name}
-                    </h3>
-                    <p className="text-xs text-neutral-600 mb-2">
+                    </p>
+                    <p
+                      style={{
+                        fontSize: "0.75rem",
+                        color: "var(--color-neutral-500)",
+                        margin: "0 0 0.625rem",
+                      }}
+                    >
                       Provider: {project.provider}
                     </p>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-neutral-600">Progress</span>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginBottom: "0.5rem",
+                      }}
+                    >
                       <span
-                        className={`font-semibold ${
-                          project.progress >= 75
-                            ? "text-green-600"
-                            : project.progress >= 50
-                              ? "text-primary-600"
-                              : project.progress >= 25
-                                ? "text-yellow-600"
-                                : "text-orange-600"
-                        }`}
+                        style={{
+                          fontSize: "0.7rem",
+                          color: "var(--color-neutral-500)",
+                        }}
+                      >
+                        Progress
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "0.7rem",
+                          fontWeight: 700,
+                          color:
+                            project.progress >= 75
+                              ? "#1ab189"
+                              : project.progress >= 50
+                                ? "#3b82f6"
+                                : "#f59e0b",
+                        }}
                       >
                         {project.progress}%
                       </span>
                     </div>
-                    <div className="w-full bg-neutral-200 rounded-full h-2 mt-2">
+                    <div
+                      style={{
+                        height: 5,
+                        background: "var(--color-neutral-150)",
+                        borderRadius: 9999,
+                        overflow: "hidden",
+                      }}
+                    >
                       <div
-                        className={`h-2 rounded-full transition-all ${getProgressColor(
-                          project.progress,
-                        )}`}
-                        style={{ width: `${project.progress}%` }}
-                      ></div>
+                        style={{
+                          height: "100%",
+                          width: `${project.progress}%`,
+                          backgroundColor:
+                            project.progress >= 75
+                              ? "#1ab189"
+                              : project.progress >= 50
+                                ? "#3b82f6"
+                                : "#f59e0b",
+                          borderRadius: 9999,
+                          transition: "width 0.5s ease",
+                        }}
+                      />
                     </div>
                   </Link>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Recent Messages */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="heading-4 text-neutral-900 flex items-center gap-2">
-                <FontAwesomeIcon
-                  icon={faMessage}
-                  className="text-primary-600"
-                />
-                Messages
-                {dashboardData.unread_messages_count > 0 && (
-                  <span className="ml-2 bg-primary-600 text-neutral-0 text-xs font-semibold px-2 py-0.5 rounded-full">
-                    {dashboardData.unread_messages_count}
+          {/* Messages */}
+          <div
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "1rem",
+              padding: "1.375rem 1.25rem",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: "1rem",
+              }}
+            >
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+              >
+                <h2
+                  style={{
+                    fontSize: "1rem",
+                    fontWeight: 700,
+                    color: "var(--color-neutral-900)",
+                    margin: 0,
+                  }}
+                >
+                  Messages
+                </h2>
+                {unread_messages_count > 0 && (
+                  <span
+                    style={{
+                      padding: "0.15rem 0.5rem",
+                      fontSize: "0.6rem",
+                      fontWeight: 700,
+                      backgroundColor: "#ef4444",
+                      color: "white",
+                      borderRadius: 9999,
+                    }}
+                  >
+                    {unread_messages_count} new
                   </span>
                 )}
-              </h2>
+              </div>
               <Link
                 href="/client/messages"
-                className="text-primary-600 hover:text-primary-700 font-semibold text-sm"
+                style={{
+                  fontSize: "0.8rem",
+                  fontWeight: 600,
+                  color: "#1ab189",
+                  textDecoration: "none",
+                }}
               >
-                View All
+                View all
               </Link>
             </div>
-
-            <div className="space-y-3">
-              {dashboardData.recent_messages.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-neutral-500 text-sm">No messages</p>
-                </div>
-              ) : (
-                dashboardData.recent_messages.map((message) => (
+            {recent_messages.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "2rem 0" }}>
+                <FontAwesomeIcon
+                  icon={faMessage}
+                  style={{
+                    fontSize: "1.75rem",
+                    color: "var(--color-neutral-300)",
+                    marginBottom: "0.625rem",
+                  }}
+                />
+                <p
+                  style={{
+                    fontSize: "0.8rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
+                  No messages yet
+                </p>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {recent_messages.map((message, idx) => (
                   <Link
                     key={message.id}
                     href="/client/messages"
-                    className="block p-3 hover:bg-neutral-50 rounded-lg transition-colors"
+                    className="message-row"
+                    style={{
+                      display: "block",
+                      padding: "0.75rem 0.5rem",
+                      borderBottom:
+                        idx < recent_messages.length - 1
+                          ? "1px solid var(--color-neutral-100)"
+                          : "none",
+                      textDecoration: "none",
+                      transition: "background 150ms",
+                      borderRadius: "0.5rem",
+                    }}
                   >
-                    <div className="flex items-start justify-between mb-1">
-                      <p className="font-semibold text-neutral-900 text-sm">
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginBottom: "0.25rem",
+                      }}
+                    >
+                      <p
+                        style={{
+                          fontSize: "0.875rem",
+                          fontWeight: 700,
+                          color: "var(--color-neutral-900)",
+                          margin: 0,
+                        }}
+                      >
                         {message.from}
                       </p>
                       {message.unread && (
-                        <span className="w-2 h-2 bg-primary-600 rounded-full mt-1"></span>
+                        <span
+                          style={{
+                            width: 7,
+                            height: 7,
+                            borderRadius: "50%",
+                            backgroundColor: "#1ab189",
+                            flexShrink: 0,
+                          }}
+                        />
                       )}
                     </div>
-                    <p className="text-neutral-600 text-sm line-clamp-1 mb-1">
+                    <p
+                      style={{
+                        fontSize: "0.8125rem",
+                        color: "var(--color-neutral-600)",
+                        margin: "0 0 0.25rem",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {message.preview}
                     </p>
-                    <div className="flex items-center gap-1 text-xs text-neutral-500">
-                      <FontAwesomeIcon icon={faClock} />
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.3rem",
+                        fontSize: "0.75rem",
+                        color: "var(--color-neutral-400)",
+                      }}
+                    >
+                      <FontAwesomeIcon
+                        icon={faClock}
+                        style={{ fontSize: "0.6rem" }}
+                      />
                       {message.time}
                     </div>
                   </Link>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Quick Actions */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <h2 className="heading-4 text-neutral-900 mb-4">Quick Actions</h2>
-            <div className="space-y-2">
+          <div
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "1rem",
+              padding: "1.375rem 1.25rem",
+            }}
+          >
+            <h2
+              style={{
+                fontSize: "1rem",
+                fontWeight: 700,
+                color: "var(--color-neutral-900)",
+                margin: "0 0 1rem",
+              }}
+            >
+              Quick Actions
+            </h2>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.5rem",
+              }}
+            >
               <Link
                 href="/client/messages"
-                className="w-full btn-primary text-sm justify-center"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "0.5rem",
+                  padding: "0.7rem 1rem",
+                  backgroundColor: "#1ab189",
+                  color: "white",
+                  borderRadius: "0.75rem",
+                  fontWeight: 600,
+                  fontSize: "0.875rem",
+                  textDecoration: "none",
+                  transition: "opacity 150ms",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.opacity = "0.88";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.opacity = "1";
+                }}
               >
-                <FontAwesomeIcon icon={faMessage} />
+                <FontAwesomeIcon
+                  icon={faMessage}
+                  style={{ fontSize: "0.8rem" }}
+                />
                 Send Message
               </Link>
               <Link
                 href="/client/documents"
-                className="w-full btn-secondary text-sm justify-center"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "0.5rem",
+                  padding: "0.7rem 1rem",
+                  backgroundColor: "transparent",
+                  color: "#1ab189",
+                  border: "1.5px solid #1ab189",
+                  borderRadius: "0.75rem",
+                  fontWeight: 600,
+                  fontSize: "0.875rem",
+                  textDecoration: "none",
+                  transition: "background 150ms",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                    "rgba(26,177,137,0.06)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                    "transparent";
+                }}
               >
-                <FontAwesomeIcon icon={faFolder} />
+                <FontAwesomeIcon
+                  icon={faFolder}
+                  style={{ fontSize: "0.8rem" }}
+                />
                 View Documents
               </Link>
             </div>

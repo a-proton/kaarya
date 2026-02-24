@@ -19,7 +19,6 @@ import {
   faMoneyBill,
   faSpinner,
   faUsers,
-  faClipboardList,
   faImage,
   faBox,
   faCreditCard,
@@ -29,10 +28,9 @@ import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
-// ==================================================================================
-// TYPE DEFINITIONS
-// ==================================================================================
-
+/* ─────────────────────────────────────────── */
+/* Types                                        */
+/* ─────────────────────────────────────────── */
 interface Client {
   id: number;
   full_name: string;
@@ -134,7 +132,7 @@ interface ProjectDetail {
   project_name: string;
   description: string;
   site_address: string;
-  site_location: any;
+  site_location: unknown;
   status:
     | "not_started"
     | "in_progress"
@@ -181,255 +179,283 @@ interface ProjectSummary {
 }
 
 interface PageProps {
-  params: Promise<{
-    id: string;
-  }>;
+  params: Promise<{ id: string }>;
 }
 
-// ==================================================================================
-// MAIN COMPONENT
-// ==================================================================================
+type TabKey = "overview" | "updates" | "inventory" | "payments" | "team";
 
+/* ─────────────────────────────────────────── */
+/* Status helpers                              */
+/* ─────────────────────────────────────────── */
+const STATUS_BADGE: Record<string, { bg: string; color: string; bar: string }> =
+  {
+    in_progress: { bg: "#eff6ff", color: "#1d4ed8", bar: "#3b82f6" },
+    completed: { bg: "rgba(26,177,137,0.1)", color: "#1ab189", bar: "#1ab189" },
+    not_started: { bg: "#fefce8", color: "#a16207", bar: "#eab308" },
+    pending: { bg: "#fefce8", color: "#a16207", bar: "#eab308" },
+    on_hold: { bg: "#fff7ed", color: "#c2410c", bar: "#f97316" },
+    cancelled: { bg: "#fef2f2", color: "#b91c1c", bar: "#ef4444" },
+  };
+
+const MILESTONE_BADGE: Record<string, { bg: string; color: string }> = {
+  pending: { bg: "#fefce8", color: "#a16207" },
+  in_progress: { bg: "#eff6ff", color: "#1d4ed8" },
+  completed: { bg: "rgba(26,177,137,0.1)", color: "#1ab189" },
+};
+
+const EMPLOYEE_COLORS = [
+  "#1ab189",
+  "#3b82f6",
+  "#f59e0b",
+  "#8b5cf6",
+  "#10b981",
+  "#06b6d4",
+  "#f97316",
+  "#ec4899",
+  "#6366f1",
+  "#14b8a6",
+];
+
+const getStatusBadge = (s: string) =>
+  STATUS_BADGE[s] ?? {
+    bg: "var(--color-neutral-100)",
+    color: "var(--color-neutral-600)",
+    bar: "var(--color-neutral-400)",
+  };
+const getMilestoneBadge = (s: string) =>
+  MILESTONE_BADGE[s] ?? {
+    bg: "var(--color-neutral-100)",
+    color: "var(--color-neutral-600)",
+  };
+const employeeColor = (id: number) =>
+  EMPLOYEE_COLORS[id % EMPLOYEE_COLORS.length];
+
+const getMilestoneIcon = (status: string) => {
+  if (status === "completed") return faCheckCircle;
+  if (status === "in_progress") return faChartLine;
+  return faCalendar;
+};
+
+const formatCurrency = (amount: string | number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(typeof amount === "string" ? parseFloat(amount) : amount);
+
+const getInitials = (name: string) => {
+  const parts = name.split(" ");
+  return parts.length > 1
+    ? `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
+    : name.substring(0, 2).toUpperCase();
+};
+
+const calculateProgress = (p: ProjectDetail) => {
+  if (p.status === "completed") return 100;
+  if (p.status === "not_started" || p.status === "pending") return 0;
+  const start = new Date(p.start_date).getTime();
+  const end = new Date(p.expected_end_date).getTime();
+  const now = Date.now();
+  if (now < start) return 0;
+  if (now > end) return 100;
+  return Math.round(((now - start) / (end - start)) * 100);
+};
+
+/* ─────────────────────────────────────────── */
+/* Shared style helpers                         */
+/* ─────────────────────────────────────────── */
+const card: React.CSSProperties = {
+  backgroundColor: "var(--color-neutral-0)",
+  border: "1px solid var(--color-neutral-200)",
+  borderRadius: "1rem",
+};
+
+function InfoRow({
+  icon,
+  label,
+  children,
+  border = true,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  children: React.ReactNode;
+  border?: boolean;
+}) {
+  return (
+    <div
+      className="flex items-start gap-3"
+      style={{
+        paddingBottom: border ? "1rem" : 0,
+        marginBottom: border ? "1rem" : 0,
+        borderBottom: border ? "1px solid var(--color-neutral-100)" : "none",
+      }}
+    >
+      <span
+        style={{
+          color: "#1ab189",
+          marginTop: "2px",
+          fontSize: "0.85rem",
+          flexShrink: 0,
+        }}
+      >
+        {icon}
+      </span>
+      <div className="flex-1 min-w-0">
+        <p
+          className="font-semibold tracking-wider uppercase mb-0.5"
+          style={{ fontSize: "0.65rem", color: "var(--color-neutral-400)" }}
+        >
+          {label}
+        </p>
+        <div
+          className="font-semibold"
+          style={{ fontSize: "0.875rem", color: "var(--color-neutral-900)" }}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────── */
+/* Component                                   */
+/* ─────────────────────────────────────────── */
 export default function ViewProjectPage({ params }: PageProps) {
   const { id: projectId } = use(params);
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState<
-    "overview" | "updates" | "inventory" | "payments" | "team"
-  >("overview");
+  const [activeTab, setActiveTab] = useState<TabKey>("overview");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [viewingMilestone, setViewingMilestone] = useState<Milestone | null>(
-    null
+    null,
   );
   const [viewingUpdate, setViewingUpdate] = useState<ProjectUpdate | null>(
-    null
+    null,
   );
 
-  // ==================================================================================
-  // DATA FETCHING
-  // ==================================================================================
-
-  // Fetch main project details
+  /* ── Queries ── */
   const {
     data: project,
-    isLoading: projectLoading,
-    isError: projectError,
-    error: projectErrorObj,
+    isLoading,
+    isError,
+    error,
   } = useQuery<ProjectDetail>({
     queryKey: ["project", projectId],
-    queryFn: async () =>
-      api.get<ProjectDetail>(`/api/v1/projects/${projectId}/`),
+    queryFn: () => api.get<ProjectDetail>(`/api/v1/projects/${projectId}/`),
     enabled: !!projectId,
   });
 
-  // Fetch project summary
   const { data: summary } = useQuery<ProjectSummary>({
     queryKey: ["project-summary", projectId],
-    queryFn: async () =>
+    queryFn: () =>
       api.get<ProjectSummary>(`/api/v1/projects/${projectId}/summary/`),
     enabled: !!projectId,
   });
 
-  // Fetch all updates (not just recent 5)
   const { data: allUpdates } = useQuery<{
     count: number;
     results: ProjectUpdate[];
   }>({
     queryKey: ["project-updates", projectId],
-    queryFn: async () => api.get(`/api/v1/projects/${projectId}/updates/`),
+    queryFn: () => api.get(`/api/v1/projects/${projectId}/updates/`),
     enabled: !!projectId && activeTab === "updates",
   });
 
-  // Fetch inventory
   const { data: inventory } = useQuery<{
     count: number;
     results: InventoryItem[];
   }>({
     queryKey: ["project-inventory", projectId],
-    queryFn: async () => api.get(`/api/v1/projects/${projectId}/inventory/`),
+    queryFn: () => api.get(`/api/v1/projects/${projectId}/inventory/`),
     enabled: !!projectId && activeTab === "inventory",
   });
 
-  // Fetch payments
   const { data: payments } = useQuery<{ count: number; results: Payment[] }>({
     queryKey: ["project-payments", projectId],
-    queryFn: async () => api.get(`/api/v1/projects/${projectId}/payments/`),
+    queryFn: () => api.get(`/api/v1/projects/${projectId}/payments/`),
     enabled: !!projectId && activeTab === "payments",
   });
 
-  // Fetch assigned employees
   const { data: employees } = useQuery<Employee[]>({
     queryKey: ["project-employees", projectId],
-    queryFn: async () => api.get(`/api/v1/projects/${projectId}/employees/`),
+    queryFn: () => api.get(`/api/v1/projects/${projectId}/employees/`),
     enabled: !!projectId && activeTab === "team",
   });
 
-  // ==================================================================================
-  // MUTATIONS
-  // ==================================================================================
-
-  // Delete project mutation
-  const deleteProjectMutation = useMutation({
-    mutationFn: async () => {
-      await api.delete(`/api/v1/projects/${projectId}/`);
-    },
+  /* ── Mutations ── */
+  const deleteMutation = useMutation({
+    mutationFn: () => api.delete(`/api/v1/projects/${projectId}/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       router.push("/provider/projects");
     },
-    onError: (error: any) => {
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
       alert(
-        `Failed to delete project: ${
-          error.data?.detail || error.message || "Unknown error"
-        }`
+        `Failed to delete: ${e.data?.detail ?? e.message ?? "Unknown error"}`,
       );
     },
   });
 
-  // ==================================================================================
-  // HANDLERS
-  // ==================================================================================
-
-  const handleDelete = () => {
-    deleteProjectMutation.mutate();
-  };
-
-  const handleEdit = () => {
-    router.push(`/provider/projects/${projectId}/edit`);
-  };
-
-  // ==================================================================================
-  // HELPER FUNCTIONS
-  // ==================================================================================
-
-  const formatCurrency = (amount: string | number) => {
-    const numAmount = typeof amount === "string" ? parseFloat(amount) : amount;
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(numAmount);
-  };
-
-  const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      in_progress: "bg-blue-600",
-      completed: "bg-green-600",
-      not_started: "bg-yellow-600",
-      pending: "bg-yellow-600",
-      on_hold: "bg-orange-600",
-      cancelled: "bg-red-600",
-    };
-    return colors[status] || "bg-neutral-400";
-  };
-
-  const getStatusBadgeColor = (status: string) => {
-    const colors: Record<string, string> = {
-      in_progress: "bg-blue-100 text-blue-700 border-blue-200",
-      completed: "bg-green-100 text-green-700 border-green-200",
-      not_started: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      pending: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      on_hold: "bg-orange-100 text-orange-700 border-orange-200",
-      cancelled: "bg-red-100 text-red-700 border-red-200",
-    };
+  /* ── Loading / Error ── */
+  if (isLoading) {
     return (
-      colors[status] || "bg-neutral-100 text-neutral-600 border-neutral-200"
-    );
-  };
-
-  const getMilestoneBadgeColor = (status: string) => {
-    const colors: Record<string, string> = {
-      pending: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      in_progress: "bg-blue-100 text-blue-700 border-blue-200",
-      completed: "bg-green-100 text-green-700 border-green-200",
-    };
-    return (
-      colors[status] || "bg-neutral-100 text-neutral-600 border-neutral-200"
-    );
-  };
-
-  const getMilestoneIcon = (status: string) => {
-    if (status === "completed") return faCheckCircle;
-    if (status === "in_progress") return faChartLine;
-    return faCalendar;
-  };
-
-  const getInitials = (fullName: string) => {
-    const names = fullName.split(" ");
-    if (names.length > 1) {
-      return `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase();
-    }
-    return fullName.substring(0, 2).toUpperCase();
-  };
-
-  const calculateProgress = (project: ProjectDetail) => {
-    const start = new Date(project.start_date).getTime();
-    const end = new Date(project.expected_end_date).getTime();
-    const now = Date.now();
-
-    if (project.status === "completed") return 100;
-    if (project.status === "not_started" || project.status === "pending")
-      return 0;
-    if (now < start) return 0;
-    if (now > end) return 100;
-
-    const total = end - start;
-    const elapsed = now - start;
-    return Math.round((elapsed / total) * 100);
-  };
-
-  const getEmployeeColor = (id: number) => {
-    const colors = [
-      "bg-primary-600",
-      "bg-secondary-600",
-      "bg-yellow-600",
-      "bg-purple-600",
-      "bg-green-600",
-      "bg-blue-600",
-      "bg-orange-600",
-      "bg-teal-600",
-      "bg-pink-600",
-      "bg-indigo-600",
-    ];
-    return colors[id % colors.length];
-  };
-
-  // ==================================================================================
-  // LOADING & ERROR STATES
-  // ==================================================================================
-
-  if (projectLoading) {
-    return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading project details...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading project details…
+          </p>
         </div>
       </div>
     );
   }
 
-  if (projectError || !project) {
+  if (isError || !project) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FontAwesomeIcon icon={faTimes} className="text-red-600 text-2xl" />
+      <div
+        className="min-h-screen flex items-center justify-center p-6"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
+        <div
+          className="rounded-2xl p-8 text-center max-w-md w-full"
+          style={{ ...card, border: "1px solid #fecaca" }}
+        >
+          <div
+            className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+            style={{ backgroundColor: "#fef2f2" }}
+          >
+            <FontAwesomeIcon
+              icon={faTimes}
+              style={{ color: "#ef4444", fontSize: "1rem" }}
+            />
           </div>
-          <h3 className="text-lg font-semibold text-red-900 mb-2">
+          <h3
+            className="font-semibold mb-2"
+            style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+          >
             Error Loading Project
           </h3>
-          <p className="text-red-700 mb-4">
-            {projectErrorObj instanceof Error
-              ? projectErrorObj.message
-              : "Failed to load project"}
+          <p
+            className="mb-5"
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            {error instanceof Error ? error.message : "Failed to load project"}
           </p>
           <button
             onClick={() => router.push("/provider/projects")}
-            className="btn-primary"
+            className="btn btn-primary btn-md"
           >
             Back to Projects
           </button>
@@ -439,285 +465,525 @@ export default function ViewProjectPage({ params }: PageProps) {
   }
 
   const completedMilestones = project.milestones.filter(
-    (m) => m.status === "completed"
+    (m) => m.status === "completed",
   ).length;
   const progress = calculateProgress(project);
+  const statusBadge = getStatusBadge(project.status);
 
-  // ==================================================================================
-  // RENDER
-  // ==================================================================================
+  const TABS: {
+    key: TabKey;
+    label: string;
+    icon: React.ReactNode;
+    count: string | number;
+  }[] = [
+    {
+      key: "overview",
+      label: "Overview",
+      icon: <FontAwesomeIcon icon={faFileAlt} />,
+      count: "",
+    },
+    {
+      key: "updates",
+      label: "Updates",
+      icon: <FontAwesomeIcon icon={faImage} />,
+      count: allUpdates?.count ?? project.recent_updates.length,
+    },
+    {
+      key: "inventory",
+      label: "Inventory",
+      icon: <FontAwesomeIcon icon={faBox} />,
+      count: inventory?.count ?? 0,
+    },
+    {
+      key: "payments",
+      label: "Payments",
+      icon: <FontAwesomeIcon icon={faCreditCard} />,
+      count: payments?.count ?? project.payment_summary.payment_count,
+    },
+    {
+      key: "team",
+      label: "Team",
+      icon: <FontAwesomeIcon icon={faUsers} />,
+      count: employees?.length ?? 0,
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-4">
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* Page header */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.125rem 2rem",
+        }}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => router.push("/provider/projects")}
-              className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
+              aria-label="Go back"
+              style={{
+                width: "2.25rem",
+                height: "2.25rem",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "transparent",
+                border: "1px solid var(--color-neutral-200)",
+                borderRadius: "0.625rem",
+                cursor: "pointer",
+                color: "var(--color-neutral-500)",
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "var(--color-neutral-100)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "transparent";
+              }}
             >
               <FontAwesomeIcon
                 icon={faArrowLeft}
-                className="text-neutral-600 text-lg"
+                style={{ fontSize: "0.85rem" }}
               />
             </button>
             <div>
-              <h1 className="heading-2 text-neutral-900">
+              <h1
+                className="font-bold"
+                style={{
+                  fontSize: "1.375rem",
+                  color: "var(--color-neutral-900)",
+                  lineHeight: 1.2,
+                }}
+              >
                 {project.project_name}
               </h1>
-              <p className="text-neutral-600 body-regular mt-1">
-                Project Details & Progress
+              <p
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--color-neutral-500)",
+                  marginTop: "0.125rem",
+                }}
+              >
+                Project Details &amp; Progress
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <button
-              onClick={handleEdit}
-              className="btn-secondary flex items-center gap-2"
+              onClick={() =>
+                router.push(`/provider/projects/${projectId}/edit`)
+              }
+              className="btn btn-secondary btn-md flex items-center gap-2"
             >
-              <FontAwesomeIcon icon={faPenToSquare} />
+              <FontAwesomeIcon
+                icon={faPenToSquare}
+                style={{ fontSize: "0.8rem" }}
+              />
               Edit Project
             </button>
             <button
               onClick={() => setShowDeleteModal(true)}
-              className="px-5 py-3 bg-red-600 text-neutral-0 rounded-lg font-medium hover:bg-red-700 transition-colors flex items-center gap-2"
+              className="btn btn-md flex items-center gap-2"
+              style={{
+                backgroundColor: "#ef4444",
+                color: "white",
+                border: "none",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "#dc2626";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "#ef4444";
+              }}
             >
-              <FontAwesomeIcon icon={faTrash} />
+              <FontAwesomeIcon icon={faTrash} style={{ fontSize: "0.8rem" }} />
               Delete
             </button>
           </div>
         </div>
       </div>
 
-      <div className="p-8 max-w-7xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Content - 2 columns */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Status Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="heading-4 text-neutral-900">Project Status</h2>
+      {/* Body */}
+      <div
+        style={{ padding: "1.75rem 2rem", maxWidth: "80rem", margin: "0 auto" }}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* ── Main col ── */}
+          <div className="lg:col-span-2 space-y-5">
+            {/* Status card */}
+            <div style={{ ...card, padding: "1.5rem" }}>
+              <div className="flex items-center justify-between mb-5">
+                <h2
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
+                  Project Status
+                </h2>
                 <span
-                  className={`px-3 py-1.5 rounded-lg text-sm font-semibold border ${getStatusBadgeColor(
-                    project.status
-                  )}`}
+                  className="rounded-full font-semibold"
+                  style={{
+                    fontSize: "0.7rem",
+                    padding: "0.3rem 0.75rem",
+                    backgroundColor: statusBadge.bg,
+                    color: statusBadge.color,
+                  }}
                 >
                   {project.status_display}
                 </span>
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-neutral-600 font-medium">
-                      Overall Progress
-                    </span>
-                    <span className="text-neutral-900 font-semibold text-lg">
-                      {progress}%
-                    </span>
+              {/* Progress bar */}
+              <div className="mb-5">
+                <div className="flex justify-between mb-2">
+                  <span
+                    className="font-medium"
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "var(--color-neutral-600)",
+                    }}
+                  >
+                    Overall Progress
+                  </span>
+                  <span
+                    className="font-bold"
+                    style={{
+                      fontSize: "1rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    {progress}%
+                  </span>
+                </div>
+                <div
+                  style={{
+                    width: "100%",
+                    height: "0.5rem",
+                    backgroundColor: "var(--color-neutral-150)",
+                    borderRadius: "9999px",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${progress}%`,
+                      height: "100%",
+                      backgroundColor: statusBadge.bar,
+                      borderRadius: "9999px",
+                      transition: "width 0.6s ease",
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Dates */}
+              <div className="grid grid-cols-2 gap-4">
+                {[
+                  { label: "Start Date", date: project.start_date },
+                  { label: "Expected End", date: project.expected_end_date },
+                ].map(({ label, date }) => (
+                  <div
+                    key={label}
+                    style={{
+                      backgroundColor: "var(--color-neutral-50)",
+                      border: "1px solid var(--color-neutral-200)",
+                      borderRadius: "0.75rem",
+                      padding: "1rem",
+                    }}
+                  >
+                    <p
+                      className="font-semibold mb-1"
+                      style={{
+                        fontSize: "0.68rem",
+                        color: "#1ab189",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                      }}
+                    >
+                      {label}
+                    </p>
+                    <p
+                      className="font-semibold"
+                      style={{
+                        fontSize: "0.9rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
+                      {new Date(date).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </p>
                   </div>
-                  <div className="w-full h-3 bg-neutral-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full ${getStatusColor(
-                        project.status
-                      )} rounded-full transition-all`}
-                      style={{ width: `${progress}%` }}
+                ))}
+              </div>
+            </div>
+
+            {/* Financial summary */}
+            <div style={{ ...card, padding: "1.5rem" }}>
+              <div className="flex items-center gap-2.5 mb-5">
+                <div
+                  className="w-8 h-8 rounded-lg flex items-center justify-center"
+                  style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                >
+                  <FontAwesomeIcon
+                    icon={faDollarSign}
+                    style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                  />
+                </div>
+                <h2
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
+                  Financial Summary
+                </h2>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4 mb-4">
+                {[
+                  {
+                    label: "Total Value",
+                    value: formatCurrency(project.total_cost),
+                    color: "#1ab189",
+                    bg: "rgba(26,177,137,0.06)",
+                    border: "rgba(26,177,137,0.2)",
+                  },
+                  {
+                    label: "Amount Paid",
+                    value: formatCurrency(project.payment_summary.total_paid),
+                    color: "#3b82f6",
+                    bg: "#eff6ff",
+                    border: "#bfdbfe",
+                  },
+                  {
+                    label: "Balance",
+                    value: formatCurrency(project.balance_payment),
+                    color: "#f59e0b",
+                    bg: "#fefce8",
+                    border: "#fef08a",
+                  },
+                ].map(({ label, value, color, bg, border }) => (
+                  <div
+                    key={label}
+                    style={{
+                      backgroundColor: bg,
+                      border: `1px solid ${border}`,
+                      borderRadius: "0.75rem",
+                      padding: "1rem",
+                    }}
+                  >
+                    <p
+                      className="font-semibold mb-1"
+                      style={{
+                        fontSize: "0.7rem",
+                        color,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                      }}
+                    >
+                      {label}
+                    </p>
+                    <p
+                      className="font-bold"
+                      style={{
+                        fontSize: "1.25rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
+                      {value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {parseFloat(project.advance_payment) > 0 && (
+                <div
+                  className="flex items-center justify-between rounded-xl px-4 py-3"
+                  style={{
+                    backgroundColor: "rgba(26,177,137,0.06)",
+                    border: "1px solid rgba(26,177,137,0.2)",
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <FontAwesomeIcon
+                      icon={faCheckCircle}
+                      style={{ color: "#1ab189", fontSize: "0.875rem" }}
                     />
+                    <span
+                      className="font-semibold"
+                      style={{
+                        fontSize: "0.875rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
+                      Advance Payment Received
+                    </span>
                   </div>
+                  <span
+                    className="font-bold"
+                    style={{ fontSize: "1rem", color: "#1ab189" }}
+                  >
+                    {formatCurrency(project.advance_payment)}
+                  </span>
                 </div>
+              )}
 
-                <div className="grid grid-cols-2 gap-4 pt-4">
-                  <div className="p-4 bg-primary-50 rounded-lg border border-primary-200">
-                    <p className="text-primary-600 text-sm font-medium mb-1">
-                      Start Date
-                    </p>
-                    <p className="text-neutral-900 font-semibold">
-                      {new Date(project.start_date).toLocaleDateString(
-                        "en-US",
-                        {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        }
-                      )}
-                    </p>
-                  </div>
-                  <div className="p-4 bg-secondary-50 rounded-lg border border-secondary-200">
-                    <p className="text-secondary-600 text-sm font-medium mb-1">
-                      Expected End
-                    </p>
-                    <p className="text-neutral-900 font-semibold">
-                      {new Date(project.expected_end_date).toLocaleDateString(
-                        "en-US",
-                        {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        }
-                      )}
-                    </p>
-                  </div>
+              {summary && (
+                <div
+                  className="flex items-center justify-between rounded-xl px-4 py-3 mt-3"
+                  style={{
+                    backgroundColor: "var(--color-neutral-50)",
+                    border: "1px solid var(--color-neutral-200)",
+                  }}
+                >
+                  <span
+                    className="font-medium"
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-600)",
+                    }}
+                  >
+                    Total Inventory Cost
+                  </span>
+                  <span
+                    className="font-semibold"
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    {formatCurrency(summary.financial.total_inventory_cost)}
+                  </span>
                 </div>
-              </div>
+              )}
             </div>
 
-            {/* Financial Summary Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                <FontAwesomeIcon
-                  icon={faDollarSign}
-                  className="text-primary-600"
-                />
-                Financial Summary
-              </h2>
-
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-lg border border-green-200">
-                    <p className="text-green-700 text-sm font-medium mb-1">
-                      Total Value
-                    </p>
-                    <p className="text-green-900 font-bold text-2xl">
-                      {formatCurrency(project.total_cost)}
-                    </p>
-                  </div>
-                  <div className="p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg border border-blue-200">
-                    <p className="text-blue-700 text-sm font-medium mb-1">
-                      Amount Paid
-                    </p>
-                    <p className="text-blue-900 font-bold text-2xl">
-                      {formatCurrency(project.payment_summary.total_paid)}
-                    </p>
-                  </div>
-                  <div className="p-4 bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg border border-yellow-200">
-                    <p className="text-yellow-700 text-sm font-medium mb-1">
-                      Balance
-                    </p>
-                    <p className="text-yellow-900 font-bold text-2xl">
-                      {formatCurrency(project.balance_payment)}
-                    </p>
-                  </div>
-                </div>
-
-                {parseFloat(project.advance_payment) > 0 && (
-                  <div className="p-4 bg-primary-50 border border-primary-200 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <FontAwesomeIcon
-                          icon={faCheckCircle}
-                          className="text-primary-600"
-                        />
-                        <span className="font-semibold text-neutral-900">
-                          Advance Payment Received
+            {/* Tabs card */}
+            <div style={card}>
+              {/* Tab headers */}
+              <div
+                style={{
+                  borderBottom: "1px solid var(--color-neutral-200)",
+                  padding: "0 1.5rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.25rem",
+                  overflowX: "auto",
+                }}
+              >
+                {TABS.map((tab) => {
+                  const isActive = activeTab === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      onClick={() => setActiveTab(tab.key)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                        padding: "0.875rem 1rem",
+                        fontSize: "0.8125rem",
+                        fontWeight: isActive ? 600 : 500,
+                        color: isActive
+                          ? "#1ab189"
+                          : "var(--color-neutral-500)",
+                        borderBottom: isActive
+                          ? "2px solid #1ab189"
+                          : "2px solid transparent",
+                        background: "none",
+                        border: "none",
+                        borderBottom: isActive
+                          ? "2px solid #1ab189"
+                          : "2px solid transparent",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                        transition: "color 150ms",
+                      }}
+                    >
+                      <span style={{ fontSize: "0.75rem" }}>{tab.icon}</span>
+                      {tab.label}
+                      {tab.count !== "" && tab.count !== 0 && (
+                        <span
+                          className="rounded-full font-bold"
+                          style={{
+                            fontSize: "0.6rem",
+                            padding: "0.15rem 0.45rem",
+                            backgroundColor: isActive
+                              ? "rgba(26,177,137,0.12)"
+                              : "var(--color-neutral-100)",
+                            color: isActive
+                              ? "#1ab189"
+                              : "var(--color-neutral-500)",
+                          }}
+                        >
+                          {tab.count}
                         </span>
-                      </div>
-                      <span className="text-primary-600 font-bold text-lg">
-                        {formatCurrency(project.advance_payment)}
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                {summary && (
-                  <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <span className="text-neutral-600 font-medium">
-                        Total Inventory Cost
-                      </span>
-                      <span className="text-neutral-900 font-semibold">
-                        {formatCurrency(summary.financial.total_inventory_cost)}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Tabs */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200">
-              {/* Tab Headers */}
-              <div className="border-b border-neutral-200 px-6 pt-4 flex items-center gap-4 overflow-x-auto">
-                <button
-                  onClick={() => setActiveTab("overview")}
-                  className={`px-4 py-3 font-semibold border-b-2 transition-colors whitespace-nowrap ${
-                    activeTab === "overview"
-                      ? "border-primary-600 text-primary-600"
-                      : "border-transparent text-neutral-600 hover:text-neutral-900"
-                  }`}
-                >
-                  <FontAwesomeIcon icon={faFileAlt} className="mr-2" />
-                  Overview
-                </button>
-                <button
-                  onClick={() => setActiveTab("updates")}
-                  className={`px-4 py-3 font-semibold border-b-2 transition-colors whitespace-nowrap ${
-                    activeTab === "updates"
-                      ? "border-primary-600 text-primary-600"
-                      : "border-transparent text-neutral-600 hover:text-neutral-900"
-                  }`}
-                >
-                  <FontAwesomeIcon icon={faImage} className="mr-2" />
-                  Updates ({allUpdates?.count || project.recent_updates.length})
-                </button>
-                <button
-                  onClick={() => setActiveTab("inventory")}
-                  className={`px-4 py-3 font-semibold border-b-2 transition-colors whitespace-nowrap ${
-                    activeTab === "inventory"
-                      ? "border-primary-600 text-primary-600"
-                      : "border-transparent text-neutral-600 hover:text-neutral-900"
-                  }`}
-                >
-                  <FontAwesomeIcon icon={faBox} className="mr-2" />
-                  Inventory ({inventory?.count || 0})
-                </button>
-                <button
-                  onClick={() => setActiveTab("payments")}
-                  className={`px-4 py-3 font-semibold border-b-2 transition-colors whitespace-nowrap ${
-                    activeTab === "payments"
-                      ? "border-primary-600 text-primary-600"
-                      : "border-transparent text-neutral-600 hover:text-neutral-900"
-                  }`}
-                >
-                  <FontAwesomeIcon icon={faCreditCard} className="mr-2" />
-                  Payments (
-                  {payments?.count || project.payment_summary.payment_count})
-                </button>
-                <button
-                  onClick={() => setActiveTab("team")}
-                  className={`px-4 py-3 font-semibold border-b-2 transition-colors whitespace-nowrap ${
-                    activeTab === "team"
-                      ? "border-primary-600 text-primary-600"
-                      : "border-transparent text-neutral-600 hover:text-neutral-900"
-                  }`}
-                >
-                  <FontAwesomeIcon icon={faUsers} className="mr-2" />
-                  Team ({employees?.length || 0})
-                </button>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
 
-              {/* Tab Content */}
-              <div className="p-6">
-                {/* Overview Tab */}
+              {/* Tab content */}
+              <div style={{ padding: "1.5rem" }}>
+                {/* Overview */}
                 {activeTab === "overview" && (
                   <div className="space-y-6">
-                    {/* Description */}
                     <div>
-                      <h3 className="font-semibold text-neutral-900 mb-3">
+                      <h3
+                        className="font-semibold mb-2"
+                        style={{
+                          fontSize: "0.9375rem",
+                          color: "var(--color-neutral-900)",
+                        }}
+                      >
                         Project Description
                       </h3>
-                      <p className="text-neutral-700 body-regular leading-relaxed">
+                      <p
+                        style={{
+                          fontSize: "0.875rem",
+                          color: "var(--color-neutral-700)",
+                          lineHeight: 1.7,
+                        }}
+                      >
                         {project.description || "No description provided."}
                       </p>
                     </div>
 
                     {/* Milestones */}
                     <div>
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-semibold text-neutral-900">
-                          Milestones
+                      <div className="flex items-center justify-between mb-3">
+                        <h3
+                          className="font-semibold"
+                          style={{
+                            fontSize: "0.9375rem",
+                            color: "var(--color-neutral-900)",
+                          }}
+                        >
+                          Milestones{" "}
                           {project.milestones.length > 0 && (
-                            <span className="text-sm font-normal text-neutral-500 ml-2">
+                            <span
+                              style={{
+                                fontWeight: 400,
+                                fontSize: "0.8rem",
+                                color: "var(--color-neutral-500)",
+                              }}
+                            >
                               ({completedMilestones}/{project.milestones.length}{" "}
                               completed)
                             </span>
@@ -726,121 +992,207 @@ export default function ViewProjectPage({ params }: PageProps) {
                       </div>
 
                       {project.milestones.length > 0 ? (
-                        <div className="space-y-3">
-                          {project.milestones.map((milestone) => (
-                            <div
-                              key={milestone.id}
-                              className="flex items-center justify-between p-4 border border-neutral-200 rounded-lg hover:border-primary-500 transition-colors"
-                            >
-                              <div className="flex items-center gap-4 flex-1 min-w-0">
-                                <div
-                                  className={`flex items-center justify-center w-10 h-10 rounded-full ${
-                                    milestone.status === "completed"
-                                      ? "bg-green-100 text-green-600"
-                                      : milestone.status === "in_progress"
-                                      ? "bg-blue-100 text-blue-600"
-                                      : "bg-neutral-100 text-neutral-500"
-                                  } font-semibold flex-shrink-0`}
-                                >
-                                  <FontAwesomeIcon
-                                    icon={getMilestoneIcon(milestone.status)}
-                                  />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <h4 className="font-semibold text-neutral-900 truncate">
-                                    {milestone.title}
-                                  </h4>
-                                  <div className="flex items-center gap-3 mt-1 flex-wrap">
-                                    <span className="text-neutral-500 text-sm flex items-center gap-1">
-                                      <FontAwesomeIcon
-                                        icon={faCalendar}
-                                        className="text-xs"
-                                      />
-                                      {new Date(
-                                        milestone.target_date
-                                      ).toLocaleDateString("en-US", {
-                                        month: "short",
-                                        day: "numeric",
-                                        year: "numeric",
-                                      })}
-                                    </span>
-                                    <span
-                                      className={`px-2 py-0.5 rounded text-xs font-semibold border ${getMilestoneBadgeColor(
-                                        milestone.status
-                                      )}`}
+                        <div className="space-y-2.5">
+                          {project.milestones.map((m) => {
+                            const mb = getMilestoneBadge(m.status);
+                            return (
+                              <div
+                                key={m.id}
+                                className="flex items-center justify-between rounded-xl px-4 py-3"
+                                style={{
+                                  border: "1px solid var(--color-neutral-200)",
+                                  backgroundColor: "var(--color-neutral-50)",
+                                }}
+                                onMouseEnter={(e) => {
+                                  (
+                                    e.currentTarget as HTMLDivElement
+                                  ).style.borderColor = "#1ab189";
+                                }}
+                                onMouseLeave={(e) => {
+                                  (
+                                    e.currentTarget as HTMLDivElement
+                                  ).style.borderColor =
+                                    "var(--color-neutral-200)";
+                                }}
+                              >
+                                <div className="flex items-center gap-3 flex-1 min-w-0">
+                                  <div
+                                    className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                                    style={{
+                                      backgroundColor: mb.bg,
+                                      color: mb.color,
+                                    }}
+                                  >
+                                    <FontAwesomeIcon
+                                      icon={getMilestoneIcon(m.status)}
+                                      style={{ fontSize: "0.8rem" }}
+                                    />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <h4
+                                      className="font-semibold truncate"
+                                      style={{
+                                        fontSize: "0.875rem",
+                                        color: "var(--color-neutral-900)",
+                                      }}
                                     >
-                                      {milestone.status_display}
-                                    </span>
-                                    <span className="text-neutral-500 text-sm">
-                                      {milestone.completion_percentage}%
-                                      complete
-                                    </span>
+                                      {m.title}
+                                    </h4>
+                                    <div className="flex items-center gap-2.5 mt-0.5 flex-wrap">
+                                      <span
+                                        style={{
+                                          fontSize: "0.75rem",
+                                          color: "var(--color-neutral-500)",
+                                        }}
+                                      >
+                                        <FontAwesomeIcon
+                                          icon={faCalendar}
+                                          style={{
+                                            fontSize: "0.65rem",
+                                            marginRight: "0.25rem",
+                                          }}
+                                        />
+                                        {new Date(
+                                          m.target_date,
+                                        ).toLocaleDateString("en-US", {
+                                          month: "short",
+                                          day: "numeric",
+                                          year: "numeric",
+                                        })}
+                                      </span>
+                                      <span
+                                        className="rounded-full font-semibold"
+                                        style={{
+                                          fontSize: "0.65rem",
+                                          padding: "0.15rem 0.5rem",
+                                          backgroundColor: mb.bg,
+                                          color: mb.color,
+                                        }}
+                                      >
+                                        {m.status_display}
+                                      </span>
+                                      <span
+                                        style={{
+                                          fontSize: "0.75rem",
+                                          color: "var(--color-neutral-500)",
+                                        }}
+                                      >
+                                        {m.completion_percentage}% complete
+                                      </span>
+                                    </div>
                                   </div>
                                 </div>
+                                <button
+                                  onClick={() => setViewingMilestone(m)}
+                                  style={{
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    color: "#1ab189",
+                                    padding: "0.375rem",
+                                    borderRadius: "0.5rem",
+                                    flexShrink: 0,
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    (
+                                      e.currentTarget as HTMLButtonElement
+                                    ).style.backgroundColor =
+                                      "rgba(26,177,137,0.1)";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (
+                                      e.currentTarget as HTMLButtonElement
+                                    ).style.backgroundColor = "transparent";
+                                  }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faEye}
+                                    style={{ fontSize: "0.8rem" }}
+                                  />
+                                </button>
                               </div>
-                              <button
-                                onClick={() => setViewingMilestone(milestone)}
-                                className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors flex-shrink-0"
-                              >
-                                <FontAwesomeIcon icon={faEye} />
-                              </button>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       ) : (
-                        <div className="text-center py-12 text-neutral-500">
+                        <div
+                          className="text-center py-10"
+                          style={{ color: "var(--color-neutral-400)" }}
+                        >
                           <FontAwesomeIcon
                             icon={faCheckCircle}
-                            className="text-5xl mb-4 opacity-30"
+                            style={{
+                              fontSize: "2.5rem",
+                              marginBottom: "0.75rem",
+                              opacity: 0.3,
+                            }}
                           />
-                          <p className="body-regular">
+                          <p style={{ fontSize: "0.875rem" }}>
                             No milestones added yet
                           </p>
                         </div>
                       )}
                     </div>
 
-                    {/* Recent Updates */}
+                    {/* Recent updates */}
                     {project.recent_updates.length > 0 && (
                       <div>
-                        <h3 className="font-semibold text-neutral-900 mb-4">
+                        <h3
+                          className="font-semibold mb-3"
+                          style={{
+                            fontSize: "0.9375rem",
+                            color: "var(--color-neutral-900)",
+                          }}
+                        >
                           Recent Updates
                         </h3>
-                        <div className="space-y-4">
-                          {project.recent_updates.map((update) => (
+                        <div className="space-y-3">
+                          {project.recent_updates.map((u) => (
                             <div
-                              key={update.id}
-                              className="p-4 border border-neutral-200 rounded-lg"
+                              key={u.id}
+                              className="rounded-xl p-4"
+                              style={{
+                                border: "1px solid var(--color-neutral-200)",
+                                backgroundColor: "var(--color-neutral-50)",
+                              }}
                             >
-                              <div className="flex items-start justify-between mb-2">
-                                <div className="flex-1">
-                                  <p className="text-neutral-700">
-                                    {update.update_text}
-                                  </p>
-                                  <div className="flex items-center gap-3 mt-2 text-sm text-neutral-500">
-                                    <span>{update.posted_by_name}</span>
-                                    <span>•</span>
-                                    <span>
-                                      {new Date(
-                                        update.created_at
-                                      ).toLocaleDateString("en-US", {
-                                        month: "short",
-                                        day: "numeric",
-                                        year: "numeric",
-                                      })}
-                                    </span>
-                                    {update.work_hours && (
-                                      <>
-                                        <span>•</span>
-                                        <span>{update.work_hours} hours</span>
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
+                              <p
+                                style={{
+                                  fontSize: "0.875rem",
+                                  color: "var(--color-neutral-700)",
+                                }}
+                              >
+                                {u.update_text}
+                              </p>
+                              <div
+                                className="flex items-center gap-2 mt-2 flex-wrap"
+                                style={{
+                                  fontSize: "0.75rem",
+                                  color: "var(--color-neutral-500)",
+                                }}
+                              >
+                                <span>{u.posted_by_name}</span>
+                                <span>·</span>
+                                <span>
+                                  {new Date(u.created_at).toLocaleDateString(
+                                    "en-US",
+                                    {
+                                      month: "short",
+                                      day: "numeric",
+                                      year: "numeric",
+                                    },
+                                  )}
+                                </span>
+                                {u.work_hours && (
+                                  <>
+                                    <span>·</span>
+                                    <span>{u.work_hours} hrs</span>
+                                  </>
+                                )}
                               </div>
-                              {update.media.length > 0 && (
-                                <div className="mt-3 grid grid-cols-4 gap-2">
-                                  {update.media.slice(0, 4).map((media) => (
+                              {u.media.length > 0 && (
+                                <div className="grid grid-cols-4 gap-2 mt-3">
+                                  {u.media.slice(0, 4).map((media) => (
                                     <img
                                       key={media.id}
                                       src={media.thumbnail_url}
@@ -858,65 +1210,119 @@ export default function ViewProjectPage({ params }: PageProps) {
                   </div>
                 )}
 
-                {/* Updates Tab */}
+                {/* Updates tab */}
                 {activeTab === "updates" && (
                   <div>
                     {allUpdates && allUpdates.count > 0 ? (
-                      <div className="space-y-4">
-                        {allUpdates.results.map((update) => (
+                      <div className="space-y-3">
+                        {allUpdates.results.map((u) => (
                           <div
-                            key={update.id}
-                            className="p-4 border border-neutral-200 rounded-lg hover:border-primary-500 transition-colors"
+                            key={u.id}
+                            className="rounded-xl p-4"
+                            style={{
+                              border: "1px solid var(--color-neutral-200)",
+                              backgroundColor: "var(--color-neutral-50)",
+                            }}
+                            onMouseEnter={(e) => {
+                              (
+                                e.currentTarget as HTMLDivElement
+                              ).style.borderColor = "#1ab189";
+                            }}
+                            onMouseLeave={(e) => {
+                              (
+                                e.currentTarget as HTMLDivElement
+                              ).style.borderColor = "var(--color-neutral-200)";
+                            }}
                           >
-                            <div className="flex items-start justify-between mb-2">
+                            <div className="flex items-start justify-between gap-3">
                               <div className="flex-1">
-                                <p className="text-neutral-700 font-medium">
-                                  {update.update_text}
+                                <p
+                                  className="font-medium"
+                                  style={{
+                                    fontSize: "0.875rem",
+                                    color: "var(--color-neutral-800)",
+                                  }}
+                                >
+                                  {u.update_text}
                                 </p>
-                                <div className="flex items-center gap-3 mt-2 text-sm text-neutral-500">
+                                <div
+                                  className="flex items-center gap-2 mt-1.5 flex-wrap"
+                                  style={{
+                                    fontSize: "0.75rem",
+                                    color: "var(--color-neutral-500)",
+                                  }}
+                                >
                                   <span className="font-medium">
-                                    {update.posted_by_name}
+                                    {u.posted_by_name}
                                   </span>
-                                  <span>•</span>
+                                  <span>·</span>
                                   <span>
-                                    {new Date(
-                                      update.created_at
-                                    ).toLocaleDateString("en-US", {
-                                      month: "short",
-                                      day: "numeric",
-                                      year: "numeric",
-                                      hour: "numeric",
-                                      minute: "2-digit",
-                                    })}
+                                    {new Date(u.created_at).toLocaleDateString(
+                                      "en-US",
+                                      {
+                                        month: "short",
+                                        day: "numeric",
+                                        year: "numeric",
+                                        hour: "numeric",
+                                        minute: "2-digit",
+                                      },
+                                    )}
                                   </span>
-                                  {update.work_hours && (
+                                  {u.work_hours && (
                                     <>
-                                      <span>•</span>
-                                      <span className="text-primary-600 font-medium">
-                                        {update.work_hours} hours
+                                      <span>·</span>
+                                      <span
+                                        style={{
+                                          color: "#1ab189",
+                                          fontWeight: 600,
+                                        }}
+                                      >
+                                        {u.work_hours} hrs
                                       </span>
                                     </>
                                   )}
-                                  {update.milestone_title && (
+                                  {u.milestone_title && (
                                     <>
-                                      <span>•</span>
-                                      <span className="text-blue-600">
-                                        🎯 {update.milestone_title}
+                                      <span>·</span>
+                                      <span style={{ color: "#3b82f6" }}>
+                                        📍 {u.milestone_title}
                                       </span>
                                     </>
                                   )}
                                 </div>
                               </div>
                               <button
-                                onClick={() => setViewingUpdate(update)}
-                                className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                onClick={() => setViewingUpdate(u)}
+                                style={{
+                                  background: "none",
+                                  border: "none",
+                                  cursor: "pointer",
+                                  color: "#1ab189",
+                                  padding: "0.375rem",
+                                  borderRadius: "0.5rem",
+                                  flexShrink: 0,
+                                }}
+                                onMouseEnter={(e) => {
+                                  (
+                                    e.currentTarget as HTMLButtonElement
+                                  ).style.backgroundColor =
+                                    "rgba(26,177,137,0.1)";
+                                }}
+                                onMouseLeave={(e) => {
+                                  (
+                                    e.currentTarget as HTMLButtonElement
+                                  ).style.backgroundColor = "transparent";
+                                }}
                               >
-                                <FontAwesomeIcon icon={faEye} />
+                                <FontAwesomeIcon
+                                  icon={faEye}
+                                  style={{ fontSize: "0.8rem" }}
+                                />
                               </button>
                             </div>
-                            {update.media.length > 0 && (
-                              <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
-                                {update.media.map((media) => (
+                            {u.media.length > 0 && (
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+                                {u.media.map((media) => (
                                   <div
                                     key={media.id}
                                     className="relative group"
@@ -924,10 +1330,17 @@ export default function ViewProjectPage({ params }: PageProps) {
                                     <img
                                       src={media.thumbnail_url}
                                       alt={media.caption}
-                                      className="w-full h-32 object-cover rounded-lg"
+                                      className="w-full h-28 object-cover rounded-lg"
                                     />
                                     {media.caption && (
-                                      <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-white text-xs p-2 rounded-b-lg opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <div
+                                        className="absolute inset-x-0 bottom-0 rounded-b-lg px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        style={{
+                                          backgroundColor: "rgba(0,0,0,0.65)",
+                                          fontSize: "0.7rem",
+                                          color: "white",
+                                        }}
+                                      >
                                         {media.caption}
                                       </div>
                                     )}
@@ -939,104 +1352,152 @@ export default function ViewProjectPage({ params }: PageProps) {
                         ))}
                       </div>
                     ) : (
-                      <div className="text-center py-12 text-neutral-500">
+                      <div
+                        className="text-center py-10"
+                        style={{ color: "var(--color-neutral-400)" }}
+                      >
                         <FontAwesomeIcon
                           icon={faImage}
-                          className="text-5xl mb-4 opacity-30"
+                          style={{
+                            fontSize: "2.5rem",
+                            marginBottom: "0.75rem",
+                            opacity: 0.3,
+                          }}
                         />
-                        <p className="body-regular">No updates posted yet</p>
+                        <p style={{ fontSize: "0.875rem" }}>
+                          No updates posted yet
+                        </p>
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Inventory Tab */}
+                {/* Inventory tab */}
                 {activeTab === "inventory" && (
-                  <div>
+                  <div className="space-y-3">
                     {inventory && inventory.count > 0 ? (
-                      <div className="space-y-3">
+                      <>
                         {inventory.results.map((item) => (
                           <div
                             key={item.id}
-                            className="p-4 border border-neutral-200 rounded-lg"
+                            className="rounded-xl p-4"
+                            style={{
+                              border: "1px solid var(--color-neutral-200)",
+                              backgroundColor: "var(--color-neutral-50)",
+                            }}
                           >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <h4 className="font-semibold text-neutral-900">
-                                  {item.item_name}
-                                </h4>
-                                {item.description && (
-                                  <p className="text-neutral-600 text-sm mt-1">
-                                    {item.description}
-                                  </p>
-                                )}
-                                <div className="flex items-center gap-4 mt-2 text-sm">
-                                  <span className="text-neutral-600">
-                                    Qty:{" "}
-                                    <span className="font-semibold text-neutral-900">
-                                      {item.quantity}
-                                    </span>{" "}
-                                    {item.unit}
-                                  </span>
-                                  {item.unit_price && (
-                                    <>
-                                      <span className="text-neutral-400">
-                                        •
-                                      </span>
-                                      <span className="text-neutral-600">
-                                        Price:{" "}
-                                        <span className="font-semibold text-neutral-900">
-                                          {formatCurrency(item.unit_price)}
-                                        </span>
-                                        {item.unit && `/${item.unit}`}
-                                      </span>
-                                    </>
-                                  )}
-                                  {item.total_price && (
-                                    <>
-                                      <span className="text-neutral-400">
-                                        •
-                                      </span>
-                                      <span className="text-primary-600 font-semibold">
-                                        Total:{" "}
-                                        {formatCurrency(item.total_price)}
-                                      </span>
-                                    </>
-                                  )}
-                                </div>
-                                {item.supplier_name && (
-                                  <p className="text-neutral-500 text-sm mt-2">
-                                    Supplier: {item.supplier_name}
-                                  </p>
-                                )}
-                              </div>
+                            <h4
+                              className="font-semibold mb-1"
+                              style={{
+                                fontSize: "0.9rem",
+                                color: "var(--color-neutral-900)",
+                              }}
+                            >
+                              {item.item_name}
+                            </h4>
+                            {item.description && (
+                              <p
+                                className="mb-2"
+                                style={{
+                                  fontSize: "0.8rem",
+                                  color: "var(--color-neutral-600)",
+                                }}
+                              >
+                                {item.description}
+                              </p>
+                            )}
+                            <div
+                              className="flex flex-wrap items-center gap-3"
+                              style={{
+                                fontSize: "0.8rem",
+                                color: "var(--color-neutral-600)",
+                              }}
+                            >
+                              <span>
+                                Qty:{" "}
+                                <strong
+                                  style={{ color: "var(--color-neutral-900)" }}
+                                >
+                                  {item.quantity} {item.unit}
+                                </strong>
+                              </span>
+                              {item.unit_price && (
+                                <span>
+                                  · Unit:{" "}
+                                  <strong
+                                    style={{
+                                      color: "var(--color-neutral-900)",
+                                    }}
+                                  >
+                                    {formatCurrency(item.unit_price)}
+                                  </strong>
+                                </span>
+                              )}
+                              {item.total_price && (
+                                <span>
+                                  · Total:{" "}
+                                  <strong style={{ color: "#1ab189" }}>
+                                    {formatCurrency(item.total_price)}
+                                  </strong>
+                                </span>
+                              )}
                             </div>
+                            {item.supplier_name && (
+                              <p
+                                className="mt-1"
+                                style={{
+                                  fontSize: "0.78rem",
+                                  color: "var(--color-neutral-500)",
+                                }}
+                              >
+                                Supplier: {item.supplier_name}
+                              </p>
+                            )}
                           </div>
                         ))}
-
                         {summary &&
                           summary.financial.total_inventory_cost > 0 && (
-                            <div className="p-4 bg-gradient-to-r from-primary-50 to-blue-50 border border-primary-200 rounded-lg">
-                              <div className="flex items-center justify-between">
-                                <span className="font-semibold text-neutral-700">
-                                  Total Inventory Value:
-                                </span>
-                                <span className="text-2xl font-bold text-primary-600">
-                                  {formatCurrency(
-                                    summary.financial.total_inventory_cost
-                                  )}
-                                </span>
-                              </div>
+                            <div
+                              className="flex items-center justify-between rounded-xl px-4 py-3"
+                              style={{
+                                backgroundColor: "rgba(26,177,137,0.06)",
+                                border: "1px solid rgba(26,177,137,0.2)",
+                              }}
+                            >
+                              <span
+                                className="font-semibold"
+                                style={{
+                                  fontSize: "0.875rem",
+                                  color: "var(--color-neutral-700)",
+                                }}
+                              >
+                                Total Inventory Value
+                              </span>
+                              <span
+                                className="font-bold"
+                                style={{ fontSize: "1.1rem", color: "#1ab189" }}
+                              >
+                                {formatCurrency(
+                                  summary.financial.total_inventory_cost,
+                                )}
+                              </span>
                             </div>
                           )}
-                      </div>
+                      </>
                     ) : (
-                      <div className="text-center py-12 text-neutral-500">
+                      <div
+                        className="text-center py-10"
+                        style={{ color: "var(--color-neutral-400)" }}
+                      >
                         <FontAwesomeIcon
                           icon={faBox}
-                          className="text-5xl mb-4 opacity-30"
+                          style={{
+                            fontSize: "2.5rem",
+                            marginBottom: "0.75rem",
+                            opacity: 0.3,
+                          }}
                         />
-                        <p className="body-regular">
+                        <p style={{ fontSize: "0.875rem" }}>
                           No inventory items added yet
                         </p>
                       </div>
@@ -1044,160 +1505,276 @@ export default function ViewProjectPage({ params }: PageProps) {
                   </div>
                 )}
 
-                {/* Payments Tab */}
+                {/* Payments tab */}
                 {activeTab === "payments" && (
-                  <div>
+                  <div className="space-y-3">
                     {payments && payments.count > 0 ? (
-                      <div className="space-y-3">
-                        {payments.results.map((payment) => (
+                      <>
+                        {payments.results.map((p) => (
                           <div
-                            key={payment.id}
-                            className="p-4 border border-neutral-200 rounded-lg"
+                            key={p.id}
+                            className="rounded-xl p-4"
+                            style={{
+                              border: "1px solid var(--color-neutral-200)",
+                              backgroundColor: "var(--color-neutral-50)",
+                            }}
                           >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-3 mb-2">
-                                  <span className="text-2xl font-bold text-green-600">
-                                    {formatCurrency(payment.amount)}
-                                  </span>
+                            <div className="flex items-center gap-3 mb-3 flex-wrap">
+                              <span
+                                className="font-bold"
+                                style={{
+                                  fontSize: "1.375rem",
+                                  color: "#1ab189",
+                                }}
+                              >
+                                {formatCurrency(p.amount)}
+                              </span>
+                              {[
+                                {
+                                  label: p.payment_status_display,
+                                  style:
+                                    p.payment_status === "completed"
+                                      ? {
+                                          bg: "rgba(26,177,137,0.1)",
+                                          color: "#1ab189",
+                                        }
+                                      : p.payment_status === "pending"
+                                        ? { bg: "#fefce8", color: "#a16207" }
+                                        : { bg: "#fef2f2", color: "#b91c1c" },
+                                },
+                                {
+                                  label: p.payment_type_display,
+                                  style: { bg: "#eff6ff", color: "#1d4ed8" },
+                                },
+                              ].map(({ label, style }) => (
+                                <span
+                                  key={label}
+                                  className="rounded-full font-semibold"
+                                  style={{
+                                    fontSize: "0.65rem",
+                                    padding: "0.2rem 0.65rem",
+                                    backgroundColor: style.bg,
+                                    color: style.color,
+                                  }}
+                                >
+                                  {label}
+                                </span>
+                              ))}
+                            </div>
+                            <div
+                              className="grid grid-cols-2 gap-x-4 gap-y-1.5"
+                              style={{ fontSize: "0.8rem" }}
+                            >
+                              <div>
+                                <span
+                                  style={{ color: "var(--color-neutral-500)" }}
+                                >
+                                  Date:{" "}
+                                </span>
+                                <strong
+                                  style={{ color: "var(--color-neutral-900)" }}
+                                >
+                                  {new Date(p.payment_date).toLocaleDateString(
+                                    "en-US",
+                                    {
+                                      month: "short",
+                                      day: "numeric",
+                                      year: "numeric",
+                                    },
+                                  )}
+                                </strong>
+                              </div>
+                              {p.payment_method && (
+                                <div>
                                   <span
-                                    className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                                      payment.payment_status === "completed"
-                                        ? "bg-green-100 text-green-700 border border-green-200"
-                                        : payment.payment_status === "pending"
-                                        ? "bg-yellow-100 text-yellow-700 border border-yellow-200"
-                                        : "bg-red-100 text-red-700 border border-red-200"
-                                    }`}
+                                    style={{
+                                      color: "var(--color-neutral-500)",
+                                    }}
                                   >
-                                    {payment.payment_status_display}
+                                    Method:{" "}
                                   </span>
-                                  <span className="px-2 py-0.5 rounded text-xs font-semibold bg-blue-100 text-blue-700 border border-blue-200">
-                                    {payment.payment_type_display}
+                                  <strong
+                                    style={{
+                                      color: "var(--color-neutral-900)",
+                                    }}
+                                  >
+                                    {p.payment_method}
+                                  </strong>
+                                </div>
+                              )}
+                              {p.transaction_id && (
+                                <div>
+                                  <span
+                                    style={{
+                                      color: "var(--color-neutral-500)",
+                                    }}
+                                  >
+                                    ID:{" "}
                                   </span>
+                                  <code
+                                    style={{
+                                      fontSize: "0.75rem",
+                                      color: "var(--color-neutral-700)",
+                                    }}
+                                  >
+                                    {p.transaction_id}
+                                  </code>
                                 </div>
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                                  <div>
-                                    <span className="text-neutral-600">
-                                      Payment Date:
-                                    </span>
-                                    <span className="ml-2 font-semibold text-neutral-900">
-                                      {new Date(
-                                        payment.payment_date
-                                      ).toLocaleDateString("en-US", {
-                                        month: "short",
-                                        day: "numeric",
-                                        year: "numeric",
-                                      })}
-                                    </span>
-                                  </div>
-                                  {payment.payment_method && (
-                                    <div>
-                                      <span className="text-neutral-600">
-                                        Method:
-                                      </span>
-                                      <span className="ml-2 font-semibold text-neutral-900">
-                                        {payment.payment_method}
-                                      </span>
-                                    </div>
-                                  )}
-                                  {payment.transaction_id && (
-                                    <div>
-                                      <span className="text-neutral-600">
-                                        Transaction ID:
-                                      </span>
-                                      <span className="ml-2 font-mono text-xs text-neutral-700">
-                                        {payment.transaction_id}
-                                      </span>
-                                    </div>
-                                  )}
-                                  <div>
-                                    <span className="text-neutral-600">
-                                      Recorded by:
-                                    </span>
-                                    <span className="ml-2 font-semibold text-neutral-900">
-                                      {payment.posted_by_name}
-                                    </span>
-                                  </div>
-                                </div>
-                                {payment.notes && (
-                                  <p className="text-neutral-600 text-sm mt-2 italic">
-                                    Note: {payment.notes}
-                                  </p>
-                                )}
+                              )}
+                              <div>
+                                <span
+                                  style={{ color: "var(--color-neutral-500)" }}
+                                >
+                                  By:{" "}
+                                </span>
+                                <strong
+                                  style={{ color: "var(--color-neutral-900)" }}
+                                >
+                                  {p.posted_by_name}
+                                </strong>
                               </div>
                             </div>
+                            {p.notes && (
+                              <p
+                                className="mt-2 italic"
+                                style={{
+                                  fontSize: "0.8rem",
+                                  color: "var(--color-neutral-500)",
+                                }}
+                              >
+                                Note: {p.notes}
+                              </p>
+                            )}
                           </div>
                         ))}
-
-                        <div className="p-4 bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 rounded-lg">
-                          <div className="flex items-center justify-between">
-                            <span className="font-semibold text-neutral-700">
-                              Total Payments Received:
-                            </span>
-                            <span className="text-2xl font-bold text-green-600">
-                              {formatCurrency(
-                                project.payment_summary.total_paid
-                              )}
-                            </span>
-                          </div>
+                        <div
+                          className="flex items-center justify-between rounded-xl px-4 py-3"
+                          style={{
+                            backgroundColor: "rgba(26,177,137,0.06)",
+                            border: "1px solid rgba(26,177,137,0.2)",
+                          }}
+                        >
+                          <span
+                            className="font-semibold"
+                            style={{
+                              fontSize: "0.875rem",
+                              color: "var(--color-neutral-700)",
+                            }}
+                          >
+                            Total Received
+                          </span>
+                          <span
+                            className="font-bold"
+                            style={{ fontSize: "1.1rem", color: "#1ab189" }}
+                          >
+                            {formatCurrency(project.payment_summary.total_paid)}
+                          </span>
                         </div>
-                      </div>
+                      </>
                     ) : (
-                      <div className="text-center py-12 text-neutral-500">
+                      <div
+                        className="text-center py-10"
+                        style={{ color: "var(--color-neutral-400)" }}
+                      >
                         <FontAwesomeIcon
                           icon={faCreditCard}
-                          className="text-5xl mb-4 opacity-30"
+                          style={{
+                            fontSize: "2.5rem",
+                            marginBottom: "0.75rem",
+                            opacity: 0.3,
+                          }}
                         />
-                        <p className="body-regular">No payments recorded yet</p>
+                        <p style={{ fontSize: "0.875rem" }}>
+                          No payments recorded yet
+                        </p>
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Team Tab */}
+                {/* Team tab */}
                 {activeTab === "team" && (
                   <div>
                     {employees && employees.length > 0 ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {employees.map((employee) => (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {employees.map((emp) => (
                           <div
-                            key={employee.id}
-                            className="p-4 border border-neutral-200 rounded-lg hover:border-primary-500 transition-colors"
+                            key={emp.id}
+                            className="flex items-center gap-3 rounded-xl p-4"
+                            style={{
+                              border: "1px solid var(--color-neutral-200)",
+                              backgroundColor: "var(--color-neutral-50)",
+                            }}
+                            onMouseEnter={(e) => {
+                              (
+                                e.currentTarget as HTMLDivElement
+                              ).style.borderColor = "#1ab189";
+                            }}
+                            onMouseLeave={(e) => {
+                              (
+                                e.currentTarget as HTMLDivElement
+                              ).style.borderColor = "var(--color-neutral-200)";
+                            }}
                           >
-                            <div className="flex items-center gap-3">
-                              <div
-                                className={`w-12 h-12 rounded-full ${getEmployeeColor(
-                                  employee.id
-                                )} text-neutral-0 flex items-center justify-center font-bold text-lg`}
+                            <div
+                              className="w-11 h-11 rounded-full flex items-center justify-center font-bold flex-shrink-0"
+                              style={{
+                                backgroundColor: employeeColor(emp.id),
+                                color: "white",
+                                fontSize: "0.9rem",
+                              }}
+                            >
+                              {emp.initials}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h4
+                                className="font-semibold truncate"
+                                style={{
+                                  fontSize: "0.9rem",
+                                  color: "var(--color-neutral-900)",
+                                }}
                               >
-                                {employee.initials}
-                              </div>
-                              <div className="flex-1">
-                                <h4 className="font-semibold text-neutral-900">
-                                  {employee.full_name}
-                                </h4>
-                                <p className="text-neutral-600 text-sm">
-                                  {employee.role || "No role"}{" "}
-                                  {employee.department &&
-                                    `• ${employee.department}`}
+                                {emp.full_name}
+                              </h4>
+                              <p
+                                className="truncate"
+                                style={{
+                                  fontSize: "0.78rem",
+                                  color: "var(--color-neutral-500)",
+                                }}
+                              >
+                                {emp.role || "No role"}
+                                {emp.department ? ` · ${emp.department}` : ""}
+                              </p>
+                              {emp.phone && (
+                                <p
+                                  style={{
+                                    fontSize: "0.72rem",
+                                    color: "var(--color-neutral-400)",
+                                    marginTop: "0.125rem",
+                                  }}
+                                >
+                                  {emp.phone}
                                 </p>
-                                {employee.phone && (
-                                  <p className="text-neutral-500 text-xs mt-1">
-                                    {employee.phone}
-                                  </p>
-                                )}
-                              </div>
+                              )}
                             </div>
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <div className="text-center py-12 text-neutral-500">
+                      <div
+                        className="text-center py-10"
+                        style={{ color: "var(--color-neutral-400)" }}
+                      >
                         <FontAwesomeIcon
                           icon={faUsers}
-                          className="text-5xl mb-4 opacity-30"
+                          style={{
+                            fontSize: "2.5rem",
+                            marginBottom: "0.75rem",
+                            opacity: 0.3,
+                          }}
                         />
-                        <p className="body-regular">
+                        <p style={{ fontSize: "0.875rem" }}>
                           No team members assigned yet
                         </p>
                       </div>
@@ -1208,112 +1785,135 @@ export default function ViewProjectPage({ params }: PageProps) {
             </div>
           </div>
 
-          {/* Sidebar - 1 column */}
+          {/* ── Sidebar ── */}
           <div className="lg:col-span-1">
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 sticky top-8 space-y-6">
-              <div>
-                <h3 className="heading-4 text-neutral-900 mb-4">
+            <div className="sticky top-6 space-y-5">
+              {/* Project info */}
+              <div style={{ ...card, padding: "1.5rem" }}>
+                <h3
+                  className="font-semibold mb-4"
+                  style={{
+                    fontSize: "1rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
                   Project Information
                 </h3>
-
-                <div className="space-y-4">
-                  <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                    <FontAwesomeIcon
-                      icon={faBriefcase}
-                      className="text-primary-600 mt-1"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-neutral-600 body-small mb-1">
-                        Project ID
-                      </p>
-                      <p className="text-neutral-900 font-semibold">
-                        #{project.id}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                    <FontAwesomeIcon
-                      icon={faMoneyBill}
-                      className="text-primary-600 mt-1"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-neutral-600 body-small mb-1">
-                        Total Cost
-                      </p>
-                      <p className="text-neutral-900 font-semibold">
-                        {formatCurrency(project.total_cost)}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                    <FontAwesomeIcon
-                      icon={faUser}
-                      className="text-primary-600 mt-1"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-neutral-600 body-small mb-1">Client</p>
-                      {project.client ? (
-                        <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center text-sm font-semibold">
-                            {getInitials(project.client.full_name)}
-                          </div>
-                          <div>
-                            <p className="text-neutral-900 font-semibold">
-                              {project.client.full_name}
-                            </p>
-                            <p className="text-neutral-500 text-xs">
-                              {project.client.user_email}
-                            </p>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-neutral-500 italic">
-                          No client assigned
+                <InfoRow
+                  icon={<FontAwesomeIcon icon={faBriefcase} />}
+                  label="Project ID"
+                >
+                  #{project.id}
+                </InfoRow>
+                <InfoRow
+                  icon={<FontAwesomeIcon icon={faMoneyBill} />}
+                  label="Total Cost"
+                >
+                  {formatCurrency(project.total_cost)}
+                </InfoRow>
+                <InfoRow
+                  icon={<FontAwesomeIcon icon={faUser} />}
+                  label="Client"
+                >
+                  {project.client ? (
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center font-bold flex-shrink-0"
+                        style={{
+                          backgroundColor: "#1ab189",
+                          color: "white",
+                          fontSize: "0.65rem",
+                        }}
+                      >
+                        {getInitials(project.client.full_name)}
+                      </div>
+                      <div>
+                        <p
+                          className="font-semibold"
+                          style={{
+                            fontSize: "0.85rem",
+                            color: "var(--color-neutral-900)",
+                          }}
+                        >
+                          {project.client.full_name}
                         </p>
-                      )}
+                        <p
+                          style={{
+                            fontSize: "0.72rem",
+                            color: "var(--color-neutral-500)",
+                          }}
+                        >
+                          {project.client.user_email}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="flex items-start gap-3">
-                    <FontAwesomeIcon
-                      icon={faMapMarkerAlt}
-                      className="text-primary-600 mt-1"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-neutral-600 body-small mb-1">
-                        Location
-                      </p>
-                      <p className="text-neutral-900 font-semibold">
-                        {project.site_address}
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                  ) : (
+                    <span
+                      style={{
+                        fontStyle: "italic",
+                        color: "var(--color-neutral-400)",
+                        fontWeight: 400,
+                      }}
+                    >
+                      No client assigned
+                    </span>
+                  )}
+                </InfoRow>
+                <InfoRow
+                  icon={<FontAwesomeIcon icon={faMapMarkerAlt} />}
+                  label="Location"
+                  border={false}
+                >
+                  {project.site_address}
+                </InfoRow>
               </div>
 
+              {/* Progress stats */}
               {summary && (
-                <div className="pt-6 border-t border-neutral-200">
-                  <h4 className="font-semibold text-neutral-900 mb-4">
+                <div style={{ ...card, padding: "1.5rem" }}>
+                  <h3
+                    className="font-semibold mb-4"
+                    style={{
+                      fontSize: "1rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
                     Progress Statistics
-                  </h4>
-                  <div className="space-y-3 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-neutral-600">
-                        Milestones Completed:
-                      </span>
-                      <span className="font-semibold text-neutral-900">
-                        {summary.progress.completed_milestones}/
-                        {summary.progress.total_milestones}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-neutral-600">Avg. Completion:</span>
-                      <span className="font-semibold text-neutral-900">
-                        {summary.progress.average_completion}%
-                      </span>
-                    </div>
+                  </h3>
+                  <div className="space-y-3">
+                    {[
+                      {
+                        label: "Milestones Completed",
+                        value: `${summary.progress.completed_milestones}/${summary.progress.total_milestones}`,
+                      },
+                      {
+                        label: "Avg. Completion",
+                        value: `${summary.progress.average_completion}%`,
+                      },
+                    ].map(({ label, value }) => (
+                      <div
+                        key={label}
+                        className="flex items-center justify-between"
+                      >
+                        <span
+                          style={{
+                            fontSize: "0.8rem",
+                            color: "var(--color-neutral-500)",
+                          }}
+                        >
+                          {label}
+                        </span>
+                        <span
+                          className="font-semibold"
+                          style={{
+                            fontSize: "0.875rem",
+                            color: "var(--color-neutral-900)",
+                          }}
+                        >
+                          {value}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -1322,49 +1922,82 @@ export default function ViewProjectPage({ params }: PageProps) {
         </div>
       </div>
 
-      {/* Delete Confirmation Modal */}
+      {/* ── Delete Modal ── */}
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-md w-full">
-            <div className="p-6">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-2xl max-w-md w-full"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div style={{ padding: "1.75rem" }}>
+              <div
+                className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+                style={{ backgroundColor: "#fef2f2" }}
+              >
                 <FontAwesomeIcon
                   icon={faExclamationTriangle}
-                  className="text-red-600 text-xl"
+                  style={{ color: "#ef4444", fontSize: "1.1rem" }}
                 />
               </div>
-              <h3 className="heading-4 text-neutral-900 text-center mb-2">
+              <h3
+                className="font-semibold text-center mb-2"
+                style={{
+                  fontSize: "1.0625rem",
+                  color: "var(--color-neutral-900)",
+                }}
+              >
                 Delete Project?
               </h3>
-              <p className="text-neutral-600 text-center mb-6">
-                Are you sure you want to delete "{project.project_name}"? This
-                action cannot be undone.
+              <p
+                className="text-center mb-6"
+                style={{
+                  fontSize: "0.875rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
+                Are you sure you want to delete &quot;{project.project_name}
+                &quot;? This action cannot be undone.
               </p>
-
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setShowDeleteModal(false)}
-                  disabled={deleteProjectMutation.isPending}
-                  className="flex-1 btn-secondary disabled:opacity-50"
+                  disabled={deleteMutation.isPending}
+                  className="btn btn-ghost btn-md flex-1 justify-center"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleDelete}
-                  disabled={deleteProjectMutation.isPending}
-                  className="flex-1 px-5 py-3 bg-red-600 text-neutral-0 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                  onClick={() => deleteMutation.mutate()}
+                  disabled={deleteMutation.isPending}
+                  className="btn btn-md flex-1 justify-center flex items-center gap-2"
+                  style={{
+                    backgroundColor: "#ef4444",
+                    color: "white",
+                    border: "none",
+                    opacity: deleteMutation.isPending ? 0.6 : 1,
+                  }}
                 >
-                  {deleteProjectMutation.isPending ? (
+                  {deleteMutation.isPending ? (
                     <>
                       <FontAwesomeIcon
                         icon={faSpinner}
                         className="animate-spin"
-                      />
-                      Deleting...
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
+                      Deleting…
                     </>
                   ) : (
                     <>
-                      <FontAwesomeIcon icon={faTrash} />
+                      <FontAwesomeIcon
+                        icon={faTrash}
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
                       Delete
                     </>
                   )}
@@ -1375,63 +2008,148 @@ export default function ViewProjectPage({ params }: PageProps) {
         </div>
       )}
 
-      {/* Milestone Detail Modal */}
+      {/* ── Milestone detail modal ── */}
       {viewingMilestone && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full">
-            <div className="sticky top-0 bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between rounded-t-xl">
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            {/* Modal header */}
+            <div
+              className="flex items-center justify-between sticky top-0 rounded-t-2xl"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                borderBottom: "1px solid var(--color-neutral-200)",
+                padding: "1.25rem 1.5rem",
+              }}
+            >
               <div>
-                <h3 className="heading-4 text-neutral-900">
+                <h3
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1.0625rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
                   Milestone Details
                 </h3>
-                <p className="text-neutral-600 text-sm mt-1">
+                <p
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--color-neutral-500)",
+                    marginTop: "0.125rem",
+                  }}
+                >
                   Review milestone information
                 </p>
               </div>
               <button
                 onClick={() => setViewingMilestone(null)}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--color-neutral-500)",
+                  padding: "0.375rem",
+                  borderRadius: "0.5rem",
+                }}
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+                <FontAwesomeIcon
+                  icon={faTimes}
+                  style={{ fontSize: "0.875rem" }}
+                />
               </button>
             </div>
-
-            <div className="p-6 space-y-6">
+            {/* Modal body */}
+            <div style={{ padding: "1.5rem" }} className="space-y-5">
               <div>
-                <label className="block text-neutral-600 font-medium mb-2 body-small">
+                <p
+                  className="font-semibold uppercase tracking-wider mb-1"
+                  style={{
+                    fontSize: "0.65rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
                   Title
-                </label>
-                <p className="text-neutral-900 font-semibold text-lg">
+                </p>
+                <p
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1.0625rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
                   {viewingMilestone.title}
                 </p>
               </div>
-
               {viewingMilestone.description && (
                 <div>
-                  <label className="block text-neutral-600 font-medium mb-2 body-small">
+                  <p
+                    className="font-semibold uppercase tracking-wider mb-1"
+                    style={{
+                      fontSize: "0.65rem",
+                      color: "var(--color-neutral-400)",
+                    }}
+                  >
                     Description
-                  </label>
-                  <div className="bg-neutral-50 rounded-lg p-4 border border-neutral-200">
-                    <p className="text-neutral-700 body-regular leading-relaxed">
+                  </p>
+                  <div
+                    className="rounded-xl p-4"
+                    style={{
+                      backgroundColor: "var(--color-neutral-50)",
+                      border: "1px solid var(--color-neutral-200)",
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: "0.875rem",
+                        color: "var(--color-neutral-700)",
+                        lineHeight: 1.7,
+                      }}
+                    >
                       {viewingMilestone.description}
                     </p>
                   </div>
                 </div>
               )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-neutral-600 font-medium mb-2 body-small">
+                  <p
+                    className="font-semibold uppercase tracking-wider mb-1"
+                    style={{
+                      fontSize: "0.65rem",
+                      color: "var(--color-neutral-400)",
+                    }}
+                  >
                     Target Date
-                  </label>
-                  <div className="flex items-center gap-2 text-neutral-900 font-medium bg-neutral-50 p-4 rounded-lg border border-neutral-200">
+                  </p>
+                  <div
+                    className="flex items-center gap-2 rounded-xl p-3"
+                    style={{
+                      backgroundColor: "var(--color-neutral-50)",
+                      border: "1px solid var(--color-neutral-200)",
+                    }}
+                  >
                     <FontAwesomeIcon
                       icon={faCalendar}
-                      className="text-primary-600"
+                      style={{ color: "#1ab189", fontSize: "0.8rem" }}
                     />
-                    <span className="text-sm">
+                    <span
+                      style={{
+                        fontSize: "0.8rem",
+                        color: "var(--color-neutral-800)",
+                        fontWeight: 500,
+                      }}
+                    >
                       {new Date(
-                        viewingMilestone.target_date
+                        viewingMilestone.target_date,
                       ).toLocaleDateString("en-US", {
                         weekday: "long",
                         year: "numeric",
@@ -1441,50 +2159,105 @@ export default function ViewProjectPage({ params }: PageProps) {
                     </span>
                   </div>
                 </div>
-
                 <div>
-                  <label className="block text-neutral-600 font-medium mb-2 body-small">
+                  <p
+                    className="font-semibold uppercase tracking-wider mb-1"
+                    style={{
+                      fontSize: "0.65rem",
+                      color: "var(--color-neutral-400)",
+                    }}
+                  >
                     Completion
-                  </label>
-                  <div className="bg-neutral-50 p-4 rounded-lg border border-neutral-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-neutral-600 text-sm">Progress</span>
-                      <span className="font-bold text-primary-600">
+                  </p>
+                  <div
+                    className="rounded-xl p-3"
+                    style={{
+                      backgroundColor: "var(--color-neutral-50)",
+                      border: "1px solid var(--color-neutral-200)",
+                    }}
+                  >
+                    <div className="flex justify-between mb-1.5">
+                      <span
+                        style={{
+                          fontSize: "0.75rem",
+                          color: "var(--color-neutral-500)",
+                        }}
+                      >
+                        Progress
+                      </span>
+                      <span
+                        className="font-bold"
+                        style={{ fontSize: "0.8rem", color: "#1ab189" }}
+                      >
                         {viewingMilestone.completion_percentage}%
                       </span>
                     </div>
-                    <div className="w-full h-2 bg-neutral-200 rounded-full overflow-hidden">
+                    <div
+                      style={{
+                        width: "100%",
+                        height: "0.375rem",
+                        backgroundColor: "var(--color-neutral-200)",
+                        borderRadius: "9999px",
+                        overflow: "hidden",
+                      }}
+                    >
                       <div
-                        className="h-full bg-primary-600 rounded-full transition-all"
                         style={{
                           width: `${viewingMilestone.completion_percentage}%`,
+                          height: "100%",
+                          backgroundColor: "#1ab189",
+                          borderRadius: "9999px",
                         }}
                       />
                     </div>
                   </div>
                 </div>
               </div>
-
               <div>
-                <label className="block text-neutral-600 font-medium mb-2 body-small">
+                <p
+                  className="font-semibold uppercase tracking-wider mb-2"
+                  style={{
+                    fontSize: "0.65rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
                   Status
-                </label>
+                </p>
                 <span
-                  className={`inline-flex px-3 py-1.5 rounded-lg text-sm font-semibold border ${getMilestoneBadgeColor(
-                    viewingMilestone.status
-                  )}`}
+                  className="rounded-full font-semibold"
+                  style={{
+                    fontSize: "0.7rem",
+                    padding: "0.3rem 0.75rem",
+                    backgroundColor: getMilestoneBadge(viewingMilestone.status)
+                      .bg,
+                    color: getMilestoneBadge(viewingMilestone.status).color,
+                  }}
                 >
                   {viewingMilestone.status_display}
                 </span>
               </div>
-
               {viewingMilestone.completion_date && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <p className="text-green-700 text-sm font-medium flex items-center gap-2">
-                    <FontAwesomeIcon icon={faCheckCircle} />
+                <div
+                  className="flex items-center gap-2 rounded-xl p-3"
+                  style={{
+                    backgroundColor: "rgba(26,177,137,0.06)",
+                    border: "1px solid rgba(26,177,137,0.2)",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faCheckCircle}
+                    style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                  />
+                  <p
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "#1ab189",
+                      fontWeight: 500,
+                    }}
+                  >
                     Completed on{" "}
                     {new Date(
-                      viewingMilestone.completion_date
+                      viewingMilestone.completion_date,
                     ).toLocaleDateString("en-US", {
                       month: "long",
                       day: "numeric",
@@ -1494,11 +2267,18 @@ export default function ViewProjectPage({ params }: PageProps) {
                 </div>
               )}
             </div>
-
-            <div className="sticky bottom-0 bg-neutral-50 border-t border-neutral-200 px-6 py-4 flex items-center justify-end rounded-b-xl">
+            {/* Modal footer */}
+            <div
+              className="sticky bottom-0 flex justify-end rounded-b-2xl"
+              style={{
+                backgroundColor: "var(--color-neutral-50)",
+                borderTop: "1px solid var(--color-neutral-200)",
+                padding: "1rem 1.5rem",
+              }}
+            >
               <button
                 onClick={() => setViewingMilestone(null)}
-                className="btn-secondary"
+                className="btn btn-secondary btn-md"
               >
                 Close
               </button>
@@ -1507,43 +2287,111 @@ export default function ViewProjectPage({ params }: PageProps) {
         </div>
       )}
 
-      {/* Update Detail Modal */}
+      {/* ── Update detail modal ── */}
       {viewingUpdate && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-3xl w-full my-8">
-            <div className="sticky top-0 bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between rounded-t-xl">
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4 overflow-y-auto"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-2xl max-w-3xl w-full my-8"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div
+              className="flex items-center justify-between sticky top-0 rounded-t-2xl"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                borderBottom: "1px solid var(--color-neutral-200)",
+                padding: "1.25rem 1.5rem",
+              }}
+            >
               <div>
-                <h3 className="heading-4 text-neutral-900">Update Details</h3>
-                <p className="text-neutral-600 text-sm mt-1">
+                <h3
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1.0625rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
+                  Update Details
+                </h3>
+                <p
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--color-neutral-500)",
+                    marginTop: "0.125rem",
+                  }}
+                >
                   Posted by {viewingUpdate.posted_by_name}
                 </p>
               </div>
               <button
                 onClick={() => setViewingUpdate(null)}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--color-neutral-500)",
+                  padding: "0.375rem",
+                  borderRadius: "0.5rem",
+                }}
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+                <FontAwesomeIcon
+                  icon={faTimes}
+                  style={{ fontSize: "0.875rem" }}
+                />
               </button>
             </div>
-
-            <div className="p-6 space-y-6">
+            <div style={{ padding: "1.5rem" }} className="space-y-5">
               <div>
-                <label className="block text-neutral-600 font-medium mb-2 body-small">
+                <p
+                  className="font-semibold uppercase tracking-wider mb-1"
+                  style={{
+                    fontSize: "0.65rem",
+                    color: "var(--color-neutral-400)",
+                  }}
+                >
                   Update
-                </label>
-                <div className="bg-neutral-50 rounded-lg p-4 border border-neutral-200">
-                  <p className="text-neutral-700 body-regular leading-relaxed">
+                </p>
+                <div
+                  className="rounded-xl p-4"
+                  style={{
+                    backgroundColor: "var(--color-neutral-50)",
+                    border: "1px solid var(--color-neutral-200)",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-700)",
+                      lineHeight: 1.7,
+                    }}
+                  >
                     {viewingUpdate.update_text}
                   </p>
                 </div>
               </div>
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-neutral-600 font-medium mb-2 body-small">
-                    Posted Date
-                  </label>
-                  <p className="text-neutral-900 font-semibold">
+                  <p
+                    className="font-semibold uppercase tracking-wider mb-1"
+                    style={{
+                      fontSize: "0.65rem",
+                      color: "var(--color-neutral-400)",
+                    }}
+                  >
+                    Posted
+                  </p>
+                  <p
+                    className="font-semibold"
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
                     {new Date(viewingUpdate.created_at).toLocaleDateString(
                       "en-US",
                       {
@@ -1552,48 +2400,81 @@ export default function ViewProjectPage({ params }: PageProps) {
                         year: "numeric",
                         hour: "numeric",
                         minute: "2-digit",
-                      }
+                      },
                     )}
                   </p>
                 </div>
                 {viewingUpdate.work_hours && (
                   <div>
-                    <label className="block text-neutral-600 font-medium mb-2 body-small">
+                    <p
+                      className="font-semibold uppercase tracking-wider mb-1"
+                      style={{
+                        fontSize: "0.65rem",
+                        color: "var(--color-neutral-400)",
+                      }}
+                    >
                       Work Hours
-                    </label>
-                    <p className="text-primary-600 font-bold text-lg">
-                      {viewingUpdate.work_hours} hours
+                    </p>
+                    <p
+                      className="font-bold"
+                      style={{ fontSize: "1.25rem", color: "#1ab189" }}
+                    >
+                      {viewingUpdate.work_hours} hrs
                     </p>
                   </div>
                 )}
               </div>
-
               {viewingUpdate.milestone_title && (
-                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-blue-700 font-medium">
-                    🎯 Related Milestone:{" "}
-                    <span className="font-bold">
-                      {viewingUpdate.milestone_title}
-                    </span>
+                <div
+                  className="flex items-center gap-2 rounded-xl p-3"
+                  style={{
+                    backgroundColor: "#eff6ff",
+                    border: "1px solid #bfdbfe",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "#1d4ed8",
+                      fontWeight: 500,
+                    }}
+                  >
+                    📍 Related Milestone:{" "}
+                    <strong>{viewingUpdate.milestone_title}</strong>
                   </p>
                 </div>
               )}
-
               {viewingUpdate.media.length > 0 && (
                 <div>
-                  <label className="block text-neutral-600 font-medium mb-3 body-small">
+                  <p
+                    className="font-semibold uppercase tracking-wider mb-2"
+                    style={{
+                      fontSize: "0.65rem",
+                      color: "var(--color-neutral-400)",
+                    }}
+                  >
                     Media ({viewingUpdate.media.length})
-                  </label>
-                  <div className="grid grid-cols-2 gap-4">
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
                     {viewingUpdate.media.map((media) => (
-                      <div key={media.id} className="relative group">
+                      <div
+                        key={media.id}
+                        className="relative group rounded-xl overflow-hidden"
+                      >
                         <img
                           src={media.media_url}
                           alt={media.caption}
-                          className="w-full h-48 object-cover rounded-lg"
+                          className="w-full h-48 object-cover"
                         />
                         {media.caption && (
-                          <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-white text-sm p-2 rounded-b-lg">
+                          <div
+                            className="absolute inset-x-0 bottom-0 px-3 py-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                            style={{
+                              backgroundColor: "rgba(0,0,0,0.65)",
+                              fontSize: "0.78rem",
+                              color: "white",
+                            }}
+                          >
                             {media.caption}
                           </div>
                         )}
@@ -1603,11 +2484,17 @@ export default function ViewProjectPage({ params }: PageProps) {
                 </div>
               )}
             </div>
-
-            <div className="sticky bottom-0 bg-neutral-50 border-t border-neutral-200 px-6 py-4 flex items-center justify-end rounded-b-xl">
+            <div
+              className="sticky bottom-0 flex justify-end rounded-b-2xl"
+              style={{
+                backgroundColor: "var(--color-neutral-50)",
+                borderTop: "1px solid var(--color-neutral-200)",
+                padding: "1rem 1.5rem",
+              }}
+            >
               <button
                 onClick={() => setViewingUpdate(null)}
-                className="btn-secondary"
+                className="btn btn-secondary btn-md"
               >
                 Close
               </button>

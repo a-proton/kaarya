@@ -15,20 +15,138 @@ import {
   faExclamationTriangle,
   faSpinner,
   faCheckCircle,
+  faTimes,
+  faCheck,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { clientService } from "@/lib/clientService";
 
+/* ─────────────────────────────────────────── */
+/* Helpers                                      */
+/* ─────────────────────────────────────────── */
+const getInitials = (name: string) =>
+  name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+
+const formatCurrency = (amount: number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(amount);
+
+/* ─────────────────────────────────────────── */
+/* Status badge                                */
+/* ─────────────────────────────────────────── */
+const STATUS_STYLES: Record<
+  string,
+  { bg: string; color: string; label: string }
+> = {
+  pending: { bg: "#fefce8", color: "#a16207", label: "Pending" },
+  not_started: {
+    bg: "var(--color-neutral-100)",
+    color: "var(--color-neutral-600)",
+    label: "Not Started",
+  },
+  in_progress: { bg: "#eff6ff", color: "#1d4ed8", label: "In Progress" },
+  completed: { bg: "#f0fdf4", color: "#15803d", label: "Completed" },
+  on_hold: { bg: "#fff7ed", color: "#c2410c", label: "On Hold" },
+  cancelled: { bg: "#fef2f2", color: "#b91c1c", label: "Cancelled" },
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUS_STYLES[status] ?? {
+    bg: "var(--color-neutral-100)",
+    color: "var(--color-neutral-600)",
+    label: status,
+  };
+  return (
+    <span
+      style={{
+        padding: "0.2rem 0.6rem",
+        borderRadius: "9999px",
+        fontSize: "0.72rem",
+        fontWeight: 600,
+        backgroundColor: s.bg,
+        color: s.color,
+      }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
+/* ─────────────────────────────────────────── */
+/* Info row                                    */
+/* ─────────────────────────────────────────── */
+function InfoRow({
+  icon,
+  label,
+  children,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <div
+        className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+        style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+      >
+        <span style={{ color: "#1ab189", fontSize: "0.8rem" }}>{icon}</span>
+      </div>
+      <div>
+        <p
+          className="font-semibold uppercase tracking-wider"
+          style={{
+            fontSize: "0.62rem",
+            color: "var(--color-neutral-400)",
+            marginBottom: "0.25rem",
+          }}
+        >
+          {label}
+        </p>
+        <div
+          style={{
+            fontSize: "0.9rem",
+            color: "var(--color-neutral-900)",
+            fontWeight: 500,
+          }}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────── */
+/* Component                                   */
+/* ─────────────────────────────────────────── */
 export default function ViewClientPage() {
   const router = useRouter();
   const params = useParams();
   const queryClient = useQueryClient();
   const clientId = Number(params.id);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-  // Fetch client details
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showToast, setShowToast] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
+
+  const notify = (msg: string) => {
+    setToastMsg(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
+
+  /* ── Query ── */
   const {
     data: client,
     isLoading,
@@ -39,96 +157,42 @@ export default function ViewClientPage() {
     enabled: !!clientId,
   });
 
-  // Delete mutation
+  /* ── Delete mutation ── */
   const deleteMutation = useMutation({
     mutationFn: () => clientService.deleteClient(clientId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["clients"] });
-      alert(`Client deleted successfully`);
-      router.push("/provider/clients");
+      setShowDeleteModal(false);
+      notify("Client deleted successfully");
+      setTimeout(() => router.push("/provider/clients"), 1500);
     },
-    onError: (error: any) => {
-      const errorMessage =
-        error.data?.detail || error.message || "Failed to delete client";
-      alert(`Error: ${errorMessage}`);
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
+      alert(
+        `Error: ${e.data?.detail ?? e.message ?? "Failed to delete client"}`,
+      );
       setShowDeleteModal(false);
     },
   });
 
-  const handleDelete = () => {
-    deleteMutation.mutate();
-  };
-
-  const handleEdit = () => {
-    router.push(`/provider/clients/${clientId}/edit`);
-  };
-
-  const getInitials = (name: string) => {
-    return name
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
-  };
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(amount);
-  };
-
-  const getStatusBadge = (status: string) => {
-    const statusMap: Record<string, { color: string; label: string }> = {
-      pending: {
-        color: "bg-yellow-100 text-yellow-700 border-yellow-200",
-        label: "Pending",
-      },
-      not_started: {
-        color: "bg-neutral-100 text-neutral-700 border-neutral-200",
-        label: "Not Started",
-      },
-      in_progress: {
-        color: "bg-blue-100 text-blue-700 border-blue-200",
-        label: "In Progress",
-      },
-      completed: {
-        color: "bg-green-100 text-green-700 border-green-200",
-        label: "Completed",
-      },
-      on_hold: {
-        color: "bg-orange-100 text-orange-700 border-orange-200",
-        label: "On Hold",
-      },
-      cancelled: {
-        color: "bg-red-100 text-red-700 border-red-200",
-        label: "Cancelled",
-      },
-    };
-
-    const statusInfo = statusMap[status] || {
-      color: "bg-neutral-100 text-neutral-600 border-neutral-200",
-      label: status,
-    };
-    return (
-      <span
-        className={`px-2 py-1 rounded text-xs font-medium border ${statusInfo.color}`}
-      >
-        {statusInfo.label}
-      </span>
-    );
-  };
-
+  /* ── Loading / error ── */
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading client details...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading client details…
+          </p>
         </div>
       </div>
     );
@@ -136,12 +200,17 @@ export default function ViewClientPage() {
 
   if (error || !client) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
-          <p className="text-red-600 mb-4">Client not found</p>
+          <p className="mb-4" style={{ color: "#ef4444" }}>
+            Client not found
+          </p>
           <button
             onClick={() => router.push("/provider/clients")}
-            className="btn-primary"
+            className="btn btn-primary btn-md"
           >
             Back to Clients
           </button>
@@ -151,99 +220,294 @@ export default function ViewClientPage() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-4">
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* Toast */}
+      {showToast && (
+        <div
+          className="fixed top-5 right-5 z-[60]"
+          style={{ minWidth: "17rem" }}
+        >
+          <div
+            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+            style={{
+              backgroundColor: "var(--color-neutral-900)",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div
+              className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: "#1ab189" }}
+            >
+              <FontAwesomeIcon
+                icon={faCheck}
+                style={{ color: "white", fontSize: "0.6rem" }}
+              />
+            </div>
+            <p
+              className="flex-1 font-medium"
+              style={{ fontSize: "0.875rem", color: "white" }}
+            >
+              {toastMsg}
+            </p>
+            <button
+              onClick={() => setShowToast(false)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "rgba(255,255,255,0.5)",
+                padding: 0,
+              }}
+            >
+              <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Page header */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.125rem 2rem",
+        }}
+      >
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => router.back()}
-              className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
+              aria-label="Go back"
+              style={{
+                width: "2.25rem",
+                height: "2.25rem",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "transparent",
+                border: "1px solid var(--color-neutral-200)",
+                borderRadius: "0.625rem",
+                cursor: "pointer",
+                color: "var(--color-neutral-500)",
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "var(--color-neutral-100)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "transparent";
+              }}
             >
               <FontAwesomeIcon
                 icon={faArrowLeft}
-                className="text-neutral-600 text-lg"
+                style={{ fontSize: "0.85rem" }}
               />
             </button>
             <div>
-              <h1 className="heading-2 text-neutral-900">{client.full_name}</h1>
-              <p className="text-neutral-600 body-regular mt-1">
-                Client Details & History
+              <h1
+                className="font-bold"
+                style={{
+                  fontSize: "1.375rem",
+                  color: "var(--color-neutral-900)",
+                  lineHeight: 1.2,
+                }}
+              >
+                {client.full_name}
+              </h1>
+              <p
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--color-neutral-500)",
+                  marginTop: "0.125rem",
+                }}
+              >
+                Client Details &amp; History
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <button
-              onClick={handleEdit}
-              className="btn-secondary flex items-center gap-2"
+              onClick={() => router.push(`/provider/clients/${clientId}/edit`)}
+              className="btn btn-secondary btn-md flex items-center gap-2"
             >
-              <FontAwesomeIcon icon={faPenToSquare} />
+              <FontAwesomeIcon
+                icon={faPenToSquare}
+                style={{ fontSize: "0.8rem" }}
+              />
               Edit Client
             </button>
             <button
               onClick={() => setShowDeleteModal(true)}
-              className="px-5 py-3 bg-red-600 text-neutral-0 rounded-lg font-medium hover:bg-red-700 transition-colors flex items-center gap-2"
+              className="btn btn-md flex items-center gap-2"
+              style={{
+                backgroundColor: "#ef4444",
+                color: "white",
+                border: "none",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "#dc2626";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  "#ef4444";
+              }}
             >
-              <FontAwesomeIcon icon={faTrash} />
+              <FontAwesomeIcon icon={faTrash} style={{ fontSize: "0.8rem" }} />
               Delete
             </button>
           </div>
         </div>
       </div>
 
-      <div className="p-8 max-w-7xl mx-auto">
+      {/* Body */}
+      <div
+        style={{ padding: "1.75rem 2rem", maxWidth: "72rem", margin: "0 auto" }}
+      >
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Sidebar - Client Overview */}
+          {/* ── Sidebar ── */}
           <div className="lg:col-span-1">
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 sticky top-8">
+            <div
+              className="rounded-2xl sticky top-8"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                border: "1px solid var(--color-neutral-200)",
+                padding: "1.5rem",
+              }}
+            >
               {/* Avatar */}
-              <div className="flex justify-center mb-6">
-                <div className="w-32 h-32 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center text-4xl font-bold">
+              <div className="flex justify-center mb-5">
+                <div
+                  className="w-24 h-24 rounded-full flex items-center justify-center font-bold"
+                  style={{
+                    backgroundColor: "#1ab189",
+                    color: "white",
+                    fontSize: "2rem",
+                  }}
+                >
                   {getInitials(client.full_name)}
                 </div>
               </div>
 
-              {/* Name */}
-              <div className="text-center mb-6">
-                <h2 className="heading-3 text-neutral-900 mb-2">
+              {/* Name / email */}
+              <div className="text-center mb-5">
+                <h2
+                  className="font-bold mb-1"
+                  style={{
+                    fontSize: "1.125rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
                   {client.full_name}
                 </h2>
-                <p className="text-neutral-600 body-regular">{client.email}</p>
+                <p
+                  style={{
+                    fontSize: "0.8rem",
+                    color: "var(--color-neutral-500)",
+                  }}
+                >
+                  {client.email}
+                </p>
               </div>
 
-              {/* Quick Stats */}
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="text-center p-4 bg-primary-50 rounded-lg border border-primary-200">
+              {/* Quick stats */}
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                <div
+                  className="rounded-xl text-center p-4"
+                  style={{
+                    backgroundColor: "rgba(26,177,137,0.06)",
+                    border: "1px solid rgba(26,177,137,0.2)",
+                  }}
+                >
                   <FontAwesomeIcon
                     icon={faFolder}
-                    className="text-primary-600 text-xl mb-2"
+                    style={{
+                      color: "#1ab189",
+                      fontSize: "1.25rem",
+                      marginBottom: "0.5rem",
+                    }}
                   />
-                  <p className="heading-4 text-neutral-900 mb-1">
+                  <p
+                    className="font-bold"
+                    style={{
+                      fontSize: "1.25rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
                     {client.stats.total_projects}
                   </p>
-                  <p className="text-neutral-600 text-sm">Projects</p>
+                  <p
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    Projects
+                  </p>
                 </div>
-                <div className="text-center p-4 bg-green-50 rounded-lg border border-green-200">
+                <div
+                  className="rounded-xl text-center p-4"
+                  style={{
+                    backgroundColor: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                  }}
+                >
                   <FontAwesomeIcon
                     icon={faDollarSign}
-                    className="text-green-600 text-xl mb-2"
+                    style={{
+                      color: "#15803d",
+                      fontSize: "1.25rem",
+                      marginBottom: "0.5rem",
+                    }}
                   />
-                  <p className="heading-4 text-neutral-900 mb-1">
+                  <p
+                    className="font-bold"
+                    style={{
+                      fontSize: "1rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
                     {formatCurrency(client.stats.total_spent)}
                   </p>
-                  <p className="text-neutral-600 text-sm">Spent</p>
+                  <p
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    Spent
+                  </p>
                 </div>
               </div>
 
               {/* Status */}
-              <div className="text-center mb-6 p-4 bg-neutral-50 rounded-lg">
-                <p className="text-neutral-600 text-sm mb-2">Status</p>
+              <div
+                className="rounded-xl text-center py-4"
+                style={{ backgroundColor: "var(--color-neutral-50)" }}
+              >
+                <p
+                  style={{
+                    fontSize: "0.72rem",
+                    color: "var(--color-neutral-500)",
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  Status
+                </p>
                 <span
-                  className={`inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-semibold ${
-                    client.is_active
-                      ? "bg-green-100 text-green-700"
-                      : "bg-red-100 text-red-700"
-                  }`}
+                  className="inline-flex items-center font-semibold"
+                  style={{
+                    padding: "0.375rem 0.875rem",
+                    borderRadius: "9999px",
+                    fontSize: "0.8rem",
+                    backgroundColor: client.is_active ? "#f0fdf4" : "#fef2f2",
+                    color: client.is_active ? "#15803d" : "#b91c1c",
+                  }}
                 >
                   {client.is_active ? "Active" : "Inactive"}
                 </span>
@@ -251,205 +515,351 @@ export default function ViewClientPage() {
             </div>
           </div>
 
-          {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Contact Information Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                <FontAwesomeIcon icon={faUser} className="text-primary-600" />
-                Contact Information
-              </h2>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faEnvelope}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">Email</p>
-                    <a
-                      href={`mailto:${client.email}`}
-                      className="text-neutral-900 font-semibold hover:text-primary-600 transition-colors"
-                    >
-                      {client.email}
-                    </a>
-                  </div>
+          {/* ── Main column ── */}
+          <div className="lg:col-span-2 space-y-5">
+            {/* Contact information */}
+            <div
+              className="rounded-2xl"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                border: "1px solid var(--color-neutral-200)",
+                padding: "1.5rem",
+              }}
+            >
+              <div className="flex items-center gap-3 mb-5">
+                <div
+                  className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                >
+                  <FontAwesomeIcon
+                    icon={faUser}
+                    style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                  />
                 </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faPhone}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">Phone</p>
-                    <a
-                      href={`tel:${client.phone}`}
-                      className="text-neutral-900 font-semibold hover:text-primary-600 transition-colors"
-                    >
-                      {client.phone}
-                    </a>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faMapMarkerAlt}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">Location</p>
-                    <p className="text-neutral-900 font-semibold">
-                      {client.city}, {client.state}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <FontAwesomeIcon
-                      icon={faCalendar}
-                      className="text-primary-600"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-600 body-small mb-1">
-                      Client Since
-                    </p>
-                    <p className="text-neutral-900 font-semibold">
-                      {new Date(client.created_at).toLocaleDateString("en-US", {
-                        month: "long",
-                        day: "numeric",
-                        year: "numeric",
-                      })}
-                    </p>
-                  </div>
-                </div>
+                <h2
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
+                  Contact Information
+                </h2>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <InfoRow
+                  icon={<FontAwesomeIcon icon={faEnvelope} />}
+                  label="Email"
+                >
+                  <a
+                    href={`mailto:${client.email}`}
+                    style={{ color: "#1ab189", textDecoration: "none" }}
+                    onMouseEnter={(e) => {
+                      (
+                        e.currentTarget as HTMLAnchorElement
+                      ).style.textDecoration = "underline";
+                    }}
+                    onMouseLeave={(e) => {
+                      (
+                        e.currentTarget as HTMLAnchorElement
+                      ).style.textDecoration = "none";
+                    }}
+                  >
+                    {client.email}
+                  </a>
+                </InfoRow>
+                <InfoRow
+                  icon={<FontAwesomeIcon icon={faPhone} />}
+                  label="Phone"
+                >
+                  <a
+                    href={`tel:${client.phone}`}
+                    style={{ color: "#1ab189", textDecoration: "none" }}
+                    onMouseEnter={(e) => {
+                      (
+                        e.currentTarget as HTMLAnchorElement
+                      ).style.textDecoration = "underline";
+                    }}
+                    onMouseLeave={(e) => {
+                      (
+                        e.currentTarget as HTMLAnchorElement
+                      ).style.textDecoration = "none";
+                    }}
+                  >
+                    {client.phone}
+                  </a>
+                </InfoRow>
+                <InfoRow
+                  icon={<FontAwesomeIcon icon={faMapMarkerAlt} />}
+                  label="Location"
+                >
+                  {client.city}, {client.state}
+                </InfoRow>
+                <InfoRow
+                  icon={<FontAwesomeIcon icon={faCalendar} />}
+                  label="Client Since"
+                >
+                  {new Date(client.created_at).toLocaleDateString("en-US", {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </InfoRow>
               </div>
             </div>
 
-            {/* Address Information Card */}
+            {/* Address */}
             {client.address && (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-                <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                  <FontAwesomeIcon
-                    icon={faMapMarkerAlt}
-                    className="text-primary-600"
-                  />
-                  Address Details
-                </h2>
-
+              <div
+                className="rounded-2xl"
+                style={{
+                  backgroundColor: "var(--color-neutral-0)",
+                  border: "1px solid var(--color-neutral-200)",
+                  padding: "1.5rem",
+                }}
+              >
+                <div className="flex items-center gap-3 mb-5">
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                  >
+                    <FontAwesomeIcon
+                      icon={faMapMarkerAlt}
+                      style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                    />
+                  </div>
+                  <h2
+                    className="font-semibold"
+                    style={{
+                      fontSize: "1rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    Address Details
+                  </h2>
+                </div>
                 <div className="space-y-4">
                   <div>
-                    <p className="text-neutral-600 body-small mb-1">
+                    <p
+                      style={{
+                        fontSize: "0.72rem",
+                        color: "var(--color-neutral-400)",
+                        marginBottom: "0.25rem",
+                        fontWeight: 600,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
                       Street Address
                     </p>
-                    <p className="text-neutral-900 font-semibold">
+                    <p
+                      className="font-medium"
+                      style={{
+                        fontSize: "0.9rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
                       {client.address}
                     </p>
                   </div>
                   <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <p className="text-neutral-600 body-small mb-1">City</p>
-                      <p className="text-neutral-900 font-semibold">
-                        {client.city}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-neutral-600 body-small mb-1">State</p>
-                      <p className="text-neutral-900 font-semibold">
-                        {client.state}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-neutral-600 body-small mb-1">
-                        Postal Code
-                      </p>
-                      <p className="text-neutral-900 font-semibold">
-                        {client.postal_code || "N/A"}
-                      </p>
-                    </div>
+                    {[
+                      { label: "City", value: client.city },
+                      { label: "State", value: client.state },
+                      {
+                        label: "Postal Code",
+                        value: client.postal_code ?? "N/A",
+                      },
+                    ].map(({ label, value }) => (
+                      <div key={label}>
+                        <p
+                          style={{
+                            fontSize: "0.72rem",
+                            color: "var(--color-neutral-400)",
+                            marginBottom: "0.25rem",
+                            fontWeight: 600,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                          }}
+                        >
+                          {label}
+                        </p>
+                        <p
+                          className="font-medium"
+                          style={{
+                            fontSize: "0.9rem",
+                            color: "var(--color-neutral-900)",
+                          }}
+                        >
+                          {value}
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Statistics Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                <FontAwesomeIcon
-                  icon={faCheckCircle}
-                  className="text-primary-600"
-                />
-                Project Statistics
-              </h2>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-4 bg-neutral-50 rounded-lg text-center">
-                  <p className="text-neutral-600 body-small mb-2">Total</p>
-                  <p className="text-neutral-900 font-semibold text-2xl">
-                    {client.stats.total_projects}
-                  </p>
+            {/* Statistics */}
+            <div
+              className="rounded-2xl"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                border: "1px solid var(--color-neutral-200)",
+                padding: "1.5rem",
+              }}
+            >
+              <div className="flex items-center gap-3 mb-5">
+                <div
+                  className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                >
+                  <FontAwesomeIcon
+                    icon={faCheckCircle}
+                    style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                  />
                 </div>
-                <div className="p-4 bg-blue-50 rounded-lg text-center">
-                  <p className="text-neutral-600 body-small mb-2">Active</p>
-                  <p className="text-blue-600 font-semibold text-2xl">
-                    {client.stats.active_projects}
-                  </p>
-                </div>
-                <div className="p-4 bg-green-50 rounded-lg text-center">
-                  <p className="text-neutral-600 body-small mb-2">Completed</p>
-                  <p className="text-green-600 font-semibold text-2xl">
-                    {client.stats.completed_projects}
-                  </p>
-                </div>
-                <div className="p-4 bg-primary-50 rounded-lg text-center">
-                  <p className="text-neutral-600 body-small mb-2">
-                    Total Spent
-                  </p>
-                  <p className="text-primary-600 font-semibold text-lg">
-                    {formatCurrency(client.stats.total_spent)}
-                  </p>
-                </div>
+                <h2
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
+                  Project Statistics
+                </h2>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  {
+                    label: "Total",
+                    value: client.stats.total_projects,
+                    bg: "var(--color-neutral-50)",
+                    color: "var(--color-neutral-900)",
+                    isText: false,
+                  },
+                  {
+                    label: "Active",
+                    value: client.stats.active_projects,
+                    bg: "#eff6ff",
+                    color: "#1d4ed8",
+                    isText: false,
+                  },
+                  {
+                    label: "Completed",
+                    value: client.stats.completed_projects,
+                    bg: "#f0fdf4",
+                    color: "#15803d",
+                    isText: false,
+                  },
+                  {
+                    label: "Total Spent",
+                    value: formatCurrency(client.stats.total_spent),
+                    bg: "rgba(26,177,137,0.06)",
+                    color: "#1ab189",
+                    isText: true,
+                  },
+                ].map(({ label, value, bg, color, isText }) => (
+                  <div
+                    key={label}
+                    className="rounded-xl text-center p-4"
+                    style={{ backgroundColor: bg }}
+                  >
+                    <p
+                      style={{
+                        fontSize: "0.72rem",
+                        color: "var(--color-neutral-500)",
+                        marginBottom: "0.5rem",
+                      }}
+                    >
+                      {label}
+                    </p>
+                    <p
+                      className="font-bold"
+                      style={{ fontSize: isText ? "1rem" : "1.5rem", color }}
+                    >
+                      {value}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* Projects List */}
+            {/* Projects list */}
             {client.projects && client.projects.length > 0 && (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-                <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                  <FontAwesomeIcon
-                    icon={faFolder}
-                    className="text-primary-600"
-                  />
-                  Projects ({client.projects.length})
-                </h2>
-
-                <div className="space-y-4">
+              <div
+                className="rounded-2xl"
+                style={{
+                  backgroundColor: "var(--color-neutral-0)",
+                  border: "1px solid var(--color-neutral-200)",
+                  padding: "1.5rem",
+                }}
+              >
+                <div className="flex items-center gap-3 mb-5">
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                  >
+                    <FontAwesomeIcon
+                      icon={faFolder}
+                      style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                    />
+                  </div>
+                  <h2
+                    className="font-semibold"
+                    style={{
+                      fontSize: "1rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    Projects ({client.projects.length})
+                  </h2>
+                </div>
+                <div className="space-y-3">
                   {client.projects.map((project) => (
                     <div
                       key={project.id}
-                      className="p-4 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors"
+                      className="rounded-xl"
+                      style={{
+                        padding: "0.875rem 1rem",
+                        border: "1px solid var(--color-neutral-200)",
+                        transition: "background-color 120ms",
+                      }}
+                      onMouseEnter={(e) => {
+                        (
+                          e.currentTarget as HTMLDivElement
+                        ).style.backgroundColor = "var(--color-neutral-50)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (
+                          e.currentTarget as HTMLDivElement
+                        ).style.backgroundColor = "transparent";
+                      }}
                     >
-                      <div className="flex items-start justify-between mb-2">
-                        <h3 className="font-semibold text-neutral-900">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <h3
+                          className="font-semibold"
+                          style={{
+                            fontSize: "0.9rem",
+                            color: "var(--color-neutral-900)",
+                          }}
+                        >
                           {project.name}
                         </h3>
-                        {getStatusBadge(project.status)}
+                        <StatusBadge status={project.status} />
                       </div>
-                      <div className="flex items-center gap-4 text-sm text-neutral-600">
+                      <div
+                        className="flex items-center gap-4"
+                        style={{
+                          fontSize: "0.78rem",
+                          color: "var(--color-neutral-500)",
+                        }}
+                      >
                         {project.start_date && (
-                          <span className="flex items-center gap-1">
+                          <span className="flex items-center gap-1.5">
                             <FontAwesomeIcon
                               icon={faCalendar}
-                              className="text-xs"
+                              style={{ fontSize: "0.65rem" }}
                             />
                             {new Date(project.start_date).toLocaleDateString(
                               "en-US",
@@ -457,14 +867,17 @@ export default function ViewClientPage() {
                                 month: "short",
                                 day: "numeric",
                                 year: "numeric",
-                              }
+                              },
                             )}
                           </span>
                         )}
-                        <span className="flex items-center gap-1 font-semibold text-green-600">
+                        <span
+                          className="flex items-center gap-1.5 font-semibold"
+                          style={{ color: "#15803d" }}
+                        >
                           <FontAwesomeIcon
                             icon={faDollarSign}
-                            className="text-xs"
+                            style={{ fontSize: "0.65rem" }}
                           />
                           {formatCurrency(project.total_cost)}
                         </span>
@@ -478,29 +891,67 @@ export default function ViewClientPage() {
         </div>
       </div>
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete confirmation modal */}
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-md w-full">
-            <div className="p-6">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-2xl max-w-md w-full"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div style={{ padding: "1.75rem" }}>
+              <div
+                className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+                style={{ backgroundColor: "#fef2f2" }}
+              >
                 <FontAwesomeIcon
                   icon={faExclamationTriangle}
-                  className="text-red-600 text-xl"
+                  style={{ color: "#ef4444", fontSize: "1.1rem" }}
                 />
               </div>
-              <h3 className="heading-4 text-neutral-900 text-center mb-2">
+              <h3
+                className="font-semibold text-center mb-2"
+                style={{
+                  fontSize: "1.0625rem",
+                  color: "var(--color-neutral-900)",
+                }}
+              >
                 Delete Client?
               </h3>
-              <p className="text-neutral-600 text-center mb-6">
-                Are you sure you want to delete "{client.full_name}"? This
-                action cannot be undone.
+              <p
+                className="text-center mb-4"
+                style={{
+                  fontSize: "0.875rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
+                Are you sure you want to delete &quot;{client.full_name}&quot;?
+                This action cannot be undone.
               </p>
 
               {client.project_count > 0 && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-                  <p className="text-red-700 text-sm font-medium flex items-center gap-2">
-                    <FontAwesomeIcon icon={faExclamationTriangle} />
+                <div
+                  className="rounded-xl flex items-start gap-3 px-4 py-3 mb-5"
+                  style={{
+                    backgroundColor: "#fef2f2",
+                    border: "1px solid #fecaca",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faExclamationTriangle}
+                    style={{
+                      color: "#ef4444",
+                      fontSize: "0.8rem",
+                      marginTop: "0.1rem",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <p style={{ fontSize: "0.8rem", color: "#b91c1c" }}>
                     This client has {client.project_count} associated project
                     {client.project_count !== 1 ? "s" : ""}. The client will be
                     soft deleted (deactivated) to preserve project data.
@@ -512,26 +963,36 @@ export default function ViewClientPage() {
                 <button
                   onClick={() => setShowDeleteModal(false)}
                   disabled={deleteMutation.isPending}
-                  className="flex-1 px-5 py-3 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-50 transition-colors disabled:opacity-50"
+                  className="btn btn-ghost btn-md flex-1 justify-center"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleDelete}
+                  onClick={() => deleteMutation.mutate()}
                   disabled={deleteMutation.isPending}
-                  className="flex-1 px-5 py-3 bg-red-600 text-neutral-0 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="btn btn-md flex-1 justify-center flex items-center gap-2"
+                  style={{
+                    backgroundColor: "#ef4444",
+                    color: "white",
+                    border: "none",
+                    opacity: deleteMutation.isPending ? 0.6 : 1,
+                  }}
                 >
                   {deleteMutation.isPending ? (
                     <>
                       <FontAwesomeIcon
                         icon={faSpinner}
                         className="animate-spin"
-                      />
-                      Deleting...
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
+                      Deleting…
                     </>
                   ) : (
                     <>
-                      <FontAwesomeIcon icon={faTrash} />
+                      <FontAwesomeIcon
+                        icon={faTrash}
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
                       Delete Client
                     </>
                   )}

@@ -5,7 +5,6 @@ import {
   faPaperPlane,
   faImage,
   faVideo,
-  faEllipsisVertical,
   faCheck,
   faCheckDouble,
   faTimes,
@@ -13,6 +12,7 @@ import {
   faSpinner,
   faExclamationTriangle,
   faCloudUpload,
+  faEllipsisVertical,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -21,9 +21,7 @@ import { api } from "@/lib/api";
 import { isAuthenticated } from "@/lib/auth";
 import { uploadMessageMedia } from "@/lib/storageService";
 
-// ==================================================================================
-// TYPE DEFINITIONS
-// ==================================================================================
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Message {
   id: number;
@@ -32,7 +30,6 @@ interface Message {
   timestamp: string;
   type: "text" | "image" | "video" | "file";
   mediaUrl?: string | null;
-  fileName?: string | null;
   status: "sent" | "delivered" | "read";
   sender_type: "client" | "service_provider";
   sender_name: string;
@@ -69,360 +66,334 @@ interface MediaPreviewFile {
   error?: string;
 }
 
-// ==================================================================================
-// HELPER FUNCTIONS
-// ==================================================================================
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const formatTime = (dateString: string) => {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
+const AVATAR_COLORS = [
+  "#1ab189",
+  "#8b5cf6",
+  "#3b82f6",
+  "#f59e0b",
+  "#ec4899",
+  "#06b6d4",
+];
 
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-  return date.toLocaleDateString();
+const formatTime = (d: string) => {
+  if (!d) return "";
+  const diff = Date.now() - new Date(d).getTime();
+  const m = Math.floor(diff / 60000),
+    h = Math.floor(diff / 3600000),
+    dy = Math.floor(diff / 86400000);
+  if (m < 1) return "Just now";
+  if (m < 60) return `${m}m ago`;
+  if (h < 24) return `${h}h ago`;
+  if (dy < 7) return `${dy}d ago`;
+  return new Date(d).toLocaleDateString();
 };
 
-// ==================================================================================
-// MAIN COMPONENT
-// ==================================================================================
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ClientMessagesPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [selectedConversationId, setSelectedConversationId] = useState<
-    number | null
-  >(null);
-  const [messageInput, setMessageInput] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showMediaPreview, setShowMediaPreview] = useState(false);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [input, setInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [showPreview, setShowPreview] = useState(false);
   const [previewFile, setPreviewFile] = useState<MediaPreviewFile | null>(null);
-  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
 
-  // ==================================================================================
-  // DATA FETCHING
-  // ==================================================================================
-
-  // Fetch conversations
+  // ── Conversations ──
   const {
-    data: conversationsData = [],
-    isLoading: conversationsLoading,
-    error: conversationsError,
-  } = useQuery({
+    data: convs = [],
+    isLoading: convsLoading,
+    isError: convsError,
+  } = useQuery<Conversation[]>({
     queryKey: ["client-conversations"],
     queryFn: async () => {
       if (!isAuthenticated()) {
         router.push("/login?type=client&session=expired");
         throw new Error("Not authenticated");
       }
-
-      const response = await api.get<Conversation[]>(
+      const res = await api.get<Record<string, unknown>[]>(
         "/api/v1/messages/conversations/",
       );
-
-      // Transform to match frontend format
-      return response.map((conv: any) => {
-        const providerName =
-          conv.service_provider?.business_name ||
-          conv.service_provider?.full_name ||
-          "Provider";
-        const initials = providerName
-          .split(" ")
-          .map((n: string) => n[0])
-          .join("")
-          .toUpperCase()
-          .slice(0, 2);
-        const colors = [
-          "bg-primary-600",
-          "bg-secondary-600",
-          "bg-purple-600",
-          "bg-blue-600",
-        ];
-
+      return res.map((c) => {
+        const sp = c.service_provider as {
+          business_name?: string;
+          full_name?: string;
+          profile_image?: string;
+        } | null;
+        const name = sp?.business_name || sp?.full_name || "Provider";
+        const id = c.id as number;
         return {
-          id: conv.id,
-          name: providerName,
-          initials,
-          avatar: conv.service_provider?.profile_image,
-          lastMessage: conv.last_message?.message_text || "No messages yet",
-          lastMessageTime: formatTime(conv.last_message_at || conv.created_at),
-          unreadCount: 0, // Backend will provide this via annotation
-          isOnline: false, // Can be enhanced with real-time status
-          color: colors[conv.id % colors.length],
-          service_provider: conv.service_provider,
-          is_active: conv.is_active,
+          id,
+          name,
+          initials: name
+            .split(" ")
+            .map((n: string) => n[0])
+            .join("")
+            .toUpperCase()
+            .slice(0, 2),
+          avatar: sp?.profile_image || null,
+          lastMessage:
+            (c.last_message as { message_text?: string } | null)
+              ?.message_text || "No messages yet",
+          lastMessageTime: formatTime(
+            (c.last_message_at as string) || (c.created_at as string),
+          ),
+          unreadCount: 0,
+          isOnline: false,
+          color: AVATAR_COLORS[id % AVATAR_COLORS.length],
+          service_provider:
+            c.service_provider as Conversation["service_provider"],
+          is_active: (c.is_active as boolean) ?? true,
         };
       });
     },
     refetchInterval: 5000,
   });
 
-  // Fetch messages for selected conversation
+  // ── Messages ──
   const {
-    data: messagesData = [],
-    isLoading: messagesLoading,
-    error: messagesError,
-  } = useQuery({
-    queryKey: ["client-messages", selectedConversationId],
+    data: msgs,
+    isLoading: msgsLoading,
+    isError: msgsError,
+  } = useQuery<Message[]>({
+    queryKey: ["client-messages", selectedId],
     queryFn: async () => {
-      if (!selectedConversationId) return [];
-
-      const response = await api.get<{ results: any[] }>(
-        `/api/v1/messages/conversations/${selectedConversationId}/messages/`,
+      if (!selectedId) return [];
+      const res = await api.get<{ results: Record<string, unknown>[] }>(
+        `/api/v1/messages/conversations/${selectedId}/messages/`,
       );
-
-      // Transform messages and sort by timestamp
-      const messages = response.results.map((msg: any) => ({
-        id: msg.id,
-        senderId: msg.sender_type,
-        content: msg.message_text || "",
-        timestamp: msg.created_at,
-        type: msg.message_type || "text",
-        mediaUrl: msg.file_url,
-        fileName: null,
-        status: msg.is_read ? "read" : "delivered",
-        sender_type: msg.sender_type,
-        sender_name: msg.sender_name,
-        sender_image: msg.sender_image,
-        is_read: msg.is_read,
-      }));
-
-      return messages.sort(
-        (a: Message, b: Message) =>
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-      );
+      return (res.results || [])
+        .map((m) => ({
+          id: m.id as number,
+          senderId: m.sender_type as string,
+          content: (m.message_text as string) || "",
+          timestamp: m.created_at as string,
+          type: (m.message_type as Message["type"]) || "text",
+          mediaUrl: m.file_url as string | null,
+          status: (m.is_read as boolean)
+            ? "read"
+            : ("delivered" as Message["status"]),
+          sender_type: m.sender_type as "client" | "service_provider",
+          sender_name: m.sender_name as string,
+          sender_image: (m.sender_image as string | null) || null,
+          is_read: (m.is_read as boolean) || false,
+        }))
+        .sort(
+          (a, b) =>
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+        );
     },
-    enabled: !!selectedConversationId,
+    enabled: !!selectedId,
     refetchInterval: 3000,
   });
 
-  // ==================================================================================
-  // MUTATIONS
-  // ==================================================================================
-
-  // Send message mutation
-  const sendMessageMutation = useMutation({
-    mutationFn: async (data: {
-      messageText: string;
-      previewFile: MediaPreviewFile | null;
+  // ── Send ──
+  const sendMutation = useMutation({
+    mutationFn: async ({
+      text,
+      file,
+    }: {
+      text: string;
+      file: MediaPreviewFile | null;
     }) => {
-      if (!selectedConversationId) throw new Error("No conversation selected");
-
-      let messageData: any = {
-        message_text: data.messageText,
+      if (!selectedId) throw new Error("No conversation selected");
+      const payload: Record<string, unknown> = {
+        message_text: text,
         message_type: "text",
       };
-
-      // Upload media to Supabase if there's a file
-      if (data.previewFile) {
-        setIsUploadingMedia(true);
-        setPreviewFile((prev) =>
-          prev ? { ...prev, uploadStatus: "uploading" } : null,
-        );
-
+      if (file) {
+        setUploading(true);
+        setPreviewFile((p) => (p ? { ...p, uploadStatus: "uploading" } : null));
         try {
-          const uploadResult = await uploadMessageMedia(data.previewFile.file, {
-            folder: `messages/${selectedConversationId}`,
+          const r = await uploadMessageMedia(file.file, {
+            folder: `messages/${selectedId}`,
           });
-
-          if (uploadResult.success && uploadResult.publicUrl) {
-            setPreviewFile((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    uploadStatus: "uploaded",
-                    uploadedUrl: uploadResult.publicUrl,
-                  }
+          if (r.success && r.publicUrl) {
+            setPreviewFile((p) =>
+              p
+                ? { ...p, uploadStatus: "uploaded", uploadedUrl: r.publicUrl }
                 : null,
             );
-
-            messageData.file_url = uploadResult.publicUrl;
-            messageData.message_type = data.previewFile.type.startsWith("image")
+            payload.file_url = r.publicUrl;
+            payload.message_type = file.type.startsWith("image")
               ? "image"
               : "video";
-          } else {
-            throw new Error(uploadResult.error || "Upload failed");
-          }
-        } catch (error) {
-          setPreviewFile((prev) =>
-            prev
+          } else throw new Error(r.error || "Upload failed");
+        } catch (e) {
+          setPreviewFile((p) =>
+            p
               ? {
-                  ...prev,
+                  ...p,
                   uploadStatus: "failed",
-                  error:
-                    error instanceof Error ? error.message : "Upload failed",
+                  error: e instanceof Error ? e.message : "Upload failed",
                 }
               : null,
           );
-          setIsUploadingMedia(false);
-          throw error;
+          setUploading(false);
+          throw e;
         }
-
-        setIsUploadingMedia(false);
+        setUploading(false);
       }
-
-      // Send message to backend
       return api.post(
-        `/api/v1/messages/conversations/${selectedConversationId}/messages/send/`,
-        messageData,
+        `/api/v1/messages/conversations/${selectedId}/messages/send/`,
+        payload,
       );
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["client-messages", selectedConversationId],
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["client-messages", selectedId],
       });
-      queryClient.invalidateQueries({ queryKey: ["client-conversations"] });
-      setMessageInput("");
+      await queryClient.invalidateQueries({
+        queryKey: ["client-conversations"],
+      });
+      setInput("");
       setPreviewFile(null);
-      setShowMediaPreview(false);
+      setShowPreview(false);
+      setUploading(false);
     },
-    onError: (error: any) => {
-      setIsUploadingMedia(false);
-      alert(`Failed to send message: ${error.message || "Unknown error"}`);
-    },
-  });
-
-  // Mark conversation as read
-  const markReadMutation = useMutation({
-    mutationFn: async (conversationId: number) => {
-      return api.post(
-        `/api/v1/messages/conversations/${conversationId}/mark-read/`,
-        {},
+    onError: (e: unknown) => {
+      setUploading(false);
+      alert(
+        `Failed to send: ${(e as { message?: string }).message ?? "Unknown error"}`,
       );
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["client-conversations"] });
-    },
   });
 
-  // ==================================================================================
-  // HANDLERS
-  // ==================================================================================
+  const markReadMutation = useMutation({
+    mutationFn: (id: number) =>
+      api.post(`/api/v1/messages/conversations/${id}/mark-read/`, {}),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["client-conversations"] }),
+  });
 
-  const handleSendMessage = () => {
-    if (!messageInput.trim() && !previewFile) return;
-
-    sendMessageMutation.mutate({
-      messageText: messageInput.trim(),
-      previewFile,
-    });
+  // ── Handlers ──
+  const handleSend = () => {
+    if (!input.trim() && !previewFile) return;
+    sendMutation.mutate({ text: input.trim(), file: previewFile });
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const isImage = file.type.startsWith("image/");
-    const isVideo = file.type.startsWith("video/");
-
-    if (!isImage && !isVideo) {
-      alert("Please select a valid image or video file");
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const isImg = f.type.startsWith("image/"),
+      isVid = f.type.startsWith("video/");
+    if (!isImg && !isVid) {
+      alert("Select an image or video file");
       return;
     }
-
-    const maxSize = isVideo ? 100 * 1024 * 1024 : 5 * 1024 * 1024;
-    if (file.size > maxSize) {
-      alert(`File is too large. Maximum size is ${isVideo ? 100 : 5}MB`);
+    if (f.size > (isVid ? 100 : 5) * 1024 * 1024) {
+      alert(`Max ${isVid ? "100" : "5"}MB`);
       return;
     }
-
-    const fileUrl = URL.createObjectURL(file);
     setPreviewFile({
-      file,
-      type: file.type,
-      url: fileUrl,
-      name: file.name,
+      file: f,
+      type: f.type,
+      url: URL.createObjectURL(f),
+      name: f.name,
       uploadStatus: "pending",
     });
-    setShowMediaPreview(true);
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    setShowPreview(true);
+    if (fileRef.current) fileRef.current.value = "";
   };
 
   const cancelPreview = () => {
-    if (previewFile) {
-      URL.revokeObjectURL(previewFile.url);
-    }
+    if (previewFile) URL.revokeObjectURL(previewFile.url);
     setPreviewFile(null);
-    setShowMediaPreview(false);
-    setIsUploadingMedia(false);
+    setShowPreview(false);
+    setUploading(false);
+  };
+  const selectConv = (id: number) => {
+    setSelectedId(id);
+    const c = convs.find((x) => x.id === id);
+    if (c?.unreadCount) markReadMutation.mutate(id);
   };
 
-  const handleConversationSelect = (conversationId: number) => {
-    setSelectedConversationId(conversationId);
-    markReadMutation.mutate(conversationId);
-  };
-
-  const getMessageStatus = (status: Message["status"]) => {
-    if (status === "sent")
-      return <FontAwesomeIcon icon={faCheck} className="w-3 h-3" />;
-    if (status === "delivered")
+  const msgStatus = (s: Message["status"]) => {
+    if (s === "sent")
+      return (
+        <FontAwesomeIcon
+          icon={faCheck}
+          style={{ fontSize: "0.6rem", color: "rgba(255,255,255,0.6)" }}
+        />
+      );
+    if (s === "delivered")
       return (
         <FontAwesomeIcon
           icon={faCheckDouble}
-          className="w-3 h-3 text-neutral-400"
+          style={{ fontSize: "0.6rem", color: "rgba(255,255,255,0.6)" }}
         />
       );
     return (
       <FontAwesomeIcon
         icon={faCheckDouble}
-        className="w-3 h-3 text-primary-600"
+        style={{ fontSize: "0.6rem", color: "#93c5fd" }}
       />
     );
   };
 
-  const filteredConversations = conversationsData.filter((conv) =>
-    conv.name.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
-
-  const currentConversation = conversationsData.find(
-    (c) => c.id === selectedConversationId,
+  const messages = msgs ?? [];
+  const currentConv = convs.find((c) => c.id === selectedId);
+  const filteredConvs = convs.filter((c) =>
+    c.name.toLowerCase().includes(search.toLowerCase()),
   );
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messagesData]);
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
-  // ==================================================================================
-  // LOADING & ERROR STATES
-  // ==================================================================================
-
-  if (conversationsLoading) {
+  // ── States ──
+  if (convsLoading)
     return (
-      <div className="flex items-center justify-center min-h-screen bg-neutral-50">
+      <div
+        className="flex items-center justify-center min-h-screen"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            spin
-            className="w-8 h-8 text-primary-600 mb-4"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading conversations...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading conversations…
+          </p>
         </div>
       </div>
     );
-  }
 
-  if (conversationsError) {
+  if (convsError)
     return (
-      <div className="flex items-center justify-center min-h-screen bg-neutral-50">
-        <div className="text-center max-w-md px-6">
-          <FontAwesomeIcon
-            icon={faExclamationTriangle}
-            className="w-16 h-16 text-red-500 mb-4"
-          />
-          <h2 className="heading-3 text-neutral-900 mb-2">
+      <div
+        className="flex items-center justify-center min-h-screen"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
+        <div className="text-center max-w-sm px-6">
+          <div
+            className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
+            style={{ backgroundColor: "#fef2f2" }}
+          >
+            <FontAwesomeIcon
+              icon={faExclamationTriangle}
+              style={{ color: "#ef4444", fontSize: "1.5rem" }}
+            />
+          </div>
+          <h2
+            className="font-bold mb-2"
+            style={{ fontSize: "1.125rem", color: "var(--color-neutral-900)" }}
+          >
             Error Loading Conversations
           </h2>
-          <p className="body-regular text-neutral-600 mb-6">
+          <p
+            className="mb-5"
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
             Failed to load your conversations.
           </p>
           <button
@@ -431,456 +402,919 @@ export default function ClientMessagesPage() {
                 queryKey: ["client-conversations"],
               })
             }
-            className="btn-primary"
+            className="btn btn-primary btn-md"
           >
             Retry
           </button>
         </div>
       </div>
     );
-  }
 
-  // ==================================================================================
-  // RENDER
-  // ==================================================================================
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-screen bg-neutral-50 overflow-hidden">
-      <div className="flex-1 flex flex-col lg:flex-row max-w-[1920px] mx-auto w-full overflow-hidden">
-        {/* Upload Progress Toast */}
-        {isUploadingMedia && (
-          <div className="fixed top-8 right-8 z-50 animate-slide-in-right">
-            <div className="bg-blue-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3">
+    <div
+      className="flex overflow-hidden"
+      style={{ height: "100vh", backgroundColor: "var(--color-neutral-50)" }}
+    >
+      <style>{`
+        .animate-spin  { animation: spin 1s linear infinite; }
+        .animate-pulse { animation: pulse 2s cubic-bezier(.4,0,.6,1) infinite; }
+        @keyframes spin  { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.5} }
+      `}</style>
+
+      {/* Upload toast */}
+      {uploading && (
+        <div className="fixed top-5 right-5 z-[60]">
+          <div
+            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+            style={{
+              backgroundColor: "var(--color-neutral-900)",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.2)",
+              minWidth: "17rem",
+            }}
+          >
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center"
+              style={{ backgroundColor: "#1ab189" }}
+            >
               <FontAwesomeIcon
-                icon={faSpinner}
-                className="animate-spin text-xl"
+                icon={faCloudUpload}
+                className="animate-pulse"
+                style={{ color: "white", fontSize: "0.75rem" }}
               />
-              <div>
-                <p className="font-semibold">Uploading to Cloud...</p>
-                <p className="text-blue-100 text-sm">
-                  Please wait while your file is being uploaded
-                </p>
-              </div>
+            </div>
+            <div>
+              <p
+                className="font-semibold"
+                style={{ fontSize: "0.875rem", color: "white" }}
+              >
+                Uploading to Cloud…
+              </p>
+              <p
+                style={{ fontSize: "0.72rem", color: "rgba(255,255,255,0.6)" }}
+              >
+                Please wait while your file uploads
+              </p>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Main Chat Area */}
-        {selectedConversationId ? (
-          <div className="flex-1 flex flex-col bg-white lg:border-r border-neutral-200 overflow-hidden">
-            {/* Chat Header */}
-            <div className="bg-white border-b border-neutral-200 px-6 py-4 flex items-center justify-between flex-shrink-0">
+      <div
+        className="flex-1 flex overflow-hidden"
+        style={{ maxWidth: "1920px", margin: "0 auto", width: "100%" }}
+      >
+        {/* ── Chat area ── */}
+        {selectedId ? (
+          <div
+            className="flex-1 flex flex-col overflow-hidden"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              borderRight: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            {/* Header */}
+            <div
+              className="flex items-center justify-between flex-shrink-0"
+              style={{
+                padding: "1rem 1.5rem",
+                borderBottom: "1px solid var(--color-neutral-200)",
+              }}
+            >
               <div className="flex items-center gap-3">
-                <div className="relative">
-                  {currentConversation?.avatar ? (
+                <div className="relative flex-shrink-0">
+                  {currentConv?.avatar ? (
                     <img
-                      src={currentConversation.avatar}
-                      alt={currentConversation.name}
+                      src={currentConv.avatar}
+                      alt={currentConv.name}
                       className="w-10 h-10 rounded-full object-cover"
                     />
                   ) : (
                     <div
-                      className={`w-10 h-10 rounded-full ${currentConversation?.color} flex items-center justify-center text-white font-semibold`}
+                      className="w-10 h-10 rounded-full flex items-center justify-center font-semibold"
+                      style={{
+                        backgroundColor: currentConv?.color ?? "#1ab189",
+                        color: "white",
+                        fontSize: "0.875rem",
+                      }}
                     >
-                      {currentConversation?.initials}
+                      {currentConv?.initials}
                     </div>
                   )}
-                  {currentConversation?.isOnline && (
-                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
+                  {currentConv?.isOnline && (
+                    <div
+                      className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2"
+                      style={{
+                        backgroundColor: "#22c55e",
+                        borderColor: "white",
+                      }}
+                    />
                   )}
                 </div>
                 <div>
-                  <h2 className="font-semibold text-neutral-900">
-                    {currentConversation?.name}
+                  <h2
+                    className="font-semibold"
+                    style={{
+                      fontSize: "0.9375rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    {currentConv?.name}
                   </h2>
-                  <p className="text-xs text-neutral-500">
-                    {currentConversation?.isOnline ? "Online" : "Offline"}
+                  <p
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    {currentConv?.isOnline ? "Online" : "Offline"}
                   </p>
                 </div>
               </div>
-              <button className="p-2 hover:bg-neutral-100 rounded-lg transition-colors">
+              <button
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "0.5rem",
+                  borderRadius: "0.5rem",
+                  color: "var(--color-neutral-500)",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "var(--color-neutral-100)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "transparent";
+                }}
+              >
                 <FontAwesomeIcon
                   icon={faEllipsisVertical}
-                  className="w-5 h-5 text-neutral-600"
+                  style={{ fontSize: "1.125rem" }}
                 />
               </button>
             </div>
 
-            {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-              {messagesLoading ? (
+            {/* Messages */}
+            <div
+              className="flex-1 overflow-y-auto"
+              style={{ padding: "1.25rem 1.5rem" }}
+            >
+              {msgsLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <FontAwesomeIcon
                     icon={faSpinner}
-                    spin
-                    className="w-8 h-8 text-primary-600"
+                    className="animate-spin"
+                    style={{ fontSize: "2rem", color: "#1ab189" }}
                   />
                 </div>
-              ) : messagesError ? (
-                <div className="flex items-center justify-center h-full text-red-500">
-                  Failed to load messages
+              ) : msgsError ? (
+                <div className="flex items-center justify-center h-full">
+                  <p style={{ color: "#ef4444", fontSize: "0.875rem" }}>
+                    Failed to load messages
+                  </p>
                 </div>
-              ) : messagesData.length === 0 ? (
+              ) : messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
-                  <div className="w-20 h-20 bg-neutral-100 rounded-full flex items-center justify-center mb-4">
+                  <div
+                    className="w-16 h-16 rounded-full flex items-center justify-center mb-4"
+                    style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                  >
                     <FontAwesomeIcon
                       icon={faPaperPlane}
-                      className="w-8 h-8 text-neutral-400"
+                      style={{ fontSize: "1.5rem", color: "#1ab189" }}
                     />
                   </div>
-                  <p className="text-neutral-600 font-medium mb-1">
+                  <p
+                    className="font-semibold mb-1"
+                    style={{ color: "var(--color-neutral-700)" }}
+                  >
                     No messages yet
                   </p>
-                  <p className="text-neutral-500 text-sm">
+                  <p
+                    style={{
+                      fontSize: "0.8125rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
                     Start the conversation by sending a message
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {messagesData.map((message) => {
-                    const isMine = message.sender_type === "client";
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.75rem",
+                  }}
+                >
+                  {messages.map((msg) => {
+                    const mine = msg.sender_type === "client";
                     return (
                       <div
-                        key={message.id}
-                        className={`flex ${isMine ? "justify-end" : "justify-start"}`}
+                        key={msg.id}
+                        style={{
+                          display: "flex",
+                          justifyContent: mine ? "flex-end" : "flex-start",
+                        }}
                       >
-                        <div
-                          className={`max-w-[70%] ${isMine ? "items-end" : "items-start"}`}
-                        >
-                          {message.type === "text" && (
+                        <div style={{ maxWidth: "70%" }}>
+                          {msg.type === "text" && (
                             <div
-                              className={`px-4 py-2.5 rounded-2xl ${isMine ? "bg-primary-600 text-white rounded-br-sm" : "bg-neutral-100 text-neutral-900 rounded-bl-sm"}`}
+                              style={{
+                                padding: "0.625rem 1rem",
+                                borderRadius: "1rem",
+                                borderBottomRightRadius: mine
+                                  ? "0.25rem"
+                                  : "1rem",
+                                borderBottomLeftRadius: mine
+                                  ? "1rem"
+                                  : "0.25rem",
+                                backgroundColor: mine
+                                  ? "#1ab189"
+                                  : "var(--color-neutral-100)",
+                                color: mine
+                                  ? "white"
+                                  : "var(--color-neutral-900)",
+                                fontSize: "0.875rem",
+                                lineHeight: 1.5,
+                                whiteSpace: "pre-wrap",
+                                wordBreak: "break-word",
+                              }}
                             >
-                              <p className="body-regular whitespace-pre-wrap break-words">
-                                {message.content}
-                              </p>
+                              {msg.content}
                             </div>
                           )}
-
-                          {message.type === "image" && (
+                          {msg.type === "image" && (
                             <div
-                              className={`rounded-2xl overflow-hidden ${isMine ? "rounded-br-sm" : "rounded-bl-sm"}`}
+                              style={{
+                                borderRadius: "1rem",
+                                overflow: "hidden",
+                                borderBottomRightRadius: mine
+                                  ? "0.25rem"
+                                  : "1rem",
+                                borderBottomLeftRadius: mine
+                                  ? "1rem"
+                                  : "0.25rem",
+                              }}
                             >
-                              {message.content && (
+                              {msg.content && (
                                 <div
-                                  className={`px-4 py-2.5 ${isMine ? "bg-primary-600 text-white" : "bg-neutral-100 text-neutral-900"}`}
+                                  style={{
+                                    padding: "0.5rem 1rem",
+                                    backgroundColor: mine
+                                      ? "#1ab189"
+                                      : "var(--color-neutral-100)",
+                                    color: mine
+                                      ? "white"
+                                      : "var(--color-neutral-900)",
+                                    fontSize: "0.875rem",
+                                  }}
                                 >
-                                  <p className="body-regular">
-                                    {message.content}
-                                  </p>
+                                  {msg.content}
                                 </div>
                               )}
-                              <div className="relative">
-                                {message.mediaUrl ? (
-                                  <img
-                                    src={message.mediaUrl}
-                                    alt="Shared image"
-                                    className="max-w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
-                                    onClick={() =>
-                                      window.open(message.mediaUrl!, "_blank")
-                                    }
+                              {msg.mediaUrl ? (
+                                <img
+                                  src={msg.mediaUrl}
+                                  alt="Shared image"
+                                  style={{
+                                    display: "block",
+                                    maxWidth: "100%",
+                                    cursor: "pointer",
+                                  }}
+                                  onClick={() =>
+                                    window.open(msg.mediaUrl!, "_blank")
+                                  }
+                                  onMouseEnter={(e) => {
+                                    (
+                                      e.currentTarget as HTMLImageElement
+                                    ).style.opacity = "0.9";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (
+                                      e.currentTarget as HTMLImageElement
+                                    ).style.opacity = "1";
+                                  }}
+                                />
+                              ) : (
+                                <div
+                                  style={{
+                                    width: 256,
+                                    height: 192,
+                                    backgroundColor: "var(--color-neutral-200)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                  }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faImage}
+                                    style={{
+                                      fontSize: "3rem",
+                                      color: "var(--color-neutral-400)",
+                                    }}
                                   />
-                                ) : (
-                                  <div className="w-64 h-48 bg-neutral-200 flex items-center justify-center">
-                                    <FontAwesomeIcon
-                                      icon={faImage}
-                                      className="w-12 h-12 text-neutral-400"
-                                    />
-                                  </div>
-                                )}
-                              </div>
+                                </div>
+                              )}
                             </div>
                           )}
-
-                          {message.type === "video" && (
+                          {msg.type === "video" && (
                             <div
-                              className={`rounded-2xl overflow-hidden ${isMine ? "rounded-br-sm" : "rounded-bl-sm"}`}
+                              style={{
+                                borderRadius: "1rem",
+                                overflow: "hidden",
+                                borderBottomRightRadius: mine
+                                  ? "0.25rem"
+                                  : "1rem",
+                                borderBottomLeftRadius: mine
+                                  ? "1rem"
+                                  : "0.25rem",
+                              }}
                             >
-                              {message.content && (
+                              {msg.content && (
                                 <div
-                                  className={`px-4 py-2.5 ${isMine ? "bg-primary-600 text-white" : "bg-neutral-100 text-neutral-900"}`}
+                                  style={{
+                                    padding: "0.5rem 1rem",
+                                    backgroundColor: mine
+                                      ? "#1ab189"
+                                      : "var(--color-neutral-100)",
+                                    color: mine
+                                      ? "white"
+                                      : "var(--color-neutral-900)",
+                                    fontSize: "0.875rem",
+                                  }}
                                 >
-                                  <p className="body-regular">
-                                    {message.content}
-                                  </p>
+                                  {msg.content}
                                 </div>
                               )}
                               <video
-                                src={message.mediaUrl || ""}
+                                src={msg.mediaUrl ?? ""}
                                 controls
-                                className="max-w-full h-auto"
+                                style={{ maxWidth: "100%", display: "block" }}
                               />
                             </div>
                           )}
-
                           <div
-                            className={`flex items-center gap-1 mt-1 ${isMine ? "justify-end" : "justify-start"}`}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.25rem",
+                              marginTop: "0.25rem",
+                              justifyContent: mine ? "flex-end" : "flex-start",
+                            }}
                           >
-                            <span className="text-xs text-neutral-500">
-                              {formatTime(message.timestamp)}
+                            <span
+                              style={{
+                                fontSize: "0.65rem",
+                                color: "var(--color-neutral-400)",
+                              }}
+                            >
+                              {formatTime(msg.timestamp)}
                             </span>
-                            {isMine && (
-                              <span className="text-neutral-500">
-                                {getMessageStatus(message.status)}
-                              </span>
-                            )}
+                            {mine && msgStatus(msg.status)}
                           </div>
                         </div>
                       </div>
                     );
                   })}
-                  <div ref={messagesEndRef} />
+                  <div ref={endRef} />
                 </div>
               )}
             </div>
 
-            {/* Media Preview */}
-            {showMediaPreview && previewFile && (
-              <div className="px-6 py-3 bg-neutral-50 border-t border-neutral-200 flex-shrink-0">
-                <div className="flex items-center gap-3 bg-white rounded-lg p-3 border border-neutral-200">
-                  <div className="relative">
+            {/* Media preview bar */}
+            {showPreview && previewFile && (
+              <div
+                className="flex-shrink-0"
+                style={{
+                  padding: "0.75rem 1.5rem",
+                  borderTop: "1px solid var(--color-neutral-200)",
+                  backgroundColor: "var(--color-neutral-50)",
+                }}
+              >
+                <div
+                  className="flex items-center gap-3 rounded-xl"
+                  style={{
+                    padding: "0.75rem",
+                    backgroundColor: "var(--color-neutral-0)",
+                    border: "1px solid var(--color-neutral-200)",
+                  }}
+                >
+                  <div className="relative flex-shrink-0">
                     {previewFile.type.startsWith("image") ? (
                       <img
                         src={previewFile.url}
                         alt="Preview"
-                        className="w-12 h-12 rounded object-cover"
+                        className="rounded-lg object-cover"
+                        style={{ width: 48, height: 48 }}
                       />
                     ) : (
-                      <div className="w-12 h-12 bg-neutral-100 rounded flex items-center justify-center">
+                      <div
+                        className="rounded-lg flex items-center justify-center"
+                        style={{
+                          width: 48,
+                          height: 48,
+                          backgroundColor: "var(--color-neutral-100)",
+                        }}
+                      >
                         <FontAwesomeIcon
                           icon={faVideo}
-                          className="w-6 h-6 text-neutral-600"
+                          style={{
+                            fontSize: "1.25rem",
+                            color: "var(--color-neutral-600)",
+                          }}
                         />
                       </div>
                     )}
                     {previewFile.uploadStatus &&
                       previewFile.uploadStatus !== "pending" && (
-                        <div className="absolute inset-0 bg-neutral-900/70 rounded flex items-center justify-center">
+                        <div
+                          className="absolute inset-0 rounded-lg flex items-center justify-center"
+                          style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+                        >
                           {previewFile.uploadStatus === "uploading" && (
                             <FontAwesomeIcon
                               icon={faSpinner}
-                              className="text-white text-lg animate-spin"
+                              className="animate-spin"
+                              style={{ color: "white", fontSize: "1rem" }}
                             />
                           )}
                           {previewFile.uploadStatus === "uploaded" && (
                             <FontAwesomeIcon
                               icon={faCheck}
-                              className="text-green-400 text-lg"
+                              style={{ color: "#86efac", fontSize: "1rem" }}
                             />
                           )}
                           {previewFile.uploadStatus === "failed" && (
                             <FontAwesomeIcon
                               icon={faTimes}
-                              className="text-red-400 text-lg"
+                              style={{ color: "#f87171", fontSize: "1rem" }}
                             />
                           )}
                         </div>
                       )}
                   </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-neutral-900">
+                  <div className="flex-1 min-w-0">
+                    <p
+                      className="font-semibold truncate"
+                      style={{
+                        fontSize: "0.8125rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
                       {previewFile.name}
                     </p>
-                    <p className="text-xs text-neutral-500">
+                    <p
+                      style={{
+                        fontSize: "0.72rem",
+                        color: "var(--color-neutral-500)",
+                      }}
+                    >
                       {previewFile.type.startsWith("image") ? "Image" : "Video"}
                       {previewFile.uploadStatus === "uploading" &&
-                        " - Uploading..."}
+                        " · Uploading…"}
                       {previewFile.uploadStatus === "uploaded" &&
-                        " - Uploaded!"}
+                        " · Uploaded!"}
                       {previewFile.uploadStatus === "failed" &&
-                        ` - ${previewFile.error || "Upload failed"}`}
+                        ` · ${previewFile.error ?? "Upload failed"}`}
                     </p>
                   </div>
                   <button
                     onClick={cancelPreview}
-                    disabled={isUploadingMedia}
-                    className="p-2 hover:bg-neutral-100 rounded-lg transition-colors disabled:opacity-50"
+                    disabled={uploading}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: uploading ? "not-allowed" : "pointer",
+                      padding: "0.375rem",
+                      color: "var(--color-neutral-500)",
+                      opacity: uploading ? 0.4 : 1,
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        "var(--color-neutral-900)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        "var(--color-neutral-500)";
+                    }}
                   >
                     <FontAwesomeIcon
                       icon={faTimes}
-                      className="w-4 h-4 text-neutral-600"
+                      style={{ fontSize: "0.875rem" }}
                     />
                   </button>
                 </div>
               </div>
             )}
 
-            {/* Message Input */}
-            <div className="bg-white border-t border-neutral-200 px-6 py-4 flex-shrink-0">
-              <div className="flex items-end gap-3">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*,video/*"
-                  className="hidden"
-                  onChange={handleFileSelect}
+            {/* Input */}
+            <div
+              className="flex-shrink-0 flex items-end gap-3"
+              style={{
+                padding: "0.875rem 1.5rem",
+                borderTop: "1px solid var(--color-neutral-200)",
+                backgroundColor: "var(--color-neutral-0)",
+              }}
+            >
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*,video/*"
+                className="hidden"
+                onChange={handleFile}
+              />
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={sendMutation.isPending || uploading}
+                title="Attach"
+                style={{
+                  width: "2.5rem",
+                  height: "2.5rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: "0.75rem",
+                  border: "1px solid var(--color-neutral-200)",
+                  backgroundColor: "transparent",
+                  cursor: "pointer",
+                  color: "var(--color-neutral-600)",
+                  flexShrink: 0,
+                  opacity: sendMutation.isPending || uploading ? 0.4 : 1,
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "var(--color-neutral-50)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "transparent";
+                }}
+              >
+                <FontAwesomeIcon
+                  icon={faPlus}
+                  style={{ fontSize: "0.875rem" }}
                 />
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={sendMessageMutation.isPending || isUploadingMedia}
-                  className="p-2.5 hover:bg-neutral-50 rounded-lg transition-colors text-neutral-600 flex-shrink-0 disabled:opacity-50"
-                  title="Add image or video"
-                >
-                  <FontAwesomeIcon icon={faPlus} className="w-5 h-5" />
-                </button>
-
-                <div className="flex-1">
-                  <textarea
-                    value={messageInput}
-                    onChange={(e) => setMessageInput(e.target.value)}
-                    onKeyPress={(e) => {
-                      if (
-                        e.key === "Enter" &&
-                        !e.shiftKey &&
-                        !sendMessageMutation.isPending &&
-                        !isUploadingMedia
-                      ) {
-                        e.preventDefault();
-                        handleSendMessage();
-                      }
-                    }}
-                    disabled={sendMessageMutation.isPending || isUploadingMedia}
-                    placeholder="Type a message..."
-                    className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular disabled:opacity-50 resize-none"
-                    rows={1}
-                  />
-                </div>
-
-                <button
-                  onClick={handleSendMessage}
-                  disabled={
-                    sendMessageMutation.isPending ||
-                    isUploadingMedia ||
-                    (!messageInput.trim() && !previewFile)
+              </button>
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    !sendMutation.isPending &&
+                    !uploading
+                  ) {
+                    e.preventDefault();
+                    handleSend();
                   }
-                  className="px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 flex-shrink-0"
-                >
-                  {isUploadingMedia ? (
-                    <>
-                      <FontAwesomeIcon
-                        icon={faCloudUpload}
-                        className="animate-pulse"
-                      />
-                      Uploading...
-                    </>
-                  ) : sendMessageMutation.isPending ? (
-                    <>
-                      <FontAwesomeIcon icon={faSpinner} spin />
-                      Sending...
-                    </>
-                  ) : (
-                    <>
-                      <FontAwesomeIcon icon={faPaperPlane} />
-                      Send
-                    </>
-                  )}
-                </button>
-              </div>
+                }}
+                disabled={sendMutation.isPending || uploading}
+                placeholder="Type a message…"
+                rows={1}
+                style={{
+                  flex: 1,
+                  padding: "0.625rem 1rem",
+                  fontFamily: "var(--font-sans)",
+                  fontSize: "0.875rem",
+                  color: "var(--color-neutral-900)",
+                  backgroundColor: "var(--color-neutral-50)",
+                  border: "1px solid var(--color-neutral-200)",
+                  borderRadius: "0.75rem",
+                  outline: "none",
+                  resize: "none",
+                  transition: "border-color 150ms, box-shadow 150ms",
+                  opacity: sendMutation.isPending || uploading ? 0.6 : 1,
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = "#1ab189";
+                  e.currentTarget.style.boxShadow =
+                    "0 0 0 3px rgba(26,177,137,0.12)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor =
+                    "var(--color-neutral-200)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
+              />
+              <button
+                onClick={handleSend}
+                disabled={
+                  sendMutation.isPending ||
+                  uploading ||
+                  (!input.trim() && !previewFile)
+                }
+                className="flex items-center gap-2 font-semibold rounded-xl flex-shrink-0"
+                style={{
+                  padding: "0.625rem 1.25rem",
+                  backgroundColor: "#1ab189",
+                  color: "white",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: "0.875rem",
+                  opacity:
+                    sendMutation.isPending ||
+                    uploading ||
+                    (!input.trim() && !previewFile)
+                      ? 0.5
+                      : 1,
+                  transition: "opacity 150ms, background-color 150ms",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "#159e7a";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "#1ab189";
+                }}
+              >
+                {uploading ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faCloudUpload}
+                      className="animate-pulse"
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Uploading…
+                  </>
+                ) : sendMutation.isPending ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faSpinner}
+                      className="animate-spin"
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Sending…
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faPaperPlane}
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Send
+                  </>
+                )}
+              </button>
             </div>
           </div>
         ) : (
-          <div className="flex-1 hidden lg:flex items-center justify-center bg-neutral-50">
-            <div className="text-center">
-              <div className="w-24 h-24 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <FontAwesomeIcon
-                  icon={faPaperPlane}
-                  className="w-10 h-10 text-neutral-400"
-                />
-              </div>
-              <h3 className="heading-3 text-neutral-900 mb-2">
-                Select a conversation
-              </h3>
-              <p className="body-regular text-neutral-600">
-                Choose a conversation from the list to start messaging
-              </p>
+          /* Empty state */
+          <div
+            className="flex-1 hidden lg:flex flex-col items-center justify-center"
+            style={{ backgroundColor: "var(--color-neutral-50)" }}
+          >
+            <div
+              className="w-20 h-20 rounded-full flex items-center justify-center mb-5"
+              style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+            >
+              <FontAwesomeIcon
+                icon={faPaperPlane}
+                style={{ fontSize: "2rem", color: "#1ab189" }}
+              />
             </div>
+            <h3
+              className="font-bold mb-2"
+              style={{ fontSize: "1.25rem", color: "var(--color-neutral-900)" }}
+            >
+              Select a conversation
+            </h3>
+            <p
+              style={{
+                fontSize: "0.875rem",
+                color: "var(--color-neutral-500)",
+              }}
+            >
+              Choose a provider from the list to start messaging
+            </p>
           </div>
         )}
 
-        {/* Sidebar - Conversations List */}
-        <div className="w-full lg:w-[400px] bg-white flex flex-col border-l border-neutral-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-neutral-200 flex-shrink-0">
-            <h2 className="heading-3 text-neutral-900 mb-4">
+        {/* ── Sidebar ── */}
+        <div
+          className="flex flex-col overflow-hidden flex-shrink-0"
+          style={{
+            width: "clamp(20rem, 26rem, 28rem)",
+            backgroundColor: "var(--color-neutral-0)",
+            borderLeft: "1px solid var(--color-neutral-200)",
+          }}
+        >
+          <div
+            className="flex-shrink-0"
+            style={{
+              padding: "1.25rem 1.5rem",
+              borderBottom: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            <h2
+              className="font-bold mb-4"
+              style={{
+                fontSize: "1.125rem",
+                color: "var(--color-neutral-900)",
+              }}
+            >
               Your Service Providers
             </h2>
             <div className="relative">
               <FontAwesomeIcon
                 icon={faSearch}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 w-4 h-4"
+                className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                style={{
+                  color: "var(--color-neutral-400)",
+                  fontSize: "0.75rem",
+                }}
               />
               <input
                 type="text"
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-small"
+                placeholder="Search conversations…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "0.5rem 1rem 0.5rem 2.125rem",
+                  fontFamily: "var(--font-sans)",
+                  fontSize: "0.8125rem",
+                  color: "var(--color-neutral-900)",
+                  backgroundColor: "var(--color-neutral-50)",
+                  border: "1px solid var(--color-neutral-200)",
+                  borderRadius: "0.625rem",
+                  outline: "none",
+                  transition: "border-color 150ms, box-shadow 150ms",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = "#1ab189";
+                  e.currentTarget.style.boxShadow =
+                    "0 0 0 3px rgba(26,177,137,0.12)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor =
+                    "var(--color-neutral-200)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
               />
             </div>
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            {filteredConversations.length === 0 ? (
+            {filteredConvs.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-6">
                 <FontAwesomeIcon
                   icon={faSearch}
-                  className="w-12 h-12 text-neutral-300 mb-3"
+                  style={{
+                    fontSize: "2.5rem",
+                    color: "var(--color-neutral-300)",
+                    marginBottom: "0.75rem",
+                  }}
                 />
-                <p className="text-neutral-600 font-medium">
+                <p
+                  className="font-semibold"
+                  style={{ color: "var(--color-neutral-600)" }}
+                >
                   No conversations found
                 </p>
-                {searchQuery && (
-                  <p className="text-neutral-500 text-sm mt-1">
+                {search && (
+                  <p
+                    className="mt-1"
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
                     Try a different search term
                   </p>
                 )}
               </div>
             ) : (
-              filteredConversations.map((conversation) => (
-                <div
-                  key={conversation.id}
-                  onClick={() => handleConversationSelect(conversation.id)}
-                  className={`px-6 py-4 border-b border-neutral-100 cursor-pointer transition-colors hover:bg-neutral-50 ${selectedConversationId === conversation.id ? "bg-primary-50 border-r-4 border-r-primary-600" : ""}`}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="relative flex-shrink-0">
-                      {conversation.avatar ? (
-                        <img
-                          src={conversation.avatar}
-                          alt={conversation.name}
-                          className="w-12 h-12 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div
-                          className={`w-12 h-12 rounded-full ${conversation.color} flex items-center justify-center text-white font-semibold`}
-                        >
-                          {conversation.initials}
-                        </div>
-                      )}
-                      {conversation.isOnline && (
-                        <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between mb-1">
-                        <h3 className="font-semibold text-neutral-900 truncate">
-                          {conversation.name}
-                        </h3>
-                        <span className="text-xs text-neutral-500 flex-shrink-0 ml-2">
-                          {conversation.lastMessageTime}
-                        </span>
+              filteredConvs.map((conv) => {
+                const sel = selectedId === conv.id;
+                return (
+                  <div
+                    key={conv.id}
+                    onClick={() => selectConv(conv.id)}
+                    style={{
+                      padding: "0.875rem 1.25rem",
+                      borderBottom: "1px solid var(--color-neutral-100)",
+                      cursor: "pointer",
+                      backgroundColor: sel
+                        ? "rgba(26,177,137,0.06)"
+                        : "transparent",
+                      borderRight: sel
+                        ? "3px solid #1ab189"
+                        : "3px solid transparent",
+                      transition: "background-color 120ms",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!sel)
+                        (
+                          e.currentTarget as HTMLDivElement
+                        ).style.backgroundColor = "var(--color-neutral-50)";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!sel)
+                        (
+                          e.currentTarget as HTMLDivElement
+                        ).style.backgroundColor = "transparent";
+                    }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="relative flex-shrink-0">
+                        {conv.avatar ? (
+                          <img
+                            src={conv.avatar}
+                            alt={conv.name}
+                            className="w-12 h-12 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div
+                            className="w-12 h-12 rounded-full flex items-center justify-center font-bold"
+                            style={{
+                              backgroundColor: conv.color,
+                              color: "white",
+                              fontSize: "0.875rem",
+                            }}
+                          >
+                            {conv.initials}
+                          </div>
+                        )}
+                        {conv.isOnline && (
+                          <div
+                            className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2"
+                            style={{
+                              backgroundColor: "#22c55e",
+                              borderColor: "white",
+                            }}
+                          />
+                        )}
                       </div>
-                      <p className="text-sm text-neutral-600 truncate">
-                        {conversation.lastMessage}
-                      </p>
-                      {conversation.unreadCount > 0 && (
-                        <span className="inline-block mt-2 bg-primary-600 text-white px-2 py-0.5 rounded-full text-xs font-semibold">
-                          {conversation.unreadCount}
-                        </span>
-                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between mb-0.5">
+                          <h3
+                            className="font-semibold truncate"
+                            style={{
+                              fontSize: "0.875rem",
+                              color: "var(--color-neutral-900)",
+                            }}
+                          >
+                            {conv.name}
+                          </h3>
+                          <span
+                            style={{
+                              fontSize: "0.7rem",
+                              color: "var(--color-neutral-400)",
+                              flexShrink: 0,
+                              marginLeft: "0.5rem",
+                            }}
+                          >
+                            {conv.lastMessageTime}
+                          </span>
+                        </div>
+                        <p
+                          className="truncate mb-2"
+                          style={{
+                            fontSize: "0.78rem",
+                            color: "var(--color-neutral-500)",
+                          }}
+                        >
+                          {conv.lastMessage}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          {conv.unreadCount > 0 && (
+                            <span
+                              className="font-bold rounded-full"
+                              style={{
+                                padding: "0.1rem 0.45rem",
+                                backgroundColor: "#1ab189",
+                                color: "white",
+                                fontSize: "0.6rem",
+                              }}
+                            >
+                              {conv.unreadCount}
+                            </span>
+                          )}
+                          <span
+                            className="rounded-full font-semibold ml-auto"
+                            style={{
+                              padding: "0.15rem 0.5rem",
+                              fontSize: "0.63rem",
+                              backgroundColor: "rgba(26,177,137,0.08)",
+                              border: "1px solid rgba(26,177,137,0.25)",
+                              color: "#1ab189",
+                            }}
+                          >
+                            Service Provider
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

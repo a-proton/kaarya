@@ -24,6 +24,7 @@ import {
   faEnvelope,
   faPhone,
   faSearch,
+  faLocationDot,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -87,11 +88,7 @@ interface AvailabilityFormData {
 
 interface Appointment {
   id: number;
-  service_provider: {
-    id: number;
-    full_name: string;
-    business_name: string;
-  };
+  service_provider: { id: number; full_name: string; business_name: string };
   client: {
     id: number;
     full_name: string;
@@ -123,19 +120,234 @@ interface AppointmentCounts {
 }
 
 // ==================================================================================
+// SHARED STYLE HELPERS
+// ==================================================================================
+const baseInput: React.CSSProperties = {
+  width: "100%",
+  padding: "0.625rem 1rem",
+  fontFamily: "var(--font-sans)",
+  fontSize: "0.875rem",
+  color: "var(--color-neutral-900)",
+  backgroundColor: "var(--color-neutral-0)",
+  border: "1px solid var(--color-neutral-200)",
+  borderRadius: "0.625rem",
+  outline: "none",
+  transition: "border-color 150ms, box-shadow 150ms",
+  appearance: "none" as const,
+};
+
+const tealFocus = (
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+  >,
+) => {
+  e.currentTarget.style.borderColor = "#1ab189";
+  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(26,177,137,0.12)";
+};
+const blurReset = (
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+  >,
+) => {
+  e.currentTarget.style.borderColor = "var(--color-neutral-200)";
+  e.currentTarget.style.boxShadow = "none";
+};
+
+// ==================================================================================
+// EVENT TYPE CONFIG
+// ==================================================================================
+const EVENT_TYPE_CONFIG: Record<
+  string,
+  { bg: string; border: string; text: string; dot: string; label: string }
+> = {
+  deadline: {
+    bg: "#fef2f2",
+    border: "#fecaca",
+    text: "#b91c1c",
+    dot: "#ef4444",
+    label: "Deadline",
+  },
+  meeting: {
+    bg: "#eff6ff",
+    border: "#bfdbfe",
+    text: "#1d4ed8",
+    dot: "#3b82f6",
+    label: "Meeting",
+  },
+  reminder: {
+    bg: "#fffbeb",
+    border: "#fde68a",
+    text: "#92400e",
+    dot: "#f59e0b",
+    label: "Reminder",
+  },
+  task: {
+    bg: "#f0fdf4",
+    border: "#bbf7d0",
+    text: "#15803d",
+    dot: "#22c55e",
+    label: "Task",
+  },
+  appointment: {
+    bg: "#faf5ff",
+    border: "#e9d5ff",
+    text: "#7e22ce",
+    dot: "#a855f7",
+    label: "Appointment",
+  },
+};
+
+const APPT_STATUS_CONFIG: Record<
+  string,
+  { bg: string; border: string; color: string; icon: typeof faHourglassHalf }
+> = {
+  pending: {
+    bg: "#fffbeb",
+    border: "#fde68a",
+    color: "#92400e",
+    icon: faHourglassHalf,
+  },
+  confirmed: {
+    bg: "#eff6ff",
+    border: "#bfdbfe",
+    color: "#1d4ed8",
+    icon: faCheckCircle,
+  },
+  completed: {
+    bg: "#f0fdf4",
+    border: "#bbf7d0",
+    color: "#15803d",
+    icon: faCheck,
+  },
+  cancelled: {
+    bg: "#fef2f2",
+    border: "#fecaca",
+    color: "#b91c1c",
+    icon: faBan,
+  },
+  rescheduled: {
+    bg: "#faf5ff",
+    border: "#e9d5ff",
+    color: "#7e22ce",
+    icon: faCalendar,
+  },
+};
+
+const STAT_CARD_CONFIG: Record<
+  string,
+  {
+    border: string;
+    activeBg: string;
+    iconColor: string;
+    icon: typeof faCalendarCheck;
+  }
+> = {
+  all: {
+    border: "#1ab189",
+    activeBg: "rgba(26,177,137,0.06)",
+    iconColor: "#1ab189",
+    icon: faCalendarCheck,
+  },
+  pending: {
+    border: "#f59e0b",
+    activeBg: "#fffbeb",
+    iconColor: "#d97706",
+    icon: faHourglassHalf,
+  },
+  confirmed: {
+    border: "#3b82f6",
+    activeBg: "#eff6ff",
+    iconColor: "#2563eb",
+    icon: faCheckCircle,
+  },
+  completed: {
+    border: "#22c55e",
+    activeBg: "#f0fdf4",
+    iconColor: "#16a34a",
+    icon: faCheck,
+  },
+  rescheduled: {
+    border: "#a855f7",
+    activeBg: "#faf5ff",
+    iconColor: "#9333ea",
+    icon: faCalendar,
+  },
+  cancelled: {
+    border: "#ef4444",
+    activeBg: "#fef2f2",
+    iconColor: "#dc2626",
+    icon: faBan,
+  },
+};
+
+// ==================================================================================
+// FIELD & SECTION CARD
+// ==================================================================================
+function Field({
+  label,
+  required,
+  hint,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label
+        className="block font-semibold mb-1.5"
+        style={{ fontSize: "0.8rem", color: "var(--color-neutral-700)" }}
+      >
+        {label}
+        {required && <span style={{ color: "#ef4444" }}> *</span>}
+      </label>
+      {children}
+      {hint && (
+        <p
+          className="mt-1"
+          style={{ fontSize: "0.72rem", color: "var(--color-neutral-500)" }}
+        >
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ==================================================================================
+// MODAL WRAPPER
+// ==================================================================================
+function Modal({
+  onClose,
+  children,
+}: {
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center z-50 p-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ==================================================================================
 // MAIN COMPONENT
 // ==================================================================================
 export default function CalendarPage() {
   const queryClient = useQueryClient();
 
-  // Tab state
   const [activeTab, setActiveTab] = useState<"calendar" | "appointments">(
     "calendar",
   );
   const [currentWeekStart, setCurrentWeekStart] = useState(() => {
     const today = new Date();
-    const day = today.getDay();
-    const diff = today.getDate() - day;
+    const diff = today.getDate() - today.getDay();
     return new Date(today.setDate(diff));
   });
   const [selectedFilters, setSelectedFilters] = useState<Set<string>>(
@@ -148,14 +360,12 @@ export default function CalendarPage() {
   const [showDeleteEventModal, setShowDeleteEventModal] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
 
-  // Slot viewing
   const [showSlotsModal, setShowSlotsModal] = useState(false);
   const [selectedDateSlots, setSelectedDateSlots] = useState<string | null>(
     null,
   );
   const [viewingSlots, setViewingSlots] = useState<AvailabilitySlot[]>([]);
 
-  // Appointments state
   const [selectedAppointmentStatus, setSelectedAppointmentStatus] =
     useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -171,7 +381,6 @@ export default function CalendarPage() {
 
   const filterRef = useRef<HTMLDivElement>(null);
 
-  // Form state for adding event
   const [eventForm, setEventForm] = useState<EventFormData>({
     title: "",
     event_type: "task",
@@ -181,7 +390,6 @@ export default function CalendarPage() {
     location: "",
   });
 
-  // Form state for availability
   const [availabilityForm, setAvailabilityForm] =
     useState<AvailabilityFormData>({
       date: new Date().toISOString().split("T")[0],
@@ -193,50 +401,79 @@ export default function CalendarPage() {
       notes: "",
     });
 
-  // ==================================================================================
-  // UTILITY FUNCTIONS
-  // ==================================================================================
+  // ── Helpers ──
   const formatDateForAPI = (date: Date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   };
 
-  const formatDateKey = (date: Date) => {
-    return formatDateForAPI(date);
+  const getWeekDates = () =>
+    Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(currentWeekStart);
+      d.setDate(currentWeekStart.getDate() + i);
+      return d;
+    });
+
+  const weekEndDate = new Date(currentWeekStart);
+  weekEndDate.setDate(weekEndDate.getDate() + 6);
+
+  const formatTime12Hour = (time24: string) => {
+    if (!time24) return "";
+    const [h, m] = time24.split(":");
+    const hour = parseInt(h);
+    return `${hour % 12 || 12}:${m} ${hour >= 12 ? "PM" : "AM"}`;
   };
 
-  // ==================================================================================
-  // DATA FETCHING WITH TANSTACK QUERY
-  // ==================================================================================
-  // Fetch weekly events
+  const formatDate = (dateStr: string) =>
+    new Date(dateStr + "T00:00:00").toLocaleDateString("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+  const formatDateTime = (dateStr: string, timeStr: string) =>
+    `${formatDate(dateStr)} at ${formatTime12Hour(timeStr)}`;
+
+  const getSlotCountForDate = (dateStr: string) =>
+    (
+      availabilityData as
+        | { date: string; slots: AvailabilitySlot[] }[]
+        | undefined
+    )?.find((d) => d.date === dateStr)?.slots?.length ?? 0;
+
+  const getBookedSlotCountForDate = (dateStr: string) =>
+    (
+      availabilityData as
+        | { date: string; slots: AvailabilitySlot[] }[]
+        | undefined
+    )
+      ?.find((d) => d.date === dateStr)
+      ?.slots?.filter((s) => s.is_booked).length ?? 0;
+
+  // ── Queries ──
   const {
     data: eventsData,
     isLoading: eventsLoading,
     isError: eventsError,
   } = useQuery<EventsData>({
     queryKey: ["calendar-events", formatDateForAPI(currentWeekStart)],
-    queryFn: async () => {
-      const weekStart = formatDateForAPI(currentWeekStart);
-      return api.get<EventsData>(
-        `/api/v1/calendar/events/week/?week_start=${weekStart}`,
-      );
-    },
+    queryFn: () =>
+      api.get<EventsData>(
+        `/api/v1/calendar/events/week/?week_start=${formatDateForAPI(currentWeekStart)}`,
+      ),
   });
 
-  // Fetch availability slots for current week
   const { data: availabilityData, isLoading: availabilityLoading } = useQuery({
     queryKey: ["calendar-availability", formatDateForAPI(currentWeekStart)],
-    queryFn: async () => {
-      const weekStart = formatDateForAPI(currentWeekStart);
-      return api.get<any[]>(
-        `/api/v1/calendar/availability/week/?week_start=${weekStart}`,
-      );
-    },
+    queryFn: () =>
+      api.get<{ date: string; slots: AvailabilitySlot[] }[]>(
+        `/api/v1/calendar/availability/week/?week_start=${formatDateForAPI(currentWeekStart)}`,
+      ),
   });
 
-  // Fetch appointments
   const {
     data: appointments,
     isLoading: appointmentsLoading,
@@ -248,31 +485,23 @@ export default function CalendarPage() {
         selectedAppointmentStatus === "all"
           ? "/api/v1/appointments/"
           : `/api/v1/appointments/?status=${selectedAppointmentStatus}`;
-      const response = await api.get<{ count: number; results: Appointment[] }>(
-        url,
-      );
-      return response.results;
+      const res = await api.get<{ count: number; results: Appointment[] }>(url);
+      return res.results;
     },
   });
 
-  // Fetch appointment counts
   const { data: appointmentCounts } = useQuery<AppointmentCounts>({
     queryKey: ["appointment-counts"],
-    queryFn: async () => {
-      return api.get<AppointmentCounts>("/api/v1/appointments/counts/");
-    },
+    queryFn: () => api.get<AppointmentCounts>("/api/v1/appointments/counts/"),
   });
 
-  // ==================================================================================
-  // MUTATIONS - EVENTS & AVAILABILITY
-  // ==================================================================================
+  // ── Mutations ──
   const createEventMutation = useMutation({
-    mutationFn: async (data: EventFormData) => {
-      return api.post<Event>("/api/v1/calendar/events/", {
+    mutationFn: (data: EventFormData) =>
+      api.post<Event>("/api/v1/calendar/events/", {
         ...data,
         event_time: data.event_time || null,
-      });
-    },
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["calendar-events", formatDateForAPI(currentWeekStart)],
@@ -280,23 +509,17 @@ export default function CalendarPage() {
       setShowAddEventModal(false);
       resetEventForm();
     },
-    onError: (error: any) => {
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
       alert(
-        `Failed to create event: ${error.data?.detail || error.message || "Unknown error"}`,
+        `Failed to create event: ${e.data?.detail ?? e.message ?? "Unknown error"}`,
       );
     },
   });
 
   const updateEventMutation = useMutation({
-    mutationFn: async ({
-      id,
-      data,
-    }: {
-      id: number;
-      data: Partial<EventFormData>;
-    }) => {
-      return api.patch<Event>(`/api/v1/calendar/events/${id}/`, data);
-    },
+    mutationFn: ({ id, data }: { id: number; data: Partial<EventFormData> }) =>
+      api.patch<Event>(`/api/v1/calendar/events/${id}/`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["calendar-events", formatDateForAPI(currentWeekStart)],
@@ -304,17 +527,16 @@ export default function CalendarPage() {
       setShowEditEventModal(false);
       setSelectedEvent(null);
     },
-    onError: (error: any) => {
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
       alert(
-        `Failed to update event: ${error.data?.detail || error.message || "Unknown error"}`,
+        `Failed to update event: ${e.data?.detail ?? e.message ?? "Unknown error"}`,
       );
     },
   });
 
   const deleteEventMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await api.delete(`/api/v1/calendar/events/${id}/`);
-    },
+    mutationFn: (id: number) => api.delete(`/api/v1/calendar/events/${id}/`),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["calendar-events", formatDateForAPI(currentWeekStart)],
@@ -322,32 +544,31 @@ export default function CalendarPage() {
       setShowDeleteEventModal(false);
       setSelectedEvent(null);
     },
-    onError: (error: any) => {
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
       alert(
-        `Failed to delete event: ${error.data?.detail || error.message || "Unknown error"}`,
+        `Failed to delete event: ${e.data?.detail ?? e.message ?? "Unknown error"}`,
       );
     },
   });
 
   const completeEventMutation = useMutation({
-    mutationFn: async (id: number) => {
-      return api.post<Event>(`/api/v1/calendar/events/${id}/complete/`, {});
-    },
+    mutationFn: (id: number) =>
+      api.post<Event>(`/api/v1/calendar/events/${id}/complete/`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["calendar-events", formatDateForAPI(currentWeekStart)],
       });
     },
-    onError: (error: any) => {
-      alert(
-        `Failed to mark event complete: ${error.data?.detail || error.message || "Unknown error"}`,
-      );
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
+      alert(`Failed: ${e.data?.detail ?? e.message ?? "Unknown error"}`);
     },
   });
 
   const createAvailabilityMutation = useMutation({
-    mutationFn: async (data: AvailabilityFormData) => {
-      return api.post<AvailabilitySlot[]>("/api/v1/calendar/availability/", {
+    mutationFn: (data: AvailabilityFormData) =>
+      api.post<AvailabilitySlot[]>("/api/v1/calendar/availability/", {
         date: data.date,
         start_time: data.start_time,
         end_time: data.end_time,
@@ -358,86 +579,70 @@ export default function CalendarPage() {
             ? data.recurring_end_date
             : null,
         notes: data.notes || "",
-      });
-    },
+      }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({
         queryKey: ["calendar-availability", formatDateForAPI(currentWeekStart)],
       });
       setShowAvailabilityModal(false);
       resetAvailabilityForm();
-      const slotCount = data.length;
       alert(
-        `Success! Created ${slotCount} hourly time slot${slotCount !== 1 ? "s" : ""}.`,
+        `Success! Created ${data.length} hourly time slot${data.length !== 1 ? "s" : ""}.`,
       );
     },
-    onError: (error: any) => {
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
       alert(
-        `Failed to create availability: ${error.data?.detail || error.message || "Unknown error"}`,
+        `Failed to create availability: ${e.data?.detail ?? e.message ?? "Unknown error"}`,
       );
     },
   });
 
   const deleteSlotMutation = useMutation({
-    mutationFn: async (slotId: number) => {
-      await api.delete(`/api/v1/calendar/availability/${slotId}/`);
-    },
+    mutationFn: (slotId: number) =>
+      api.delete(`/api/v1/calendar/availability/${slotId}/`),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["calendar-availability", formatDateForAPI(currentWeekStart)],
       });
-      if (selectedDateSlots) {
-        fetchSlotsForDate(selectedDateSlots);
-      }
+      if (selectedDateSlots) fetchSlotsForDate(selectedDateSlots);
     },
-    onError: (error: any) => {
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
       alert(
-        `Failed to delete slot: ${
-          error.data?.detail ||
-          error.message ||
-          "This slot may be booked and cannot be deleted"
-        }`,
+        `Failed to delete slot: ${e.data?.detail ?? e.message ?? "This slot may be booked"}`,
       );
     },
   });
 
-  // ==================================================================================
-  // MUTATIONS - APPOINTMENTS
-  // ==================================================================================
   const confirmAppointmentMutation = useMutation({
-    mutationFn: async ({ id, notes }: { id: number; notes: string }) => {
-      return api.put(`/api/v1/appointments/${id}/status/`, {
-        status: "confirmed",
-        notes: notes,
-      });
-    },
+    mutationFn: ({ id, notes }: { id: number; notes: string }) =>
+      api.put<{ confirmation_email_sent?: boolean }>(
+        `/api/v1/appointments/${id}/status/`,
+        { status: "confirmed", notes },
+      ),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["appointments"] });
       queryClient.invalidateQueries({ queryKey: ["appointment-counts"] });
       setShowConfirmAppointmentModal(false);
       setSelectedAppointment(null);
       setAppointmentActionNotes("");
-
-      // NEW: Show success message with email status
       const emailStatus = data.confirmation_email_sent
         ? "Confirmation email sent to client!"
         : "Confirmed (email notification failed)";
-
-      alert(`✅ Appointment confirmed successfully!\n📧 ${emailStatus}`);
+      alert(`✅ Appointment confirmed!\n📧 ${emailStatus}`);
     },
-    onError: (error: any) => {
+    onError: (err: unknown) => {
+      const e = err as { data?: { error?: string }; message?: string };
       alert(
-        `Failed to confirm appointment: ${error.data?.error || error.message || "Unknown error"}`,
+        `Failed to confirm: ${e.data?.error ?? e.message ?? "Unknown error"}`,
       );
     },
   });
 
   const cancelAppointmentMutation = useMutation({
-    mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
-      return api.post(`/api/v1/appointments/${id}/cancel/`, {
-        reason: reason,
-      });
-    },
+    mutationFn: ({ id, reason }: { id: number; reason: string }) =>
+      api.post(`/api/v1/appointments/${id}/cancel/`, { reason }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["appointments"] });
       queryClient.invalidateQueries({ queryKey: ["appointment-counts"] });
@@ -445,82 +650,47 @@ export default function CalendarPage() {
       setSelectedAppointment(null);
       setAppointmentActionNotes("");
     },
-    onError: (error: any) => {
+    onError: (err: unknown) => {
+      const e = err as { data?: { error?: string }; message?: string };
       alert(
-        `Failed to cancel appointment: ${error.data?.error || error.message || "Unknown error"}`,
+        `Failed to cancel: ${e.data?.error ?? e.message ?? "Unknown error"}`,
       );
     },
   });
 
   const completeAppointmentMutation = useMutation({
-    mutationFn: async (id: number) => {
-      return api.put(`/api/v1/appointments/${id}/status/`, {
-        status: "completed",
-      });
-    },
+    mutationFn: (id: number) =>
+      api.put(`/api/v1/appointments/${id}/status/`, { status: "completed" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["appointments"] });
       queryClient.invalidateQueries({ queryKey: ["appointment-counts"] });
     },
-    onError: (error: any) => {
-      alert(
-        `Failed to complete appointment: ${error.data?.error || error.message || "Unknown error"}`,
-      );
+    onError: (err: unknown) => {
+      const e = err as { data?: { error?: string }; message?: string };
+      alert(`Failed: ${e.data?.error ?? e.message ?? "Unknown error"}`);
     },
   });
 
-  // ==================================================================================
-  // HANDLERS
-  // ==================================================================================
-  const handleCreateEvent = () => {
-    if (!eventForm.title || !eventForm.event_date) {
-      alert("Please fill in required fields (Title and Date)");
-      return;
-    }
-    createEventMutation.mutate(eventForm);
-  };
-
-  const handleUpdateEvent = () => {
-    if (!selectedEvent) return;
-    updateEventMutation.mutate({
-      id: selectedEvent.id,
-      data: eventForm,
+  // ── Handlers ──
+  const resetEventForm = () =>
+    setEventForm({
+      title: "",
+      event_type: "task",
+      event_date: new Date().toISOString().split("T")[0],
+      event_time: "",
+      description: "",
+      location: "",
     });
-  };
-
-  const handleDeleteEvent = () => {
-    if (!selectedEvent) return;
-    deleteEventMutation.mutate(selectedEvent.id);
-  };
-
-  const handleCompleteEvent = (event: Event) => {
-    if (!event.is_completed) {
-      completeEventMutation.mutate(event.id);
-    }
-  };
-
-  const handleAddAvailability = () => {
-    if (
-      !availabilityForm.date ||
-      !availabilityForm.start_time ||
-      !availabilityForm.end_time
-    ) {
-      alert("Please fill in all required fields");
-      return;
-    }
-    if (availabilityForm.start_time >= availabilityForm.end_time) {
-      alert("End time must be after start time");
-      return;
-    }
-    if (
-      availabilityForm.is_recurring &&
-      availabilityForm.recurring_days.length === 0
-    ) {
-      alert("Please select at least one recurring day");
-      return;
-    }
-    createAvailabilityMutation.mutate(availabilityForm);
-  };
+  const resetAvailabilityForm = () =>
+    setAvailabilityForm({
+      date: new Date().toISOString().split("T")[0],
+      start_time: "09:00",
+      end_time: "17:00",
+      is_recurring: false,
+      recurring_days: [],
+      recurring_end_date: "",
+      notes: "",
+    });
 
   const openEditModal = (event: Event) => {
     setSelectedEvent(event);
@@ -535,255 +705,57 @@ export default function CalendarPage() {
     setShowEditEventModal(true);
   };
 
-  const openDeleteModal = (event: Event) => {
-    setSelectedEvent(event);
-    setShowDeleteEventModal(true);
-  };
-
-  const fetchSlotsForDate = async (dateStr: string) => {
+  const fetchSlotsForDate = (dateStr: string) => {
     setSelectedDateSlots(dateStr);
     setShowSlotsModal(true);
-    try {
-      const dayData = availabilityData?.find((d: any) => d.date === dateStr);
-      setViewingSlots(dayData?.slots || []);
-    } catch (error) {
-      console.error("Error fetching slots:", error);
-      setViewingSlots([]);
-    }
+    const dayData = (
+      availabilityData as
+        | { date: string; slots: AvailabilitySlot[] }[]
+        | undefined
+    )?.find((d) => d.date === dateStr);
+    setViewingSlots(dayData?.slots || []);
   };
 
   const handleDeleteSlot = (slotId: number) => {
-    if (confirm("Are you sure you want to delete this time slot?")) {
+    if (confirm("Are you sure you want to delete this time slot?"))
       deleteSlotMutation.mutate(slotId);
-    }
-  };
-
-  const handleConfirmAppointment = () => {
-    if (!selectedAppointment) return;
-    confirmAppointmentMutation.mutate({
-      id: selectedAppointment.id,
-      notes: appointmentActionNotes,
-    });
-  };
-
-  const handleCancelAppointment = () => {
-    if (!selectedAppointment) return;
-    cancelAppointmentMutation.mutate({
-      id: selectedAppointment.id,
-      reason: appointmentActionNotes,
-    });
-  };
-
-  const handleCompleteAppointment = (appointment: Appointment) => {
-    if (
-      confirm(`Mark appointment with ${appointment.client_name} as completed?`)
-    ) {
-      completeAppointmentMutation.mutate(appointment.id);
-    }
-  };
-
-  // ==================================================================================
-  // UTILITY FUNCTIONS
-  // ==================================================================================
-  const resetEventForm = () => {
-    setEventForm({
-      title: "",
-      event_type: "task",
-      event_date: new Date().toISOString().split("T")[0],
-      event_time: "",
-      description: "",
-      location: "",
-    });
-  };
-
-  const resetAvailabilityForm = () => {
-    setAvailabilityForm({
-      date: new Date().toISOString().split("T")[0],
-      start_time: "09:00",
-      end_time: "17:00",
-      is_recurring: false,
-      recurring_days: [],
-      recurring_end_date: "",
-      notes: "",
-    });
   };
 
   const toggleFilter = (filter: string) => {
-    const newFilters = new Set(selectedFilters);
-    if (newFilters.has(filter)) {
-      newFilters.delete(filter);
-    } else {
-      newFilters.add(filter);
-    }
-    setSelectedFilters(newFilters);
-  };
-
-  const removeFilter = (filter: string) => {
-    const newFilters = new Set(selectedFilters);
-    newFilters.delete(filter);
-    setSelectedFilters(newFilters);
+    const next = new Set(selectedFilters);
+    next.has(filter) ? next.delete(filter) : next.add(filter);
+    setSelectedFilters(next);
   };
 
   const toggleRecurringDay = (day: string) => {
-    const newDays = availabilityForm.recurring_days.includes(day)
+    const days = availabilityForm.recurring_days.includes(day)
       ? availabilityForm.recurring_days.filter((d) => d !== day)
       : [...availabilityForm.recurring_days, day];
-    setAvailabilityForm({ ...availabilityForm, recurring_days: newDays });
+    setAvailabilityForm({ ...availabilityForm, recurring_days: days });
   };
 
-  const getWeekDates = () => {
-    return Array.from({ length: 7 }, (_, i) => {
-      const day = new Date(currentWeekStart);
-      day.setDate(currentWeekStart.getDate() + i);
-      return day;
-    });
-  };
-
-  const goToPreviousWeek = () => {
-    const newDate = new Date(currentWeekStart);
-    newDate.setDate(newDate.getDate() - 7);
-    setCurrentWeekStart(newDate);
-  };
-
-  const goToNextWeek = () => {
-    const newDate = new Date(currentWeekStart);
-    newDate.setDate(newDate.getDate() + 7);
-    setCurrentWeekStart(newDate);
-  };
-
-  const getEventTypeColor = (type: string) => {
-    switch (type) {
-      case "deadline":
-        return "bg-red-50 border-red-200 text-red-700";
-      case "meeting":
-        return "bg-blue-50 border-blue-200 text-blue-700";
-      case "reminder":
-        return "bg-yellow-50 border-yellow-200 text-yellow-700";
-      case "task":
-        return "bg-green-50 border-green-200 text-green-700";
-      case "appointment":
-        return "bg-purple-50 border-purple-200 text-purple-700";
-      default:
-        return "bg-neutral-50 border-neutral-200 text-neutral-700";
-    }
-  };
-
-  const getEventDotColor = (type: string) => {
-    switch (type) {
-      case "deadline":
-        return "bg-red-500";
-      case "meeting":
-        return "bg-blue-500";
-      case "reminder":
-        return "bg-yellow-500";
-      case "task":
-        return "bg-green-500";
-      case "appointment":
-        return "bg-purple-500";
-      default:
-        return "bg-neutral-500";
-    }
-  };
-
-  const formatTime12Hour = (time24: string) => {
-    if (!time24) return "";
-    const [hours, minutes] = time24.split(":");
-    const hour = parseInt(hours);
-    const ampm = hour >= 12 ? "PM" : "AM";
-    const hour12 = hour % 12 || 12;
-    return `${hour12}:${minutes} ${ampm}`;
-  };
-
-  const getSlotCountForDate = (dateStr: string) => {
-    const dayData = availabilityData?.find((d: any) => d.date === dateStr);
-    return dayData?.slots?.length || 0;
-  };
-
-  const getBookedSlotCountForDate = (dateStr: string) => {
-    const dayData = availabilityData?.find((d: any) => d.date === dateStr);
-    return dayData?.slots?.filter((s: any) => s.is_booked).length || 0;
-  };
-
-  const getAppointmentStatusColor = (status: string) => {
-    switch (status) {
-      case "pending":
-        return "bg-yellow-50 text-yellow-700 border-yellow-200";
-      case "confirmed":
-        return "bg-blue-50 text-blue-700 border-blue-200";
-      case "completed":
-        return "bg-green-50 text-green-700 border-green-200";
-      case "cancelled":
-        return "bg-red-50 text-red-700 border-red-200";
-      case "rescheduled":
-        return "bg-purple-50 text-purple-700 border-purple-200";
-      default:
-        return "bg-neutral-50 text-neutral-700 border-neutral-200";
-    }
-  };
-
-  const getAppointmentStatusIcon = (status: string) => {
-    switch (status) {
-      case "pending":
-        return faHourglassHalf;
-      case "confirmed":
-        return faCheckCircle;
-      case "completed":
-        return faCheck;
-      case "cancelled":
-        return faBan;
-      case "rescheduled":
-        return faCalendar;
-      default:
-        return faInfoCircle;
-    }
-  };
-
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr + "T00:00:00");
-    return date.toLocaleDateString("en-US", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-  };
-
-  const formatDateTime = (dateStr: string, timeStr: string) => {
-    return `${formatDate(dateStr)} at ${formatTime12Hour(timeStr)}`;
-  };
-
-  const filteredAppointments = appointments?.filter((apt) => {
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      return (
-        apt.client_name.toLowerCase().includes(query) ||
-        apt.client_email?.toLowerCase().includes(query) ||
-        apt.client_phone?.toLowerCase().includes(query) ||
-        apt.service_type?.toLowerCase().includes(query)
-      );
-    }
-    return true;
-  });
-
-  const pendingAppointmentCount = appointmentCounts?.pending || 0;
-
-  // Click outside handler for filter dropdown
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        filterRef.current &&
-        !filterRef.current.contains(event.target as Node)
-      ) {
+    const handler = (e: MouseEvent) => {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node))
         setShowFilterDropdown(false);
-      }
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // ==================================================================================
-  // CONSTANTS
-  // ==================================================================================
+  const filteredAppointments = appointments?.filter((apt) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      apt.client_name.toLowerCase().includes(q) ||
+      apt.client_email?.toLowerCase().includes(q) ||
+      apt.client_phone?.toLowerCase().includes(q) ||
+      apt.service_type?.toLowerCase().includes(q)
+    );
+  });
+
+  const pendingCount = appointmentCounts?.pending ?? 0;
+
   const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const weekDaysAPI = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
   const monthNames = [
@@ -800,28 +772,30 @@ export default function CalendarPage() {
     "November",
     "December",
   ];
-  const eventTypes = [
-    { type: "deadline", label: "Deadline", color: "bg-red-500" },
-    { type: "meeting", label: "Meeting", color: "bg-blue-500" },
-    { type: "reminder", label: "Reminder", color: "bg-yellow-500" },
-    { type: "task", label: "Task", color: "bg-green-500" },
-    { type: "appointment", label: "Appointment", color: "bg-purple-500" },
-  ];
-  const weekEndDate = new Date(currentWeekStart);
-  weekEndDate.setDate(weekEndDate.getDate() + 6);
+  const eventTypes = Object.entries(EVENT_TYPE_CONFIG).map(([type, c]) => ({
+    type,
+    label: c.label,
+    dot: c.dot,
+  }));
 
-  // ==================================================================================
-  // LOADING & ERROR STATES
-  // ==================================================================================
+  // ── Loading / Error ──
   if (eventsLoading || availabilityLoading || appointmentsLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading…
+          </p>
         </div>
       </div>
     );
@@ -829,15 +803,27 @@ export default function CalendarPage() {
 
   if (eventsError || appointmentsError) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FontAwesomeIcon icon={faTimes} className="text-red-600 text-2xl" />
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
+        <div
+          className="rounded-2xl p-8 text-center max-w-md"
+          style={{ backgroundColor: "#fef2f2", border: "1px solid #fecaca" }}
+        >
+          <div
+            className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4"
+            style={{ backgroundColor: "#fee2e2" }}
+          >
+            <FontAwesomeIcon
+              icon={faTimes}
+              style={{ color: "#b91c1c", fontSize: "1.25rem" }}
+            />
           </div>
-          <h3 className="text-lg font-semibold text-red-900 mb-2">
+          <h3 className="font-semibold mb-2" style={{ color: "#7f1d1d" }}>
             Error Loading Data
           </h3>
-          <p className="text-red-700 mb-4">
+          <p style={{ fontSize: "0.875rem", color: "#b91c1c" }}>
             Failed to load calendar data. Please try again.
           </p>
         </div>
@@ -849,39 +835,71 @@ export default function CalendarPage() {
   // RENDER
   // ==================================================================================
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* ── Page Header ── */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.125rem 2rem",
+        }}
+      >
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
           <div>
-            <h1 className="heading-2 text-neutral-900 mb-1">
-              Calendar & Appointments
+            <h1
+              className="font-bold"
+              style={{
+                fontSize: "1.375rem",
+                color: "var(--color-neutral-900)",
+                lineHeight: 1.2,
+              }}
+            >
+              Calendar &amp; Appointments
             </h1>
-            <p className="text-neutral-600 body-regular">
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--color-neutral-500)",
+                marginTop: "0.125rem",
+              }}
+            >
               Manage your schedule, availability, and booking requests
             </p>
-            {pendingAppointmentCount > 0 && (
-              <div
-                className="mt-2 inline-flex items-center gap-2 px-3 py-1 bg-yellow-50 border border-yellow-200 rounded-lg cursor-pointer hover:bg-yellow-100 transition-colors"
+            {pendingCount > 0 && (
+              <button
                 onClick={() => setActiveTab("appointments")}
+                className="mt-2 inline-flex items-center gap-2 rounded-xl"
+                style={{
+                  padding: "0.375rem 0.875rem",
+                  backgroundColor: "#fffbeb",
+                  border: "1px solid #fde68a",
+                  fontSize: "0.8rem",
+                  fontWeight: 600,
+                  color: "#92400e",
+                  cursor: "pointer",
+                }}
               >
                 <FontAwesomeIcon
                   icon={faHourglassHalf}
-                  className="text-yellow-600"
+                  style={{ color: "#d97706", fontSize: "0.75rem" }}
                 />
-                <span className="text-yellow-700 font-semibold text-sm">
-                  {pendingAppointmentCount} pending request
-                  {pendingAppointmentCount !== 1 ? "s" : ""} - Click to review
-                </span>
-              </div>
+                {pendingCount} pending request{pendingCount !== 1 ? "s" : ""} ·
+                Click to review
+              </button>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 flex-shrink-0">
             <button
               onClick={() => setShowAvailabilityModal(true)}
-              className="btn-secondary flex items-center gap-2"
+              className="btn btn-secondary btn-md flex items-center gap-2"
             >
-              <FontAwesomeIcon icon={faCalendarPlus} />
+              <FontAwesomeIcon
+                icon={faCalendarPlus}
+                style={{ fontSize: "0.8rem" }}
+              />
               Set Availability
             </button>
             <button
@@ -889,134 +907,294 @@ export default function CalendarPage() {
                 resetEventForm();
                 setShowAddEventModal(true);
               }}
-              className="btn-primary flex items-center gap-2"
+              className="btn btn-primary btn-md flex items-center gap-2"
             >
-              <FontAwesomeIcon icon={faPlus} />
+              <FontAwesomeIcon icon={faPlus} style={{ fontSize: "0.8rem" }} />
               Add Event
             </button>
           </div>
         </div>
-        {/* Tab Navigation */}
-        <div className="mt-6 flex gap-2">
-          <button
-            onClick={() => setActiveTab("calendar")}
-            className={`px-6 py-3 rounded-lg font-semibold transition-all ${
-              activeTab === "calendar"
-                ? "bg-primary-600 text-white shadow-md"
-                : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200"
-            }`}
-          >
-            <FontAwesomeIcon icon={faCalendarCheck} className="mr-2" />
-            Calendar View
-          </button>
-          <button
-            onClick={() => setActiveTab("appointments")}
-            className={`px-6 py-3 rounded-lg font-semibold transition-all relative ${
-              activeTab === "appointments"
-                ? "bg-primary-600 text-white shadow-md"
-                : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200"
-            }`}
-          >
-            <FontAwesomeIcon icon={faUser} className="mr-2" />
-            Appointments
-            {pendingAppointmentCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-yellow-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                {pendingAppointmentCount}
-              </span>
-            )}
-          </button>
+
+        {/* Tab navigation */}
+        <div className="mt-5 flex gap-2">
+          {(["calendar", "appointments"] as const).map((tab) => {
+            const active = activeTab === tab;
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className="relative flex items-center gap-2 font-semibold rounded-xl"
+                style={{
+                  padding: "0.625rem 1.25rem",
+                  fontSize: "0.875rem",
+                  backgroundColor: active
+                    ? "#1ab189"
+                    : "var(--color-neutral-100)",
+                  color: active ? "white" : "var(--color-neutral-700)",
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "background-color 150ms",
+                }}
+                onMouseEnter={(e) => {
+                  if (!active)
+                    (
+                      e.currentTarget as HTMLButtonElement
+                    ).style.backgroundColor = "var(--color-neutral-200)";
+                }}
+                onMouseLeave={(e) => {
+                  if (!active)
+                    (
+                      e.currentTarget as HTMLButtonElement
+                    ).style.backgroundColor = "var(--color-neutral-100)";
+                }}
+              >
+                <FontAwesomeIcon
+                  icon={tab === "calendar" ? faCalendarCheck : faUser}
+                  style={{ fontSize: "0.8rem" }}
+                />
+                {tab === "calendar" ? "Calendar View" : "Appointments"}
+                {tab === "appointments" && pendingCount > 0 && (
+                  <span
+                    className="absolute -top-1.5 -right-1.5 flex items-center justify-center rounded-full font-bold"
+                    style={{
+                      width: "1.25rem",
+                      height: "1.25rem",
+                      backgroundColor: "#f59e0b",
+                      color: "white",
+                      fontSize: "0.6rem",
+                    }}
+                  >
+                    {pendingCount}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Calendar Tab Content */}
+      {/* ==================================================================================
+          CALENDAR TAB
+      ================================================================================== */}
       {activeTab === "calendar" && (
-        <div className="p-8 max-w-7xl mx-auto">
-          {/* Controls Bar */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 mb-6">
+        <div
+          style={{
+            padding: "1.75rem 2rem",
+            maxWidth: "90rem",
+            margin: "0 auto",
+          }}
+        >
+          {/* Controls bar */}
+          <div
+            className="rounded-2xl mb-5"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              padding: "1.25rem 1.5rem",
+            }}
+          >
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-              {/* Week Navigation */}
-              <div className="flex items-center gap-4">
+              {/* Week navigation */}
+              <div className="flex items-center gap-3">
                 <button
-                  onClick={goToPreviousWeek}
-                  className="p-2.5 hover:bg-neutral-50 rounded-lg transition-colors border border-neutral-200"
+                  onClick={() => {
+                    const d = new Date(currentWeekStart);
+                    d.setDate(d.getDate() - 7);
+                    setCurrentWeekStart(d);
+                  }}
+                  style={{
+                    width: "2.25rem",
+                    height: "2.25rem",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: "0.5rem",
+                    border: "1px solid var(--color-neutral-200)",
+                    backgroundColor: "transparent",
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => {
+                    (
+                      e.currentTarget as HTMLButtonElement
+                    ).style.backgroundColor = "var(--color-neutral-50)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (
+                      e.currentTarget as HTMLButtonElement
+                    ).style.backgroundColor = "transparent";
+                  }}
                 >
                   <FontAwesomeIcon
                     icon={faChevronLeft}
-                    className="text-neutral-600"
+                    style={{
+                      fontSize: "0.75rem",
+                      color: "var(--color-neutral-600)",
+                    }}
                   />
                 </button>
-                <div className="text-center min-w-[200px]">
-                  <p className="font-semibold text-neutral-900">
-                    {monthNames[currentWeekStart.getMonth()]}{" "}
-                    {currentWeekStart.getDate()} - {weekEndDate.getDate()},
-                    {currentWeekStart.getFullYear()}
-                  </p>
-                </div>
+                <p
+                  className="font-semibold text-center"
+                  style={{
+                    minWidth: "13rem",
+                    fontSize: "0.9rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
+                  {monthNames[currentWeekStart.getMonth()]}{" "}
+                  {currentWeekStart.getDate()} – {weekEndDate.getDate()},{" "}
+                  {currentWeekStart.getFullYear()}
+                </p>
                 <button
-                  onClick={goToNextWeek}
-                  className="p-2.5 hover:bg-neutral-50 rounded-lg transition-colors border border-neutral-200"
+                  onClick={() => {
+                    const d = new Date(currentWeekStart);
+                    d.setDate(d.getDate() + 7);
+                    setCurrentWeekStart(d);
+                  }}
+                  style={{
+                    width: "2.25rem",
+                    height: "2.25rem",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: "0.5rem",
+                    border: "1px solid var(--color-neutral-200)",
+                    backgroundColor: "transparent",
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => {
+                    (
+                      e.currentTarget as HTMLButtonElement
+                    ).style.backgroundColor = "var(--color-neutral-50)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (
+                      e.currentTarget as HTMLButtonElement
+                    ).style.backgroundColor = "transparent";
+                  }}
                 >
                   <FontAwesomeIcon
                     icon={faChevronRight}
-                    className="text-neutral-600"
+                    style={{
+                      fontSize: "0.75rem",
+                      color: "var(--color-neutral-600)",
+                    }}
                   />
                 </button>
               </div>
-              {/* Legend and Filter */}
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                {/* Legend */}
+
+              {/* Legend + filter */}
+              <div className="flex items-center gap-5 flex-wrap">
                 <div className="flex items-center gap-4 flex-wrap">
-                  {eventTypes.map((eventType) => (
-                    <div
-                      key={eventType.type}
-                      className="flex items-center gap-2"
-                    >
+                  {eventTypes.map(({ type, label, dot }) => (
+                    <div key={type} className="flex items-center gap-1.5">
                       <div
-                        className={`w-3 h-3 rounded-full ${eventType.color}`}
-                      ></div>
-                      <span className="text-neutral-700 text-sm">
-                        {eventType.label}
+                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: dot }}
+                      />
+                      <span
+                        style={{
+                          fontSize: "0.78rem",
+                          color: "var(--color-neutral-600)",
+                        }}
+                      >
+                        {label}
                       </span>
                     </div>
                   ))}
                 </div>
-                {/* Filter Button */}
+
+                {/* Filter button */}
                 <div className="relative" ref={filterRef}>
                   <button
-                    onClick={() => setShowFilterDropdown(!showFilterDropdown)}
-                    className="flex items-center gap-2 px-4 py-2 bg-neutral-0 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors"
+                    onClick={() => setShowFilterDropdown((v) => !v)}
+                    className="flex items-center gap-2 rounded-xl"
+                    style={{
+                      padding: "0.5rem 1rem",
+                      backgroundColor: "var(--color-neutral-0)",
+                      border: "1px solid var(--color-neutral-200)",
+                      cursor: "pointer",
+                      fontSize: "0.8125rem",
+                      color: "var(--color-neutral-700)",
+                    }}
+                    onMouseEnter={(e) => {
+                      (
+                        e.currentTarget as HTMLButtonElement
+                      ).style.backgroundColor = "var(--color-neutral-50)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (
+                        e.currentTarget as HTMLButtonElement
+                      ).style.backgroundColor = "var(--color-neutral-0)";
+                    }}
                   >
                     <FontAwesomeIcon
                       icon={faFilter}
-                      className="text-neutral-600"
+                      style={{
+                        fontSize: "0.75rem",
+                        color: "var(--color-neutral-500)",
+                      }}
                     />
-                    <span className="text-neutral-700 font-medium">Filter</span>
+                    Filter
                     {selectedFilters.size > 0 && (
-                      <span className="px-2 py-0.5 bg-primary-600 text-neutral-0 rounded-full text-xs font-semibold">
+                      <span
+                        className="rounded-full font-bold"
+                        style={{
+                          padding: "0.1rem 0.45rem",
+                          backgroundColor: "#1ab189",
+                          color: "white",
+                          fontSize: "0.6rem",
+                        }}
+                      >
                         {selectedFilters.size}
                       </span>
                     )}
                   </button>
-                  {/* Filter Dropdown */}
+
                   {showFilterDropdown && (
-                    <div className="absolute right-0 mt-2 w-48 bg-neutral-0 rounded-lg shadow-lg border border-neutral-200 py-2 z-10">
-                      {eventTypes.map((eventType) => (
+                    <div
+                      className="absolute right-0 rounded-xl overflow-hidden z-10"
+                      style={{
+                        marginTop: "0.5rem",
+                        width: "11rem",
+                        backgroundColor: "var(--color-neutral-0)",
+                        border: "1px solid var(--color-neutral-200)",
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                      }}
+                    >
+                      {eventTypes.map(({ type, label }) => (
                         <button
-                          key={eventType.type}
-                          onClick={() => toggleFilter(eventType.type)}
-                          className={`w-full px-4 py-2 text-left hover:bg-neutral-50 transition-colors flex items-center justify-between ${
-                            selectedFilters.has(eventType.type)
-                              ? "bg-primary-50"
-                              : ""
-                          }`}
+                          key={type}
+                          onClick={() => toggleFilter(type)}
+                          className="w-full flex items-center justify-between px-4 py-2.5"
+                          style={{
+                            background: selectedFilters.has(type)
+                              ? "rgba(26,177,137,0.06)"
+                              : "none",
+                            border: "none",
+                            cursor: "pointer",
+                            fontSize: "0.8125rem",
+                            color: "var(--color-neutral-700)",
+                            textAlign: "left",
+                          }}
+                          onMouseEnter={(e) => {
+                            (
+                              e.currentTarget as HTMLButtonElement
+                            ).style.backgroundColor = "var(--color-neutral-50)";
+                          }}
+                          onMouseLeave={(e) => {
+                            (
+                              e.currentTarget as HTMLButtonElement
+                            ).style.backgroundColor = selectedFilters.has(type)
+                              ? "rgba(26,177,137,0.06)"
+                              : "transparent";
+                          }}
                         >
-                          <span className="text-neutral-700">
-                            {eventType.label}
-                          </span>
-                          {selectedFilters.has(eventType.type) && (
-                            <span className="text-primary-600 font-semibold">
-                              ✓
-                            </span>
+                          {label}
+                          {selectedFilters.has(type) && (
+                            <FontAwesomeIcon
+                              icon={faCheck}
+                              style={{ color: "#1ab189", fontSize: "0.75rem" }}
+                            />
                           )}
                         </button>
                       ))}
@@ -1025,27 +1203,57 @@ export default function CalendarPage() {
                 </div>
               </div>
             </div>
-            {/* Active Filters */}
+
+            {/* Active filter chips */}
             {selectedFilters.size > 0 && (
-              <div className="flex items-center gap-2 mt-4 pt-4 border-t border-neutral-100">
-                <span className="text-neutral-600 text-sm font-medium">
-                  Active Filters:
+              <div
+                className="flex items-center gap-2 mt-4 pt-4 flex-wrap"
+                style={{ borderTop: "1px solid var(--color-neutral-100)" }}
+              >
+                <span
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--color-neutral-500)",
+                    fontWeight: 600,
+                  }}
+                >
+                  Active:
                 </span>
-                {Array.from(selectedFilters).map((filter) => {
-                  const eventType = eventTypes.find((et) => et.type === filter);
+                {[...selectedFilters].map((filter) => {
+                  const cfg = EVENT_TYPE_CONFIG[filter];
                   return (
                     <span
                       key={filter}
-                      className={`px-3 py-1 rounded-lg text-sm font-medium border flex items-center gap-2 ${getEventTypeColor(
-                        filter,
-                      )}`}
+                      className="flex items-center gap-1.5 rounded-lg"
+                      style={{
+                        padding: "0.25rem 0.75rem",
+                        backgroundColor: cfg.bg,
+                        border: `1px solid ${cfg.border}`,
+                        color: cfg.text,
+                        fontSize: "0.78rem",
+                        fontWeight: 600,
+                      }}
                     >
-                      {eventType?.label}
+                      {cfg.label}
                       <button
-                        onClick={() => removeFilter(filter)}
-                        className="hover:scale-110 transition-transform"
+                        onClick={() => {
+                          const n = new Set(selectedFilters);
+                          n.delete(filter);
+                          setSelectedFilters(n);
+                        }}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          color: cfg.text,
+                          padding: 0,
+                          lineHeight: 1,
+                        }}
                       >
-                        <FontAwesomeIcon icon={faTimes} className="text-xs" />
+                        <FontAwesomeIcon
+                          icon={faTimes}
+                          style={{ fontSize: "0.6rem" }}
+                        />
                       </button>
                     </span>
                   );
@@ -1053,164 +1261,285 @@ export default function CalendarPage() {
               </div>
             )}
           </div>
-          {/* Calendar Grid */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
-            {/* Day Headers */}
-            <div className="grid grid-cols-7 border-b border-neutral-200 bg-neutral-50">
+
+          {/* Calendar grid */}
+          <div
+            className="rounded-2xl overflow-hidden"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            {/* Day headers */}
+            <div
+              className="grid grid-cols-7"
+              style={{
+                borderBottom: "1px solid var(--color-neutral-200)",
+                backgroundColor: "var(--color-neutral-50)",
+              }}
+            >
               {getWeekDates().map((date, i) => {
                 const isToday =
                   date.toDateString() === new Date().toDateString();
-                const dateStr = formatDateKey(date);
-                const slotCount = getSlotCountForDate(dateStr);
-                const bookedCount = getBookedSlotCountForDate(dateStr);
+                const dateStr = formatDateForAPI(date);
+                const slots = getSlotCountForDate(dateStr);
+                const booked = getBookedSlotCountForDate(dateStr);
                 return (
                   <div
                     key={i}
-                    className="p-4 text-center border-r border-neutral-200 last:border-r-0"
+                    className="p-3 text-center"
+                    style={{
+                      borderRight:
+                        i < 6 ? "1px solid var(--color-neutral-200)" : "none",
+                    }}
                   >
-                    <div className="text-neutral-600 text-sm font-medium mb-1">
-                      {weekDays[date.getDay()]}
-                    </div>
-                    <div
-                      className={`text-lg font-semibold ${
-                        isToday
-                          ? "w-8 h-8 bg-primary-600 text-neutral-0 rounded-full flex items-center justify-center mx-auto"
-                          : "text-neutral-900"
-                      }`}
+                    <p
+                      style={{
+                        fontSize: "0.72rem",
+                        fontWeight: 600,
+                        color: "var(--color-neutral-500)",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                        marginBottom: "0.375rem",
+                      }}
                     >
-                      {date.getDate()}
+                      {weekDays[date.getDay()]}
+                    </p>
+                    <div className="flex justify-center">
+                      <div
+                        className="flex items-center justify-center font-bold"
+                        style={{
+                          width: "2rem",
+                          height: "2rem",
+                          borderRadius: "50%",
+                          fontSize: "0.9375rem",
+                          backgroundColor: isToday ? "#1ab189" : "transparent",
+                          color: isToday ? "white" : "var(--color-neutral-900)",
+                        }}
+                      >
+                        {date.getDate()}
+                      </div>
                     </div>
-                    {/* Show slot availability indicator */}
-                    {slotCount > 0 && (
+                    {slots > 0 && (
                       <button
                         onClick={() => fetchSlotsForDate(dateStr)}
-                        className="mt-2 text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center justify-center gap-1 mx-auto"
-                        title="View time slots"
+                        className="mt-1.5 flex items-center justify-center gap-1 mx-auto rounded-lg"
+                        style={{
+                          padding: "0.2rem 0.5rem",
+                          backgroundColor: "rgba(26,177,137,0.1)",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: "0.65rem",
+                          fontWeight: 600,
+                          color: "#1ab189",
+                        }}
                       >
                         <FontAwesomeIcon
                           icon={faCalendarCheck}
-                          className="text-xs"
+                          style={{ fontSize: "0.55rem" }}
                         />
-                        {slotCount} slot{slotCount !== 1 ? "s" : ""}
-                        {bookedCount > 0 && ` (${bookedCount} booked)`}
+                        {slots} slot{slots !== 1 ? "s" : ""}
+                        {booked > 0 && ` (${booked} booked)`}
                       </button>
                     )}
                   </div>
                 );
               })}
             </div>
-            {/* Event Cells */}
+
+            {/* Event cells */}
             <div className="grid grid-cols-7">
               {getWeekDates().map((date, i) => {
-                const key = formatDateKey(date);
-                const dayEvents = eventsData?.[key] || [];
-                const filteredEvents =
+                const key = formatDateForAPI(date);
+                const dayEvents = eventsData?.[key] ?? [];
+                const visible =
                   selectedFilters.size === 0
                     ? dayEvents
-                    : dayEvents.filter((event) =>
-                        selectedFilters.has(event.event_type),
+                    : dayEvents.filter((ev) =>
+                        selectedFilters.has(ev.event_type),
                       );
                 return (
                   <div
                     key={i}
-                    className="min-h-[200px] p-3 border-r border-b border-neutral-200 last:border-r-0 hover:bg-neutral-50 transition-colors"
+                    className="p-2"
+                    style={{
+                      minHeight: "10rem",
+                      borderRight:
+                        i < 6 ? "1px solid var(--color-neutral-200)" : "none",
+                      borderBottom: "1px solid var(--color-neutral-200)",
+                      transition: "background-color 120ms",
+                    }}
+                    onMouseEnter={(e) => {
+                      (
+                        e.currentTarget as HTMLDivElement
+                      ).style.backgroundColor = "var(--color-neutral-50)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (
+                        e.currentTarget as HTMLDivElement
+                      ).style.backgroundColor = "transparent";
+                    }}
                   >
-                    <div className="space-y-2">
-                      {filteredEvents.map((event) => (
-                        <div
-                          key={event.id}
-                          className={`p-3 rounded-lg border cursor-pointer hover:shadow-md transition-all relative group ${getEventTypeColor(
-                            event.event_type,
-                          )} ${event.is_completed ? "opacity-60" : ""}`}
-                        >
-                          <div className="flex items-start gap-2 mb-2">
-                            <div
-                              className={`w-2 h-2 rounded-full mt-1 flex-shrink-0 ${getEventDotColor(
-                                event.event_type,
-                              )}`}
-                            ></div>
-                            <p
-                              className={`font-semibold text-sm leading-tight flex-1 ${
-                                event.is_completed ? "line-through" : ""
-                              }`}
-                            >
-                              {event.title}
-                            </p>
-                          </div>
-                          {event.event_time && (
-                            <div className="flex items-center gap-1 text-xs mb-1">
-                              <FontAwesomeIcon
-                                icon={faClock}
-                                className="text-xs"
+                    <div className="space-y-1.5">
+                      {visible.map((event) => {
+                        const cfg =
+                          EVENT_TYPE_CONFIG[event.event_type] ??
+                          EVENT_TYPE_CONFIG.task;
+                        return (
+                          <div
+                            key={event.id}
+                            className="relative group rounded-lg p-2.5"
+                            style={{
+                              backgroundColor: cfg.bg,
+                              border: `1px solid ${cfg.border}`,
+                              opacity: event.is_completed ? 0.6 : 1,
+                              cursor: "default",
+                            }}
+                          >
+                            <div className="flex items-start gap-1.5 mb-1">
+                              <div
+                                className="w-2 h-2 rounded-full mt-1 flex-shrink-0"
+                                style={{ backgroundColor: cfg.dot }}
                               />
-                              <span>{formatTime12Hour(event.event_time)}</span>
+                              <p
+                                className="font-semibold leading-tight flex-1"
+                                style={{
+                                  fontSize: "0.76rem",
+                                  color: cfg.text,
+                                  textDecoration: event.is_completed
+                                    ? "line-through"
+                                    : "none",
+                                }}
+                              >
+                                {event.title}
+                              </p>
                             </div>
-                          )}
-                          {event.assigned_user_email && (
-                            <div className="flex items-center gap-1 text-xs">
-                              <FontAwesomeIcon
-                                icon={faUser}
-                                className="text-xs"
-                              />
-                              <span className="truncate">
+                            {event.event_time && (
+                              <div
+                                className="flex items-center gap-1"
+                                style={{
+                                  fontSize: "0.68rem",
+                                  color: cfg.text,
+                                  opacity: 0.8,
+                                }}
+                              >
+                                <FontAwesomeIcon
+                                  icon={faClock}
+                                  style={{ fontSize: "0.55rem" }}
+                                />
+                                {formatTime12Hour(event.event_time)}
+                              </div>
+                            )}
+                            {event.assigned_user_email && (
+                              <div
+                                className="flex items-center gap-1 mt-0.5 truncate"
+                                style={{
+                                  fontSize: "0.65rem",
+                                  color: cfg.text,
+                                  opacity: 0.75,
+                                }}
+                              >
+                                <FontAwesomeIcon
+                                  icon={faUser}
+                                  style={{ fontSize: "0.55rem" }}
+                                />
                                 {event.assigned_user_email}
-                              </span>
-                            </div>
-                          )}
-                          {/* Action buttons */}
-                          <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-                            {!event.is_completed && (
+                              </div>
+                            )}
+
+                            {/* Hover actions */}
+                            <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+                              {!event.is_completed && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    completeEventMutation.mutate(event.id);
+                                  }}
+                                  title="Mark complete"
+                                  style={{
+                                    width: "1.375rem",
+                                    height: "1.375rem",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    backgroundColor: "#16a34a",
+                                    color: "white",
+                                    border: "none",
+                                    borderRadius: "0.375rem",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faCheck}
+                                    style={{ fontSize: "0.6rem" }}
+                                  />
+                                </button>
+                              )}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleCompleteEvent(event);
+                                  openEditModal(event);
                                 }}
-                                className="p-1 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
-                                title="Mark as complete"
+                                title="Edit"
+                                style={{
+                                  width: "1.375rem",
+                                  height: "1.375rem",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  backgroundColor: "#2563eb",
+                                  color: "white",
+                                  border: "none",
+                                  borderRadius: "0.375rem",
+                                  cursor: "pointer",
+                                }}
                               >
                                 <FontAwesomeIcon
-                                  icon={faCheckCircle}
-                                  className="text-xs"
+                                  icon={faEdit}
+                                  style={{ fontSize: "0.6rem" }}
                                 />
                               </button>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openEditModal(event);
-                              }}
-                              className="p-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-                              title="Edit event"
-                            >
-                              <FontAwesomeIcon
-                                icon={faEdit}
-                                className="text-xs"
-                              />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openDeleteModal(event);
-                              }}
-                              className="p-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
-                              title="Delete event"
-                            >
-                              <FontAwesomeIcon
-                                icon={faTrash}
-                                className="text-xs"
-                              />
-                            </button>
-                          </div>
-                          {event.is_completed && (
-                            <div className="absolute top-2 right-2">
-                              <FontAwesomeIcon
-                                icon={faCheckCircle}
-                                className="text-green-600"
-                              />
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedEvent(event);
+                                  setShowDeleteEventModal(true);
+                                }}
+                                title="Delete"
+                                style={{
+                                  width: "1.375rem",
+                                  height: "1.375rem",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  backgroundColor: "#dc2626",
+                                  color: "white",
+                                  border: "none",
+                                  borderRadius: "0.375rem",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <FontAwesomeIcon
+                                  icon={faTrash}
+                                  style={{ fontSize: "0.6rem" }}
+                                />
+                              </button>
                             </div>
-                          )}
-                        </div>
-                      ))}
+
+                            {event.is_completed && (
+                              <div className="absolute top-1.5 right-1.5">
+                                <FontAwesomeIcon
+                                  icon={faCheckCircle}
+                                  style={{
+                                    color: "#16a34a",
+                                    fontSize: "0.75rem",
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -1220,317 +1549,415 @@ export default function CalendarPage() {
         </div>
       )}
 
-      {/* Appointments Tab Content */}
+      {/* ==================================================================================
+          APPOINTMENTS TAB
+      ================================================================================== */}
       {activeTab === "appointments" && (
-        <div className="p-8 max-w-7xl mx-auto">
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-            <button
-              onClick={() => setSelectedAppointmentStatus("all")}
-              className={`p-4 rounded-xl border-2 transition-all text-left ${
-                selectedAppointmentStatus === "all"
-                  ? "border-primary-500 bg-primary-50"
-                  : "border-neutral-200 bg-neutral-0 hover:border-primary-300"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <FontAwesomeIcon
-                  icon={faCalendarCheck}
-                  className="text-primary-600 text-lg"
-                />
-                <span className="text-2xl font-bold text-neutral-900">
-                  {appointmentCounts?.total || 0}
-                </span>
-              </div>
-              <p className="text-neutral-600 text-sm font-medium">Total</p>
-            </button>
-            <button
-              onClick={() => setSelectedAppointmentStatus("pending")}
-              className={`p-4 rounded-xl border-2 transition-all text-left ${
-                selectedAppointmentStatus === "pending"
-                  ? "border-yellow-500 bg-yellow-50"
-                  : "border-neutral-200 bg-neutral-0 hover:border-yellow-300"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <FontAwesomeIcon
-                  icon={faHourglassHalf}
-                  className="text-yellow-600 text-lg"
-                />
-                <span className="text-2xl font-bold text-neutral-900">
-                  {appointmentCounts?.pending || 0}
-                </span>
-              </div>
-              <p className="text-neutral-600 text-sm font-medium">Pending</p>
-            </button>
-            <button
-              onClick={() => setSelectedAppointmentStatus("confirmed")}
-              className={`p-4 rounded-xl border-2 transition-all text-left ${
-                selectedAppointmentStatus === "confirmed"
-                  ? "border-blue-500 bg-blue-50"
-                  : "border-neutral-200 bg-neutral-0 hover:border-blue-300"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <FontAwesomeIcon
-                  icon={faCheckCircle}
-                  className="text-blue-600 text-lg"
-                />
-                <span className="text-2xl font-bold text-neutral-900">
-                  {appointmentCounts?.confirmed || 0}
-                </span>
-              </div>
-              <p className="text-neutral-600 text-sm font-medium">Confirmed</p>
-            </button>
-            <button
-              onClick={() => setSelectedAppointmentStatus("completed")}
-              className={`p-4 rounded-xl border-2 transition-all text-left ${
-                selectedAppointmentStatus === "completed"
-                  ? "border-green-500 bg-green-50"
-                  : "border-neutral-200 bg-neutral-0 hover:border-green-300"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <FontAwesomeIcon
-                  icon={faCheck}
-                  className="text-green-600 text-lg"
-                />
-                <span className="text-2xl font-bold text-neutral-900">
-                  {appointmentCounts?.completed || 0}
-                </span>
-              </div>
-              <p className="text-neutral-600 text-sm font-medium">Completed</p>
-            </button>
-            <button
-              onClick={() => setSelectedAppointmentStatus("rescheduled")}
-              className={`p-4 rounded-xl border-2 transition-all text-left ${
-                selectedAppointmentStatus === "rescheduled"
-                  ? "border-purple-500 bg-purple-50"
-                  : "border-neutral-200 bg-neutral-0 hover:border-purple-300"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <FontAwesomeIcon
-                  icon={faCalendar}
-                  className="text-purple-600 text-lg"
-                />
-                <span className="text-2xl font-bold text-neutral-900">
-                  {appointmentCounts?.rescheduled || 0}
-                </span>
-              </div>
-              <p className="text-neutral-600 text-sm font-medium">
-                Rescheduled
-              </p>
-            </button>
-            <button
-              onClick={() => setSelectedAppointmentStatus("cancelled")}
-              className={`p-4 rounded-xl border-2 transition-all text-left ${
-                selectedAppointmentStatus === "cancelled"
-                  ? "border-red-500 bg-red-50"
-                  : "border-neutral-200 bg-neutral-0 hover:border-red-300"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <FontAwesomeIcon
-                  icon={faBan}
-                  className="text-red-600 text-lg"
-                />
-                <span className="text-2xl font-bold text-neutral-900">
-                  {appointmentCounts?.cancelled || 0}
-                </span>
-              </div>
-              <p className="text-neutral-600 text-sm font-medium">Cancelled</p>
-            </button>
-          </div>
-          {/* Search Bar */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-4 mb-6">
-            <div className="relative">
-              <FontAwesomeIcon
-                icon={faSearch}
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
-              />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by client name, email, phone, or service type..."
-                className="w-full pl-12 pr-4 py-3 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
-              />
-            </div>
-          </div>
-          {/* Appointments List */}
-          <div className="space-y-4">
-            {filteredAppointments && filteredAppointments.length > 0 ? (
-              filteredAppointments.map((appointment) => (
-                <div
-                  key={appointment.id}
-                  className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 hover:shadow-lg transition-all"
+        <div
+          style={{
+            padding: "1.75rem 2rem",
+            maxWidth: "72rem",
+            margin: "0 auto",
+          }}
+        >
+          {/* Stat cards */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
+            {Object.entries(STAT_CARD_CONFIG).map(([status, cfg]) => {
+              const count =
+                status === "all"
+                  ? (appointmentCounts?.total ?? 0)
+                  : (appointmentCounts?.[status as keyof AppointmentCounts] ??
+                    0);
+              const active = selectedAppointmentStatus === status;
+              return (
+                <button
+                  key={status}
+                  onClick={() => setSelectedAppointmentStatus(status)}
+                  className="rounded-2xl text-left"
+                  style={{
+                    padding: "1rem",
+                    backgroundColor: active
+                      ? cfg.activeBg
+                      : "var(--color-neutral-0)",
+                    border: `2px solid ${active ? cfg.border : "var(--color-neutral-200)"}`,
+                    cursor: "pointer",
+                    transition: "all 150ms",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!active)
+                      (e.currentTarget as HTMLButtonElement).style.borderColor =
+                        cfg.border;
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!active)
+                      (e.currentTarget as HTMLButtonElement).style.borderColor =
+                        "var(--color-neutral-200)";
+                  }}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    {/* Left Section - Client Info */}
-                    <div className="flex-1">
-                      <div className="flex items-start gap-4 mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <FontAwesomeIcon
+                      icon={cfg.icon}
+                      style={{ color: cfg.iconColor, fontSize: "1rem" }}
+                    />
+                    <span
+                      className="font-bold"
+                      style={{
+                        fontSize: "1.5rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
+                      {count}
+                    </span>
+                  </div>
+                  <p
+                    className="font-semibold capitalize"
+                    style={{
+                      fontSize: "0.75rem",
+                      color: "var(--color-neutral-600)",
+                    }}
+                  >
+                    {status === "all" ? "Total" : status}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Search */}
+          <div
+            className="rounded-2xl mb-5 relative"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              padding: "0.875rem 1rem",
+            }}
+          >
+            <FontAwesomeIcon
+              icon={faSearch}
+              className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{
+                color: "var(--color-neutral-400)",
+                fontSize: "0.8rem",
+                top: "50%",
+                left: "1.75rem",
+              }}
+            />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by client name, email, phone, or service type…"
+              style={{ ...baseInput, paddingLeft: "2.25rem" }}
+              onFocus={tealFocus}
+              onBlur={blurReset}
+            />
+          </div>
+
+          {/* Appointment list */}
+          <div className="space-y-3">
+            {(filteredAppointments ?? []).length > 0 ? (
+              (filteredAppointments ?? []).map((appt) => {
+                const statusCfg =
+                  APPT_STATUS_CONFIG[appt.status] ?? APPT_STATUS_CONFIG.pending;
+                return (
+                  <div
+                    key={appt.id}
+                    className="rounded-2xl"
+                    style={{
+                      backgroundColor: "var(--color-neutral-0)",
+                      border: "1px solid var(--color-neutral-200)",
+                      padding: "1.25rem 1.5rem",
+                      transition: "box-shadow 150ms",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLDivElement).style.boxShadow =
+                        "0 4px 16px rgba(0,0,0,0.08)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLDivElement).style.boxShadow =
+                        "none";
+                    }}
+                  >
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      {/* Left: client info */}
+                      <div className="flex items-start gap-4 flex-1 min-w-0">
                         {/* Avatar */}
-                        <div className="w-12 h-12 bg-primary-100 rounded-full flex items-center justify-center flex-shrink-0">
-                          <span className="text-primary-700 font-bold text-lg">
-                            {appointment.client_name
-                              .split(" ")
-                              .map((n) => n[0])
-                              .join("")
-                              .toUpperCase()
-                              .slice(0, 2)}
-                          </span>
+                        <div
+                          className="w-11 h-11 rounded-full flex items-center justify-center font-bold flex-shrink-0"
+                          style={{
+                            backgroundColor: "rgba(26,177,137,0.12)",
+                            color: "#1ab189",
+                            fontSize: "0.875rem",
+                          }}
+                        >
+                          {appt.client_name
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")
+                            .toUpperCase()
+                            .slice(0, 2)}
                         </div>
-                        {/* Details */}
-                        <div className="flex-1">
-                          <h3 className="text-lg font-bold text-neutral-900 mb-1">
-                            {appointment.client_name}
+                        <div className="flex-1 min-w-0">
+                          <h3
+                            className="font-bold mb-0.5"
+                            style={{
+                              fontSize: "1rem",
+                              color: "var(--color-neutral-900)",
+                            }}
+                          >
+                            {appt.client_name}
                           </h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
-                            {appointment.client_email && (
-                              <div className="flex items-center gap-2 text-neutral-600 text-sm">
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 mb-2">
+                            {appt.client_email && (
+                              <span
+                                className="flex items-center gap-1.5"
+                                style={{
+                                  fontSize: "0.78rem",
+                                  color: "var(--color-neutral-500)",
+                                }}
+                              >
                                 <FontAwesomeIcon
                                   icon={faEnvelope}
-                                  className="text-neutral-400"
+                                  style={{ fontSize: "0.65rem" }}
                                 />
-                                <span>{appointment.client_email}</span>
-                              </div>
+                                {appt.client_email}
+                              </span>
                             )}
-                            <div className="flex items-center gap-2 text-neutral-600 text-sm">
+                            <span
+                              className="flex items-center gap-1.5"
+                              style={{
+                                fontSize: "0.78rem",
+                                color: "var(--color-neutral-500)",
+                              }}
+                            >
                               <FontAwesomeIcon
                                 icon={faPhone}
-                                className="text-neutral-400"
+                                style={{ fontSize: "0.65rem" }}
                               />
-                              <span>{appointment.client_phone}</span>
-                            </div>
+                              {appt.client_phone}
+                            </span>
                           </div>
-                          <div className="flex items-center gap-2 text-neutral-700 mb-2">
+                          <div className="flex items-center gap-2 mb-2">
                             <FontAwesomeIcon
                               icon={faCalendar}
-                              className="text-primary-600"
+                              style={{ color: "#1ab189", fontSize: "0.75rem" }}
                             />
-                            <span className="font-semibold">
+                            <span
+                              className="font-semibold"
+                              style={{
+                                fontSize: "0.875rem",
+                                color: "var(--color-neutral-900)",
+                              }}
+                            >
                               {formatDateTime(
-                                appointment.appointment_date,
-                                appointment.appointment_time,
+                                appt.appointment_date,
+                                appt.appointment_time,
                               )}
                             </span>
                           </div>
-                          {appointment.service_type && (
-                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 border border-blue-200 rounded-lg mb-2">
+                          {appt.service_type && (
+                            <span
+                              className="inline-flex items-center gap-1.5 rounded-lg"
+                              style={{
+                                padding: "0.2rem 0.6rem",
+                                backgroundColor: "#eff6ff",
+                                border: "1px solid #bfdbfe",
+                                fontSize: "0.75rem",
+                                fontWeight: 600,
+                                color: "#1d4ed8",
+                              }}
+                            >
                               <FontAwesomeIcon
                                 icon={faInfoCircle}
-                                className="text-blue-600 text-xs"
+                                style={{ fontSize: "0.65rem" }}
                               />
-                              <span className="text-blue-700 text-sm font-medium">
-                                {appointment.service_type}
-                              </span>
-                            </div>
+                              {appt.service_type}
+                            </span>
                           )}
-                          {appointment.description && (
-                            <p className="text-neutral-600 text-sm mt-2 line-clamp-2">
-                              {appointment.description}
+                          {appt.description && (
+                            <p
+                              className="mt-2 line-clamp-2"
+                              style={{
+                                fontSize: "0.8rem",
+                                color: "var(--color-neutral-500)",
+                              }}
+                            >
+                              {appt.description}
                             </p>
                           )}
                         </div>
                       </div>
-                    </div>
-                    {/* Right Section - Status & Actions */}
-                    <div className="flex flex-col items-end gap-3">
-                      {/* Status Badge */}
-                      <div
-                        className={`px-4 py-2 rounded-lg border-2 font-semibold text-sm flex items-center gap-2 ${getAppointmentStatusColor(
-                          appointment.status,
-                        )}`}
-                      >
-                        <FontAwesomeIcon
-                          icon={getAppointmentStatusIcon(appointment.status)}
-                        />
-                        {appointment.status_display}
-                      </div>
-                      {/* Action Buttons */}
-                      <div className="flex flex-col gap-2 w-full min-w-[140px]">
-                        {appointment.status === "pending" && (
-                          <>
-                            <button
-                              onClick={() => {
-                                setSelectedAppointment(appointment);
-                                setShowConfirmAppointmentModal(true);
-                              }}
-                              className="btn-primary flex items-center justify-center gap-2 text-sm py-2"
-                            >
-                              <FontAwesomeIcon icon={faCheck} />
-                              Confirm
-                            </button>
-                            <button
-                              onClick={() => {
-                                setSelectedAppointment(appointment);
-                                setShowCancelAppointmentModal(true);
-                              }}
-                              className="px-4 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 text-sm"
-                            >
-                              <FontAwesomeIcon icon={faBan} />
-                              Decline
-                            </button>
-                          </>
-                        )}
-                        {appointment.status === "confirmed" && (
-                          <>
-                            <button
-                              onClick={() =>
-                                handleCompleteAppointment(appointment)
-                              }
-                              className="btn-primary flex items-center justify-center gap-2 text-sm py-2"
-                            >
-                              <FontAwesomeIcon icon={faCheckCircle} />
-                              Mark Complete
-                            </button>
-                            <button
-                              onClick={() => {
-                                setSelectedAppointment(appointment);
-                                setShowCancelAppointmentModal(true);
-                              }}
-                              className="btn-secondary flex items-center justify-center gap-2 text-sm py-2"
-                            >
-                              <FontAwesomeIcon icon={faBan} />
-                              Cancel
-                            </button>
-                          </>
-                        )}
-                        <button
-                          onClick={() => {
-                            setSelectedAppointment(appointment);
-                            setShowAppointmentDetailsModal(true);
+
+                      {/* Right: status + actions */}
+                      <div className="flex flex-col items-end gap-2.5 flex-shrink-0">
+                        {/* Status badge */}
+                        <span
+                          className="inline-flex items-center gap-2 rounded-xl font-semibold"
+                          style={{
+                            padding: "0.375rem 0.875rem",
+                            backgroundColor: statusCfg.bg,
+                            border: `1.5px solid ${statusCfg.border}`,
+                            color: statusCfg.color,
+                            fontSize: "0.78rem",
                           }}
-                          className="btn-secondary flex items-center justify-center gap-2 text-sm py-2"
                         >
-                          <FontAwesomeIcon icon={faEye} />
-                          View Details
-                        </button>
+                          <FontAwesomeIcon
+                            icon={statusCfg.icon}
+                            style={{ fontSize: "0.7rem" }}
+                          />
+                          {appt.status_display}
+                        </span>
+
+                        {/* Action buttons */}
+                        <div
+                          className="flex flex-col gap-1.5 w-full"
+                          style={{ minWidth: "8.5rem" }}
+                        >
+                          {appt.status === "pending" && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  setSelectedAppointment(appt);
+                                  setShowConfirmAppointmentModal(true);
+                                }}
+                                className="btn btn-primary btn-sm flex items-center justify-center gap-1.5"
+                              >
+                                <FontAwesomeIcon
+                                  icon={faCheck}
+                                  style={{ fontSize: "0.75rem" }}
+                                />{" "}
+                                Confirm
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedAppointment(appt);
+                                  setShowCancelAppointmentModal(true);
+                                }}
+                                className="btn btn-sm flex items-center justify-center gap-1.5"
+                                style={{
+                                  backgroundColor: "#ef4444",
+                                  color: "white",
+                                  border: "none",
+                                }}
+                                onMouseEnter={(e) => {
+                                  (
+                                    e.currentTarget as HTMLButtonElement
+                                  ).style.backgroundColor = "#dc2626";
+                                }}
+                                onMouseLeave={(e) => {
+                                  (
+                                    e.currentTarget as HTMLButtonElement
+                                  ).style.backgroundColor = "#ef4444";
+                                }}
+                              >
+                                <FontAwesomeIcon
+                                  icon={faBan}
+                                  style={{ fontSize: "0.75rem" }}
+                                />{" "}
+                                Decline
+                              </button>
+                            </>
+                          )}
+                          {appt.status === "confirmed" && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  if (
+                                    confirm(
+                                      `Mark appointment with ${appt.client_name} as completed?`,
+                                    )
+                                  )
+                                    completeAppointmentMutation.mutate(appt.id);
+                                }}
+                                className="btn btn-primary btn-sm flex items-center justify-center gap-1.5"
+                              >
+                                <FontAwesomeIcon
+                                  icon={faCheckCircle}
+                                  style={{ fontSize: "0.75rem" }}
+                                />{" "}
+                                Complete
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedAppointment(appt);
+                                  setShowCancelAppointmentModal(true);
+                                }}
+                                className="btn btn-secondary btn-sm flex items-center justify-center gap-1.5"
+                              >
+                                <FontAwesomeIcon
+                                  icon={faBan}
+                                  style={{ fontSize: "0.75rem" }}
+                                />{" "}
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                          <button
+                            onClick={() => {
+                              setSelectedAppointment(appt);
+                              setShowAppointmentDetailsModal(true);
+                            }}
+                            className="btn btn-secondary btn-sm flex items-center justify-center gap-1.5"
+                          >
+                            <FontAwesomeIcon
+                              icon={faEye}
+                              style={{ fontSize: "0.75rem" }}
+                            />{" "}
+                            Details
+                          </button>
+                        </div>
+
+                        <p
+                          style={{
+                            fontSize: "0.7rem",
+                            color: "var(--color-neutral-400)",
+                          }}
+                        >
+                          Requested{" "}
+                          {new Date(appt.created_at).toLocaleDateString()}
+                        </p>
                       </div>
-                      {/* Created Date */}
-                      <p className="text-neutral-400 text-xs">
-                        Requested{" "}
-                        {new Date(appointment.created_at).toLocaleDateString()}
-                      </p>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             ) : (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
-                <div className="w-16 h-16 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <div
+                className="rounded-2xl text-center py-14"
+                style={{
+                  backgroundColor: "var(--color-neutral-0)",
+                  border: "1px solid var(--color-neutral-200)",
+                }}
+              >
+                <div
+                  className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4"
+                  style={{ backgroundColor: "var(--color-neutral-100)" }}
+                >
                   <FontAwesomeIcon
                     icon={faCalendarCheck}
-                    className="text-neutral-400 text-2xl"
+                    style={{
+                      fontSize: "1.5rem",
+                      color: "var(--color-neutral-400)",
+                    }}
                   />
                 </div>
-                <h3 className="text-lg font-semibold text-neutral-900 mb-2">
+                <h3
+                  className="font-semibold mb-1"
+                  style={{
+                    fontSize: "1rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
                   No appointments found
                 </h3>
-                <p className="text-neutral-600">
+                <p
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--color-neutral-500)",
+                  }}
+                >
                   {searchQuery
-                    ? "Try adjusting your search query"
+                    ? "Try adjusting your search"
                     : selectedAppointmentStatus === "all"
                       ? "You don't have any appointments yet"
                       : `No ${selectedAppointmentStatus} appointments`}
@@ -1541,408 +1968,436 @@ export default function CalendarPage() {
         </div>
       )}
 
-      {/* MODALS */}
-      {/* Add Event Modal */}
-      {showAddEventModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-lg w-full">
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-primary-50 to-secondary-50">
-              <h3 className="heading-4 text-neutral-900">Add New Event</h3>
-              <button
-                onClick={() => setShowAddEventModal(false)}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
-              >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
-              </button>
-            </div>
-            <div className="p-6">
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Event Title <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={eventForm.title}
-                    onChange={(e) =>
-                      setEventForm({ ...eventForm, title: e.target.value })
-                    }
-                    placeholder="Enter event title..."
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                </div>
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Event Type <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={eventForm.event_type}
-                    onChange={(e) =>
-                      setEventForm({
-                        ...eventForm,
-                        event_type: e.target.value as any,
-                      })
-                    }
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
-                  >
-                    <option value="deadline">Deadline</option>
-                    <option value="meeting">Meeting</option>
-                    <option value="reminder">Reminder</option>
-                    <option value="task">Task</option>
-                    <option value="appointment">Appointment</option>
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                      Date <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={eventForm.event_date}
-                      onChange={(e) =>
-                        setEventForm({
-                          ...eventForm,
-                          event_date: e.target.value,
-                        })
-                      }
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                      Time
-                    </label>
-                    <input
-                      type="time"
-                      value={eventForm.event_time}
-                      onChange={(e) =>
-                        setEventForm({
-                          ...eventForm,
-                          event_time: e.target.value,
-                        })
-                      }
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Description
-                  </label>
-                  <textarea
-                    value={eventForm.description}
-                    onChange={(e) =>
-                      setEventForm({
-                        ...eventForm,
-                        description: e.target.value,
-                      })
-                    }
-                    placeholder="Add event description..."
-                    rows={3}
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Location
-                  </label>
-                  <input
-                    type="text"
-                    value={eventForm.location}
-                    onChange={(e) =>
-                      setEventForm({ ...eventForm, location: e.target.value })
-                    }
-                    placeholder="Enter location..."
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
-              <button
-                onClick={() => setShowAddEventModal(false)}
-                disabled={createEventMutation.isPending}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateEvent}
-                disabled={createEventMutation.isPending}
-                className="btn-primary flex items-center gap-2 disabled:opacity-50"
-              >
-                {createEventMutation.isPending ? (
-                  <>
-                    <FontAwesomeIcon
-                      icon={faSpinner}
-                      className="animate-spin"
-                    />
-                    Creating...
-                  </>
-                ) : (
-                  <>
-                    <FontAwesomeIcon icon={faPlus} />
-                    Add Event
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ==================================================================================
+          MODALS
+      ================================================================================== */}
 
-      {/* Edit Event Modal */}
-      {showEditEventModal && selectedEvent && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-lg w-full">
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-blue-50 to-primary-50">
-              <h3 className="heading-4 text-neutral-900">Edit Event</h3>
-              <button
-                onClick={() => {
-                  setShowEditEventModal(false);
-                  setSelectedEvent(null);
+      {/* ── Event Form Modal (shared for Add + Edit) ── */}
+      {(showAddEventModal || (showEditEventModal && selectedEvent)) &&
+        (() => {
+          const isEdit = showEditEventModal && !!selectedEvent;
+          const isPending = isEdit
+            ? updateEventMutation.isPending
+            : createEventMutation.isPending;
+          const onSubmit = isEdit
+            ? () =>
+                updateEventMutation.mutate({
+                  id: selectedEvent!.id,
+                  data: eventForm,
+                })
+            : () => {
+                if (!eventForm.title || !eventForm.event_date) {
+                  alert("Please fill in Title and Date");
+                  return;
+                }
+                createEventMutation.mutate(eventForm);
+              };
+          const onClose = () => {
+            setShowAddEventModal(false);
+            setShowEditEventModal(false);
+            setSelectedEvent(null);
+          };
+          return (
+            <Modal onClose={onClose}>
+              <div
+                className="rounded-2xl w-full max-w-lg"
+                style={{
+                  backgroundColor: "var(--color-neutral-0)",
+                  boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
                 }}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
-              </button>
-            </div>
-
-            <div className="p-6">
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Event Title <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={eventForm.title}
-                    onChange={(e) =>
-                      setEventForm({ ...eventForm, title: e.target.value })
-                    }
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Event Type
-                  </label>
-                  <select
-                    value={eventForm.event_type}
-                    onChange={(e) =>
-                      setEventForm({
-                        ...eventForm,
-                        event_type: e.target.value as any,
-                      })
-                    }
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
-                  >
-                    <option value="deadline">Deadline</option>
-                    <option value="meeting">Meeting</option>
-                    <option value="reminder">Reminder</option>
-                    <option value="task">Task</option>
-                    <option value="appointment">Appointment</option>
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                      Date
-                    </label>
-                    <input
-                      type="date"
-                      value={eventForm.event_date}
-                      onChange={(e) =>
-                        setEventForm({
-                          ...eventForm,
-                          event_date: e.target.value,
-                        })
-                      }
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                      Time
-                    </label>
-                    <input
-                      type="time"
-                      value={eventForm.event_time}
-                      onChange={(e) =>
-                        setEventForm({
-                          ...eventForm,
-                          event_time: e.target.value,
-                        })
-                      }
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Description
-                  </label>
-                  <textarea
-                    value={eventForm.description}
-                    onChange={(e) =>
-                      setEventForm({
-                        ...eventForm,
-                        description: e.target.value,
-                      })
-                    }
-                    rows={3}
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Location
-                  </label>
-                  <input
-                    type="text"
-                    value={eventForm.location}
-                    onChange={(e) =>
-                      setEventForm({ ...eventForm, location: e.target.value })
-                    }
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
-              <button
-                onClick={() => {
-                  setShowEditEventModal(false);
-                  setSelectedEvent(null);
-                }}
-                disabled={updateEventMutation.isPending}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleUpdateEvent}
-                disabled={updateEventMutation.isPending}
-                className="btn-primary flex items-center gap-2 disabled:opacity-50"
-              >
-                {updateEventMutation.isPending ? (
-                  <>
-                    <FontAwesomeIcon
-                      icon={faSpinner}
-                      className="animate-spin"
-                    />
-                    Updating...
-                  </>
-                ) : (
-                  <>
-                    <FontAwesomeIcon icon={faEdit} />
-                    Update Event
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Event Confirmation Modal */}
-      {showDeleteEventModal && selectedEvent && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-md w-full">
-            <div className="p-6">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <FontAwesomeIcon
-                  icon={faExclamationTriangle}
-                  className="text-red-600 text-xl"
-                />
-              </div>
-              <h3 className="heading-4 text-neutral-900 text-center mb-2">
-                Delete Event?
-              </h3>
-              <p className="text-neutral-600 text-center mb-6">
-                Are you sure you want to delete "{selectedEvent.title}"? This
-                action cannot be undone.
-              </p>
-
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    setShowDeleteEventModal(false);
-                    setSelectedEvent(null);
+                {/* Header */}
+                <div
+                  className="flex items-center justify-between"
+                  style={{
+                    padding: "1.25rem 1.5rem",
+                    borderBottom: "1px solid var(--color-neutral-200)",
                   }}
-                  disabled={deleteEventMutation.isPending}
-                  className="flex-1 btn-secondary disabled:opacity-50"
                 >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleDeleteEvent}
-                  disabled={deleteEventMutation.isPending}
-                  className="flex-1 px-5 py-3 bg-red-600 text-neutral-0 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {deleteEventMutation.isPending ? (
-                    <>
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                      style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                    >
                       <FontAwesomeIcon
-                        icon={faSpinner}
-                        className="animate-spin"
+                        icon={isEdit ? faEdit : faPlus}
+                        style={{ color: "#1ab189", fontSize: "0.875rem" }}
                       />
-                      Deleting...
-                    </>
-                  ) : (
-                    <>
-                      <FontAwesomeIcon icon={faTrash} />
-                      Delete
-                    </>
-                  )}
-                </button>
+                    </div>
+                    <h3
+                      className="font-semibold"
+                      style={{
+                        fontSize: "1.0625rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
+                      {isEdit ? "Edit Event" : "Add New Event"}
+                    </h3>
+                  </div>
+                  <button
+                    onClick={onClose}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "var(--color-neutral-500)",
+                      padding: "0.375rem",
+                    }}
+                  >
+                    <FontAwesomeIcon
+                      icon={faTimes}
+                      style={{ fontSize: "0.875rem" }}
+                    />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <div style={{ padding: "1.5rem" }}>
+                  <div className="space-y-4">
+                    <Field label="Event Title" required>
+                      <input
+                        type="text"
+                        value={eventForm.title}
+                        onChange={(e) =>
+                          setEventForm({ ...eventForm, title: e.target.value })
+                        }
+                        placeholder="Enter event title…"
+                        style={baseInput}
+                        onFocus={tealFocus}
+                        onBlur={blurReset}
+                      />
+                    </Field>
+                    <Field label="Event Type" required>
+                      <select
+                        value={eventForm.event_type}
+                        onChange={(e) =>
+                          setEventForm({
+                            ...eventForm,
+                            event_type: e.target
+                              .value as EventFormData["event_type"],
+                          })
+                        }
+                        style={{
+                          ...baseInput,
+                          cursor: "pointer",
+                          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a1a1aa' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                          backgroundRepeat: "no-repeat",
+                          backgroundPosition: "right 0.875rem center",
+                          paddingRight: "2.5rem",
+                        }}
+                        onFocus={tealFocus}
+                        onBlur={blurReset}
+                      >
+                        {eventTypes.map(({ type, label }) => (
+                          <option key={type} value={type}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <div className="grid grid-cols-2 gap-4">
+                      <Field label="Date" required>
+                        <input
+                          type="date"
+                          value={eventForm.event_date}
+                          onChange={(e) =>
+                            setEventForm({
+                              ...eventForm,
+                              event_date: e.target.value,
+                            })
+                          }
+                          style={baseInput}
+                          onFocus={tealFocus}
+                          onBlur={blurReset}
+                        />
+                      </Field>
+                      <Field label="Time">
+                        <input
+                          type="time"
+                          value={eventForm.event_time}
+                          onChange={(e) =>
+                            setEventForm({
+                              ...eventForm,
+                              event_time: e.target.value,
+                            })
+                          }
+                          style={baseInput}
+                          onFocus={tealFocus}
+                          onBlur={blurReset}
+                        />
+                      </Field>
+                    </div>
+                    <Field label="Description">
+                      <textarea
+                        value={eventForm.description}
+                        onChange={(e) =>
+                          setEventForm({
+                            ...eventForm,
+                            description: e.target.value,
+                          })
+                        }
+                        placeholder="Add event description…"
+                        rows={3}
+                        style={{ ...baseInput, resize: "none" }}
+                        onFocus={tealFocus}
+                        onBlur={blurReset}
+                      />
+                    </Field>
+                    <Field label="Location">
+                      <input
+                        type="text"
+                        value={eventForm.location}
+                        onChange={(e) =>
+                          setEventForm({
+                            ...eventForm,
+                            location: e.target.value,
+                          })
+                        }
+                        placeholder="Enter location…"
+                        style={baseInput}
+                        onFocus={tealFocus}
+                        onBlur={blurReset}
+                      />
+                    </Field>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div
+                  className="flex items-center justify-end gap-3"
+                  style={{
+                    padding: "1rem 1.5rem",
+                    borderTop: "1px solid var(--color-neutral-200)",
+                  }}
+                >
+                  <button
+                    onClick={onClose}
+                    disabled={isPending}
+                    className="btn btn-ghost btn-md"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={onSubmit}
+                    disabled={isPending}
+                    className="btn btn-primary btn-md flex items-center gap-2"
+                    style={{ opacity: isPending ? 0.6 : 1 }}
+                  >
+                    {isPending ? (
+                      <>
+                        <FontAwesomeIcon
+                          icon={faSpinner}
+                          className="animate-spin"
+                          style={{ fontSize: "0.875rem" }}
+                        />{" "}
+                        {isEdit ? "Updating…" : "Creating…"}
+                      </>
+                    ) : (
+                      <>
+                        <FontAwesomeIcon
+                          icon={isEdit ? faEdit : faPlus}
+                          style={{ fontSize: "0.875rem" }}
+                        />{" "}
+                        {isEdit ? "Update Event" : "Add Event"}
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
+            </Modal>
+          );
+        })()}
+
+      {/* ── Delete Event Modal ── */}
+      {showDeleteEventModal && selectedEvent && (
+        <Modal
+          onClose={() => {
+            setShowDeleteEventModal(false);
+            setSelectedEvent(null);
+          }}
+        >
+          <div
+            className="rounded-2xl max-w-md w-full"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+              padding: "1.75rem",
+            }}
+          >
+            <div
+              className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+              style={{ backgroundColor: "#fef2f2" }}
+            >
+              <FontAwesomeIcon
+                icon={faExclamationTriangle}
+                style={{ color: "#ef4444", fontSize: "1.1rem" }}
+              />
+            </div>
+            <h3
+              className="font-semibold text-center mb-2"
+              style={{
+                fontSize: "1.0625rem",
+                color: "var(--color-neutral-900)",
+              }}
+            >
+              Delete Event?
+            </h3>
+            <p
+              className="text-center mb-6"
+              style={{
+                fontSize: "0.875rem",
+                color: "var(--color-neutral-500)",
+              }}
+            >
+              Are you sure you want to delete &quot;{selectedEvent.title}&quot;?
+              This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowDeleteEventModal(false);
+                  setSelectedEvent(null);
+                }}
+                disabled={deleteEventMutation.isPending}
+                className="btn btn-ghost btn-md flex-1 justify-center"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteEventMutation.mutate(selectedEvent.id)}
+                disabled={deleteEventMutation.isPending}
+                className="btn btn-md flex-1 justify-center flex items-center gap-2"
+                style={{
+                  backgroundColor: "#ef4444",
+                  color: "white",
+                  border: "none",
+                  opacity: deleteEventMutation.isPending ? 0.6 : 1,
+                }}
+              >
+                {deleteEventMutation.isPending ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faSpinner}
+                      className="animate-spin"
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Deleting…
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faTrash}
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Delete
+                  </>
+                )}
+              </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
-      {/* Set Availability Modal */}
+      {/* ── Set Availability Modal ── */}
       {showAvailabilityModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-lg w-full my-8">
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-primary-50 to-secondary-50">
-              <div>
-                <h3 className="heading-4 text-neutral-900">
-                  Set Your Availability
-                </h3>
-                <p className="text-neutral-600 text-sm">
-                  System will create 1-hour time slots
-                </p>
+        <Modal onClose={() => setShowAvailabilityModal(false)}>
+          <div
+            className="rounded-2xl w-full max-w-lg"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+              maxHeight: "95vh",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {/* Header */}
+            <div
+              className="flex items-center justify-between flex-shrink-0"
+              style={{
+                padding: "1.25rem 1.5rem",
+                borderBottom: "1px solid var(--color-neutral-200)",
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                >
+                  <FontAwesomeIcon
+                    icon={faCalendarPlus}
+                    style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                  />
+                </div>
+                <div>
+                  <h3
+                    className="font-semibold"
+                    style={{
+                      fontSize: "1.0625rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    Set Your Availability
+                  </h3>
+                  <p
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    System will create 1-hour time slots automatically
+                  </p>
+                </div>
               </div>
               <button
                 onClick={() => setShowAvailabilityModal(false)}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--color-neutral-500)",
+                  padding: "0.375rem",
+                }}
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+                <FontAwesomeIcon
+                  icon={faTimes}
+                  style={{ fontSize: "0.875rem" }}
+                />
               </button>
             </div>
 
-            <div className="p-6 max-h-[calc(100vh-200px)] overflow-y-auto">
-              <div className="space-y-5">
-                {/* Info Banner */}
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <p className="text-blue-700 text-sm">
+            {/* Body */}
+            <div style={{ padding: "1.5rem", overflowY: "auto", flex: 1 }}>
+              <div className="space-y-4">
+                {/* Info banner */}
+                <div
+                  className="rounded-xl flex items-start gap-3 px-4 py-3"
+                  style={{
+                    backgroundColor: "rgba(26,177,137,0.06)",
+                    border: "1px solid rgba(26,177,137,0.2)",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faInfoCircle}
+                    style={{
+                      color: "#1ab189",
+                      fontSize: "0.875rem",
+                      marginTop: "0.1rem",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <p
+                    style={{
+                      fontSize: "0.78rem",
+                      color: "var(--color-neutral-700)",
+                    }}
+                  >
                     <strong>How it works:</strong> Enter a time range (e.g., 9
-                    AM - 5 PM) and we'll automatically create 1-hour booking
-                    slots (9-10, 10-11, etc.).
+                    AM – 5 PM) and we&apos;ll create 1-hour booking slots.
                   </p>
                 </div>
 
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Date <span className="text-red-500">*</span>
-                  </label>
+                <Field label="Date" required>
                   <input
                     type="date"
                     value={availabilityForm.date}
@@ -1952,15 +2407,14 @@ export default function CalendarPage() {
                         date: e.target.value,
                       })
                     }
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                    style={baseInput}
+                    onFocus={tealFocus}
+                    onBlur={blurReset}
                   />
-                </div>
+                </Field>
 
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                      Start Time <span className="text-red-500">*</span>
-                    </label>
+                  <Field label="Start Time" required>
                     <input
                       type="time"
                       value={availabilityForm.start_time}
@@ -1970,13 +2424,12 @@ export default function CalendarPage() {
                           start_time: e.target.value,
                         })
                       }
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      style={baseInput}
+                      onFocus={tealFocus}
+                      onBlur={blurReset}
                     />
-                  </div>
-                  <div>
-                    <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                      End Time <span className="text-red-500">*</span>
-                    </label>
+                  </Field>
+                  <Field label="End Time" required>
                     <input
                       type="time"
                       value={availabilityForm.end_time}
@@ -1986,19 +2439,28 @@ export default function CalendarPage() {
                           end_time: e.target.value,
                         })
                       }
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      style={baseInput}
+                      onFocus={tealFocus}
+                      onBlur={blurReset}
                     />
-                  </div>
+                  </Field>
                 </div>
 
-                {/* Preview of slots that will be created */}
+                {/* Preview */}
                 {availabilityForm.start_time && availabilityForm.end_time && (
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                    <p className="text-green-700 text-sm">
-                      <strong>Preview:</strong> This will create{" "}
-                      {Math.floor(
-                        parseInt(availabilityForm.end_time.split(":")[0]) -
-                          parseInt(availabilityForm.start_time.split(":")[0]),
+                  <div
+                    className="rounded-xl px-4 py-3"
+                    style={{
+                      backgroundColor: "#f0fdf4",
+                      border: "1px solid #bbf7d0",
+                    }}
+                  >
+                    <p style={{ fontSize: "0.78rem", color: "#15803d" }}>
+                      <strong>Preview:</strong>{" "}
+                      {Math.max(
+                        0,
+                        parseInt(availabilityForm.end_time) -
+                          parseInt(availabilityForm.start_time),
                       )}{" "}
                       hourly slot(s) between{" "}
                       {formatTime12Hour(availabilityForm.start_time)} and{" "}
@@ -2007,10 +2469,10 @@ export default function CalendarPage() {
                   </div>
                 )}
 
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Notes
-                  </label>
+                <Field
+                  label="Notes"
+                  hint="Optional: Add context for clients viewing available slots"
+                >
                   <textarea
                     value={availabilityForm.notes}
                     onChange={(e) =>
@@ -2019,62 +2481,130 @@ export default function CalendarPage() {
                         notes: e.target.value,
                       })
                     }
-                    placeholder="Add notes (e.g., 'Remote consultations only', 'Lunch break 12-1')"
-                    rows={3}
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
+                    placeholder="e.g., Remote consultations only"
+                    rows={2}
+                    style={{ ...baseInput, resize: "none" }}
+                    onFocus={tealFocus}
+                    onBlur={blurReset}
                   />
-                  <p className="text-neutral-500 text-xs mt-1">
-                    Optional: Add context for clients viewing available slots
-                  </p>
-                </div>
+                </Field>
 
-                <div>
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={availabilityForm.is_recurring}
-                      onChange={(e) =>
-                        setAvailabilityForm({
-                          ...availabilityForm,
-                          is_recurring: e.target.checked,
-                        })
-                      }
-                      className="w-5 h-5 text-primary-600 border-neutral-300 rounded focus:ring-2 focus:ring-primary-500/20 cursor-pointer"
+                {/* Recurring toggle */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p
+                      className="font-semibold"
+                      style={{
+                        fontSize: "0.875rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
+                      Recurring availability
+                    </p>
+                    <p
+                      style={{
+                        fontSize: "0.72rem",
+                        color: "var(--color-neutral-500)",
+                      }}
+                    >
+                      Repeat on selected days of the week
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAvailabilityForm({
+                        ...availabilityForm,
+                        is_recurring: !availabilityForm.is_recurring,
+                      })
+                    }
+                    style={{
+                      width: "2.75rem",
+                      height: "1.5rem",
+                      borderRadius: "9999px",
+                      border: "none",
+                      cursor: "pointer",
+                      backgroundColor: availabilityForm.is_recurring
+                        ? "#1ab189"
+                        : "var(--color-neutral-300)",
+                      position: "relative",
+                      transition: "background-color 200ms",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: "0.125rem",
+                        left: availabilityForm.is_recurring
+                          ? "calc(100% - 1.375rem)"
+                          : "0.125rem",
+                        width: "1.25rem",
+                        height: "1.25rem",
+                        borderRadius: "50%",
+                        backgroundColor: "white",
+                        transition: "left 200ms",
+                      }}
                     />
-                    <span className="text-neutral-700 font-semibold body-small">
-                      Set as recurring availability
-                    </span>
-                  </label>
+                  </button>
                 </div>
 
                 {availabilityForm.is_recurring && (
                   <>
-                    <div className="bg-primary-50 border border-primary-200 rounded-lg p-4">
-                      <label className="block text-neutral-700 font-semibold mb-3 body-small">
-                        Select Days <span className="text-red-500">*</span>
-                      </label>
-                      <div className="grid grid-cols-7 gap-2">
-                        {weekDaysAPI.map((day, idx) => (
-                          <button
-                            key={day}
-                            type="button"
-                            onClick={() => toggleRecurringDay(day)}
-                            className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                              availabilityForm.recurring_days.includes(day)
-                                ? "bg-primary-600 text-neutral-0"
-                                : "bg-neutral-0 text-neutral-700 border border-neutral-200 hover:border-primary-500"
-                            }`}
-                          >
-                            {weekDays[idx]}
-                          </button>
-                        ))}
+                    <div
+                      className="rounded-xl"
+                      style={{
+                        backgroundColor: "rgba(26,177,137,0.06)",
+                        border: "1px solid rgba(26,177,137,0.2)",
+                        padding: "1rem",
+                      }}
+                    >
+                      <p
+                        className="font-semibold mb-3"
+                        style={{
+                          fontSize: "0.8rem",
+                          color: "var(--color-neutral-700)",
+                        }}
+                      >
+                        Select Days <span style={{ color: "#ef4444" }}>*</span>
+                      </p>
+                      <div className="grid grid-cols-7 gap-1.5">
+                        {weekDaysAPI.map((day, idx) => {
+                          const selected =
+                            availabilityForm.recurring_days.includes(day);
+                          return (
+                            <button
+                              key={day}
+                              type="button"
+                              onClick={() => toggleRecurringDay(day)}
+                              style={{
+                                padding: "0.375rem 0",
+                                borderRadius: "0.5rem",
+                                fontSize: "0.72rem",
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                border: selected
+                                  ? "none"
+                                  : "1px solid var(--color-neutral-200)",
+                                backgroundColor: selected
+                                  ? "#1ab189"
+                                  : "var(--color-neutral-0)",
+                                color: selected
+                                  ? "white"
+                                  : "var(--color-neutral-700)",
+                                transition: "all 150ms",
+                              }}
+                            >
+                              {weekDays[idx]}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
-
-                    <div>
-                      <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                        Recurring End Date (Optional)
-                      </label>
+                    <Field
+                      label="Recurring End Date"
+                      hint="Leave empty to default to 90 days from start date"
+                    >
                       <input
                         type="date"
                         value={availabilityForm.recurring_end_date}
@@ -2084,68 +2614,148 @@ export default function CalendarPage() {
                             recurring_end_date: e.target.value,
                           })
                         }
-                        className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                        style={baseInput}
+                        onFocus={tealFocus}
+                        onBlur={blurReset}
                       />
-                      <p className="text-neutral-500 text-xs mt-1">
-                        Leave empty to default to 90 days from start date
-                      </p>
-                    </div>
+                    </Field>
                   </>
                 )}
               </div>
             </div>
 
-            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3">
+            {/* Footer */}
+            <div
+              className="flex items-center justify-end gap-3 flex-shrink-0"
+              style={{
+                padding: "1rem 1.5rem",
+                borderTop: "1px solid var(--color-neutral-200)",
+              }}
+            >
               <button
                 onClick={() => setShowAvailabilityModal(false)}
                 disabled={createAvailabilityMutation.isPending}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors disabled:opacity-50"
+                className="btn btn-ghost btn-md"
               >
                 Cancel
               </button>
               <button
-                onClick={handleAddAvailability}
+                onClick={() => {
+                  if (
+                    !availabilityForm.date ||
+                    !availabilityForm.start_time ||
+                    !availabilityForm.end_time
+                  ) {
+                    alert("Please fill in all required fields");
+                    return;
+                  }
+                  if (
+                    availabilityForm.start_time >= availabilityForm.end_time
+                  ) {
+                    alert("End time must be after start time");
+                    return;
+                  }
+                  if (
+                    availabilityForm.is_recurring &&
+                    availabilityForm.recurring_days.length === 0
+                  ) {
+                    alert("Please select at least one recurring day");
+                    return;
+                  }
+                  createAvailabilityMutation.mutate(availabilityForm);
+                }}
                 disabled={createAvailabilityMutation.isPending}
-                className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                className="btn btn-primary btn-md flex items-center gap-2"
+                style={{
+                  opacity: createAvailabilityMutation.isPending ? 0.6 : 1,
+                }}
               >
                 {createAvailabilityMutation.isPending ? (
                   <>
                     <FontAwesomeIcon
                       icon={faSpinner}
                       className="animate-spin"
-                    />
-                    Creating...
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Creating…
                   </>
                 ) : (
                   <>
-                    <FontAwesomeIcon icon={faCalendarPlus} />
+                    <FontAwesomeIcon
+                      icon={faCalendarPlus}
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
                     Create Slots
                   </>
                 )}
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
-      {/* View Slots Modal */}
+      {/* ── View Slots Modal ── */}
       {showSlotsModal && selectedDateSlots && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-primary-50 to-secondary-50">
-              <div>
-                <h3 className="heading-4 text-neutral-900">Time Slots</h3>
-                <p className="text-neutral-600 text-sm">
-                  {new Date(selectedDateSlots + "T00:00:00").toLocaleDateString(
-                    "en-US",
-                    {
+        <Modal
+          onClose={() => {
+            setShowSlotsModal(false);
+            setSelectedDateSlots(null);
+            setViewingSlots([]);
+          }}
+        >
+          <div
+            className="rounded-2xl w-full max-w-xl"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+              maxHeight: "80vh",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              className="flex items-center justify-between flex-shrink-0"
+              style={{
+                padding: "1.25rem 1.5rem",
+                borderBottom: "1px solid var(--color-neutral-200)",
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                >
+                  <FontAwesomeIcon
+                    icon={faClock}
+                    style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                  />
+                </div>
+                <div>
+                  <h3
+                    className="font-semibold"
+                    style={{
+                      fontSize: "1.0625rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    Time Slots
+                  </h3>
+                  <p
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    {new Date(
+                      selectedDateSlots + "T00:00:00",
+                    ).toLocaleDateString("en-US", {
                       weekday: "long",
                       year: "numeric",
                       month: "long",
                       day: "numeric",
-                    },
-                  )}
-                </p>
+                    })}
+                  </p>
+                </div>
               </div>
               <button
                 onClick={() => {
@@ -2153,443 +2763,677 @@ export default function CalendarPage() {
                   setSelectedDateSlots(null);
                   setViewingSlots([]);
                 }}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--color-neutral-500)",
+                  padding: "0.375rem",
+                }}
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
+                <FontAwesomeIcon
+                  icon={faTimes}
+                  style={{ fontSize: "0.875rem" }}
+                />
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto flex-1">
+            <div
+              style={{ padding: "1.25rem 1.5rem", overflowY: "auto", flex: 1 }}
+            >
               {viewingSlots.length > 0 ? (
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   {viewingSlots.map((slot) => (
                     <div
                       key={slot.id}
-                      className={`p-4 rounded-lg border-2 transition-all ${
-                        slot.is_booked
-                          ? "bg-neutral-50 border-neutral-300"
-                          : "bg-green-50 border-green-200"
-                      }`}
+                      className="flex items-center justify-between rounded-xl"
+                      style={{
+                        padding: "0.875rem 1rem",
+                        backgroundColor: slot.is_booked
+                          ? "var(--color-neutral-50)"
+                          : "#f0fdf4",
+                        border: `1.5px solid ${slot.is_booked ? "var(--color-neutral-200)" : "#bbf7d0"}`,
+                      }}
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <FontAwesomeIcon
-                              icon={faClock}
-                              className={
-                                slot.is_booked
-                                  ? "text-neutral-500"
-                                  : "text-green-600"
-                              }
-                            />
-                            <span
-                              className={`font-semibold ${
-                                slot.is_booked
-                                  ? "text-neutral-700"
-                                  : "text-green-900"
-                              }`}
-                            >
-                              {formatTime12Hour(slot.start_time)} -{" "}
-                              {formatTime12Hour(slot.end_time)}
-                            </span>
-                            {slot.is_booked && (
-                              <span className="px-2 py-1 bg-neutral-200 text-neutral-700 rounded text-xs font-medium">
-                                Booked
-                              </span>
-                            )}
-                            {!slot.is_booked && (
-                              <span className="px-2 py-1 bg-green-600 text-white rounded text-xs font-medium">
-                                Available
-                              </span>
-                            )}
-                          </div>
-                          {slot.notes && (
-                            <p className="text-neutral-600 text-sm">
-                              {slot.notes}
-                            </p>
-                          )}
-                          {slot.is_booked && slot.booked_by_email && (
-                            <p className="text-neutral-500 text-xs mt-1">
-                              Booked by: {slot.booked_by_email}
-                            </p>
-                          )}
-                        </div>
-                        {!slot.is_booked && (
-                          <button
-                            onClick={() => handleDeleteSlot(slot.id)}
-                            className="p-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors ml-3"
-                            title="Delete slot"
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2.5 mb-1">
+                          <FontAwesomeIcon
+                            icon={faClock}
+                            style={{
+                              color: slot.is_booked
+                                ? "var(--color-neutral-400)"
+                                : "#16a34a",
+                              fontSize: "0.8rem",
+                            }}
+                          />
+                          <span
+                            className="font-semibold"
+                            style={{
+                              fontSize: "0.875rem",
+                              color: slot.is_booked
+                                ? "var(--color-neutral-700)"
+                                : "#15803d",
+                            }}
                           >
-                            <FontAwesomeIcon
-                              icon={faTrash}
-                              className="text-sm"
-                            />
-                          </button>
+                            {formatTime12Hour(slot.start_time)} –{" "}
+                            {formatTime12Hour(slot.end_time)}
+                          </span>
+                          <span
+                            className="rounded-lg font-semibold"
+                            style={{
+                              padding: "0.15rem 0.5rem",
+                              fontSize: "0.65rem",
+                              backgroundColor: slot.is_booked
+                                ? "var(--color-neutral-200)"
+                                : "#16a34a",
+                              color: slot.is_booked
+                                ? "var(--color-neutral-600)"
+                                : "white",
+                            }}
+                          >
+                            {slot.is_booked ? "Booked" : "Available"}
+                          </span>
+                        </div>
+                        {slot.notes && (
+                          <p
+                            style={{
+                              fontSize: "0.78rem",
+                              color: "var(--color-neutral-600)",
+                              marginLeft: "1.375rem",
+                            }}
+                          >
+                            {slot.notes}
+                          </p>
+                        )}
+                        {slot.is_booked && slot.booked_by_email && (
+                          <p
+                            style={{
+                              fontSize: "0.7rem",
+                              color: "var(--color-neutral-500)",
+                              marginLeft: "1.375rem",
+                              marginTop: "0.25rem",
+                            }}
+                          >
+                            Booked by: {slot.booked_by_email}
+                          </p>
                         )}
                       </div>
+                      {!slot.is_booked && (
+                        <button
+                          onClick={() => handleDeleteSlot(slot.id)}
+                          style={{
+                            width: "1.875rem",
+                            height: "1.875rem",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            backgroundColor: "#ef4444",
+                            color: "white",
+                            border: "none",
+                            borderRadius: "0.5rem",
+                            cursor: "pointer",
+                            flexShrink: 0,
+                            marginLeft: "0.75rem",
+                          }}
+                          onMouseEnter={(e) => {
+                            (
+                              e.currentTarget as HTMLButtonElement
+                            ).style.backgroundColor = "#dc2626";
+                          }}
+                          onMouseLeave={(e) => {
+                            (
+                              e.currentTarget as HTMLButtonElement
+                            ).style.backgroundColor = "#ef4444";
+                          }}
+                        >
+                          <FontAwesomeIcon
+                            icon={faTrash}
+                            style={{ fontSize: "0.7rem" }}
+                          />
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-8">
-                  <p className="text-neutral-500">
-                    No time slots for this date
-                  </p>
-                </div>
+                <p
+                  className="text-center py-8"
+                  style={{
+                    color: "var(--color-neutral-500)",
+                    fontSize: "0.875rem",
+                  }}
+                >
+                  No time slots for this date
+                </p>
               )}
             </div>
 
-            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50">
-              <div className="flex items-center justify-between text-sm">
-                <div className="flex items-center gap-4">
-                  <span className="text-neutral-600">
-                    Total: {viewingSlots.length} slot
-                    {viewingSlots.length !== 1 ? "s" : ""}
-                  </span>
-                  <span className="text-green-600">
-                    Available: {viewingSlots.filter((s) => !s.is_booked).length}
-                  </span>
-                  <span className="text-neutral-500">
-                    Booked: {viewingSlots.filter((s) => s.is_booked).length}
-                  </span>
-                </div>
-                <button
-                  onClick={() => {
-                    setShowSlotsModal(false);
-                    setSelectedDateSlots(null);
-                    setViewingSlots([]);
+            <div
+              className="flex items-center justify-between flex-shrink-0"
+              style={{
+                padding: "0.875rem 1.5rem",
+                borderTop: "1px solid var(--color-neutral-200)",
+              }}
+            >
+              <div className="flex items-center gap-4">
+                <span
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--color-neutral-600)",
                   }}
-                  className="btn-secondary"
                 >
-                  Close
-                </button>
+                  Total: {viewingSlots.length}
+                </span>
+                <span
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "#16a34a",
+                    fontWeight: 600,
+                  }}
+                >
+                  Available: {viewingSlots.filter((s) => !s.is_booked).length}
+                </span>
+                <span
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--color-neutral-500)",
+                  }}
+                >
+                  Booked: {viewingSlots.filter((s) => s.is_booked).length}
+                </span>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Appointment Details Modal */}
-      {showAppointmentDetailsModal && selectedAppointment && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-primary-50 to-secondary-50 sticky top-0">
-              <h3 className="heading-4 text-neutral-900">
-                Appointment Details
-              </h3>
               <button
                 onClick={() => {
-                  setShowAppointmentDetailsModal(false);
-                  setSelectedAppointment(null);
+                  setShowSlotsModal(false);
+                  setSelectedDateSlots(null);
+                  setViewingSlots([]);
                 }}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
-              >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
-              </button>
-            </div>
-            <div className="p-6 space-y-6">
-              {/* Status */}
-              <div>
-                <label className="block text-neutral-500 text-sm mb-2">
-                  Status
-                </label>
-                <div
-                  className={`inline-flex px-4 py-2 rounded-lg border-2 font-semibold ${getAppointmentStatusColor(
-                    selectedAppointment.status,
-                  )}`}
-                >
-                  <FontAwesomeIcon
-                    icon={getAppointmentStatusIcon(selectedAppointment.status)}
-                    className="mr-2"
-                  />
-                  {selectedAppointment.status_display}
-                </div>
-              </div>
-              {/* Client Information */}
-              <div>
-                <h4 className="font-semibold text-neutral-900 mb-3">
-                  Client Information
-                </h4>
-                <div className="space-y-3 bg-neutral-50 rounded-lg p-4">
-                  <div>
-                    <label className="block text-neutral-500 text-sm mb-1">
-                      Name
-                    </label>
-                    <p className="text-neutral-900 font-medium">
-                      {selectedAppointment.client_name}
-                    </p>
-                  </div>
-                  {selectedAppointment.client_email && (
-                    <div>
-                      <label className="block text-neutral-500 text-sm mb-1">
-                        Email
-                      </label>
-                      <p className="text-neutral-900">
-                        {selectedAppointment.client_email}
-                      </p>
-                    </div>
-                  )}
-                  <div>
-                    <label className="block text-neutral-500 text-sm mb-1">
-                      Phone
-                    </label>
-                    <p className="text-neutral-900">
-                      {selectedAppointment.client_phone}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              {/* Appointment Details */}
-              <div>
-                <h4 className="font-semibold text-neutral-900 mb-3">
-                  Appointment Details
-                </h4>
-                <div className="space-y-3 bg-neutral-50 rounded-lg p-4">
-                  <div>
-                    <label className="block text-neutral-500 text-sm mb-1">
-                      Date & Time
-                    </label>
-                    <p className="text-neutral-900 font-medium">
-                      {formatDateTime(
-                        selectedAppointment.appointment_date,
-                        selectedAppointment.appointment_time,
-                      )}
-                    </p>
-                  </div>
-                  {selectedAppointment.service_type && (
-                    <div>
-                      <label className="block text-neutral-500 text-sm mb-1">
-                        Service Type
-                      </label>
-                      <p className="text-neutral-900">
-                        {selectedAppointment.service_type}
-                      </p>
-                    </div>
-                  )}
-                  {selectedAppointment.description && (
-                    <div>
-                      <label className="block text-neutral-500 text-sm mb-1">
-                        Description
-                      </label>
-                      <p className="text-neutral-900">
-                        {selectedAppointment.description}
-                      </p>
-                    </div>
-                  )}
-                  {selectedAppointment.location_address && (
-                    <div>
-                      <label className="block text-neutral-500 text-sm mb-1">
-                        Location
-                      </label>
-                      <p className="text-neutral-900">
-                        {selectedAppointment.location_address}
-                      </p>
-                    </div>
-                  )}
-                  {selectedAppointment.notes && (
-                    <div>
-                      <label className="block text-neutral-500 text-sm mb-1">
-                        Notes
-                      </label>
-                      <p className="text-neutral-900">
-                        {selectedAppointment.notes}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-              {/* Timestamps */}
-              <div>
-                <h4 className="font-semibold text-neutral-900 mb-3">
-                  Request Information
-                </h4>
-                <div className="space-y-2 bg-neutral-50 rounded-lg p-4 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-neutral-500">Created:</span>
-                    <span className="text-neutral-900">
-                      {new Date(
-                        selectedAppointment.created_at,
-                      ).toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-neutral-500">Last Updated:</span>
-                    <span className="text-neutral-900">
-                      {new Date(
-                        selectedAppointment.updated_at,
-                      ).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 sticky bottom-0">
-              <button
-                onClick={() => {
-                  setShowAppointmentDetailsModal(false);
-                  setSelectedAppointment(null);
-                }}
-                className="w-full btn-secondary"
+                className="btn btn-secondary btn-md"
               >
                 Close
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
-      {/* Confirm Appointment Modal */}
+      {/* ── Appointment Details Modal ── */}
+      {showAppointmentDetailsModal && selectedAppointment && (
+        <Modal
+          onClose={() => {
+            setShowAppointmentDetailsModal(false);
+            setSelectedAppointment(null);
+          }}
+        >
+          <div
+            className="rounded-2xl w-full max-w-xl"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+              maxHeight: "90vh",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              className="flex items-center justify-between flex-shrink-0"
+              style={{
+                padding: "1.25rem 1.5rem",
+                borderBottom: "1px solid var(--color-neutral-200)",
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                >
+                  <FontAwesomeIcon
+                    icon={faCalendar}
+                    style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                  />
+                </div>
+                <h3
+                  className="font-semibold"
+                  style={{
+                    fontSize: "1.0625rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
+                  Appointment Details
+                </h3>
+              </div>
+              <button
+                onClick={() => {
+                  setShowAppointmentDetailsModal(false);
+                  setSelectedAppointment(null);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--color-neutral-500)",
+                  padding: "0.375rem",
+                }}
+              >
+                <FontAwesomeIcon
+                  icon={faTimes}
+                  style={{ fontSize: "0.875rem" }}
+                />
+              </button>
+            </div>
+
+            <div style={{ padding: "1.5rem", overflowY: "auto", flex: 1 }}>
+              {/* Status */}
+              {(() => {
+                const sc = APPT_STATUS_CONFIG[selectedAppointment.status];
+                return (
+                  <span
+                    className="inline-flex items-center gap-2 rounded-xl font-semibold mb-5"
+                    style={{
+                      padding: "0.375rem 0.875rem",
+                      backgroundColor: sc.bg,
+                      border: `1.5px solid ${sc.border}`,
+                      color: sc.color,
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    <FontAwesomeIcon
+                      icon={sc.icon}
+                      style={{ fontSize: "0.75rem" }}
+                    />
+                    {selectedAppointment.status_display}
+                  </span>
+                );
+              })()}
+
+              {/* Detail sections */}
+              {[
+                {
+                  title: "Client Information",
+                  rows: [
+                    { label: "Name", value: selectedAppointment.client_name },
+                    ...(selectedAppointment.client_email
+                      ? [
+                          {
+                            label: "Email",
+                            value: selectedAppointment.client_email,
+                          },
+                        ]
+                      : []),
+                    { label: "Phone", value: selectedAppointment.client_phone },
+                  ],
+                },
+                {
+                  title: "Appointment Details",
+                  rows: [
+                    {
+                      label: "Date & Time",
+                      value: formatDateTime(
+                        selectedAppointment.appointment_date,
+                        selectedAppointment.appointment_time,
+                      ),
+                    },
+                    ...(selectedAppointment.service_type
+                      ? [
+                          {
+                            label: "Service Type",
+                            value: selectedAppointment.service_type,
+                          },
+                        ]
+                      : []),
+                    ...(selectedAppointment.description
+                      ? [
+                          {
+                            label: "Description",
+                            value: selectedAppointment.description,
+                          },
+                        ]
+                      : []),
+                    ...(selectedAppointment.location_address
+                      ? [
+                          {
+                            label: "Location",
+                            value: selectedAppointment.location_address,
+                          },
+                        ]
+                      : []),
+                    ...(selectedAppointment.notes
+                      ? [{ label: "Notes", value: selectedAppointment.notes }]
+                      : []),
+                  ],
+                },
+                {
+                  title: "Request Information",
+                  rows: [
+                    {
+                      label: "Created",
+                      value: new Date(
+                        selectedAppointment.created_at,
+                      ).toLocaleString(),
+                    },
+                    {
+                      label: "Last Updated",
+                      value: new Date(
+                        selectedAppointment.updated_at,
+                      ).toLocaleString(),
+                    },
+                  ],
+                },
+              ].map(({ title, rows }) => (
+                <div key={title} className="mb-5">
+                  <h4
+                    className="font-semibold mb-3"
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    {title}
+                  </h4>
+                  <div
+                    className="rounded-xl"
+                    style={{
+                      backgroundColor: "var(--color-neutral-50)",
+                      padding: "1rem",
+                      border: "1px solid var(--color-neutral-100)",
+                    }}
+                  >
+                    {rows.map(({ label, value }) => (
+                      <div
+                        key={label}
+                        className="flex justify-between gap-4 mb-2 last:mb-0"
+                      >
+                        <span
+                          style={{
+                            fontSize: "0.78rem",
+                            color: "var(--color-neutral-500)",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {label}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: "0.8125rem",
+                            color: "var(--color-neutral-900)",
+                            fontWeight: 500,
+                            textAlign: "right",
+                          }}
+                        >
+                          {value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div
+              className="flex-shrink-0"
+              style={{
+                padding: "1rem 1.5rem",
+                borderTop: "1px solid var(--color-neutral-200)",
+              }}
+            >
+              <button
+                onClick={() => {
+                  setShowAppointmentDetailsModal(false);
+                  setSelectedAppointment(null);
+                }}
+                className="w-full btn btn-secondary btn-md"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Confirm Appointment Modal ── */}
       {showConfirmAppointmentModal && selectedAppointment && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-md w-full">
-            <div className="p-6">
-              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <FontAwesomeIcon
-                  icon={faCheck}
-                  className="text-green-600 text-xl"
-                />
-              </div>
-              <h3 className="heading-4 text-neutral-900 text-center mb-2">
-                Confirm Appointment?
-              </h3>
-              <p className="text-neutral-600 text-center mb-2">
-                Confirm appointment with{" "}
-                <strong>{selectedAppointment.client_name}</strong> for{" "}
-                <strong>
-                  {formatDateTime(
-                    selectedAppointment.appointment_date,
-                    selectedAppointment.appointment_time,
-                  )}
-                </strong>
-                ?
-              </p>
-              <p className="text-neutral-500 text-sm text-center mb-6">
-                This will add the appointment to your calendar and notify the
-                client.
-              </p>
-              <div className="mb-4">
-                <label className="block text-neutral-700 font-semibold mb-2 text-sm">
-                  Add a note (optional)
-                </label>
-                <textarea
-                  value={appointmentActionNotes}
-                  onChange={(e) => setAppointmentActionNotes(e.target.value)}
-                  placeholder="e.g., Looking forward to meeting you!"
-                  rows={3}
-                  className="w-full px-4 py-3 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 resize-none"
-                />
-              </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    setShowConfirmAppointmentModal(false);
-                    setSelectedAppointment(null);
-                    setAppointmentActionNotes("");
-                  }}
-                  disabled={confirmAppointmentMutation.isPending}
-                  className="flex-1 btn-secondary disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleConfirmAppointment}
-                  disabled={confirmAppointmentMutation.isPending}
-                  className="flex-1 btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {confirmAppointmentMutation.isPending ? (
-                    <>
-                      <FontAwesomeIcon
-                        icon={faSpinner}
-                        className="animate-spin"
-                      />
-                      Confirming...
-                    </>
-                  ) : (
-                    <>
-                      <FontAwesomeIcon icon={faCheck} />
-                      Confirm
-                    </>
-                  )}
-                </button>
-              </div>
+        <Modal
+          onClose={() => {
+            setShowConfirmAppointmentModal(false);
+            setSelectedAppointment(null);
+            setAppointmentActionNotes("");
+          }}
+        >
+          <div
+            className="rounded-2xl max-w-md w-full"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+              padding: "1.75rem",
+            }}
+          >
+            <div
+              className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+              style={{ backgroundColor: "#f0fdf4" }}
+            >
+              <FontAwesomeIcon
+                icon={faCheck}
+                style={{ color: "#16a34a", fontSize: "1.1rem" }}
+              />
+            </div>
+            <h3
+              className="font-semibold text-center mb-2"
+              style={{
+                fontSize: "1.0625rem",
+                color: "var(--color-neutral-900)",
+              }}
+            >
+              Confirm Appointment?
+            </h3>
+            <p
+              className="text-center mb-1"
+              style={{
+                fontSize: "0.875rem",
+                color: "var(--color-neutral-700)",
+              }}
+            >
+              Confirm appointment with{" "}
+              <strong>{selectedAppointment.client_name}</strong>
+            </p>
+            <p
+              className="text-center mb-5"
+              style={{ fontSize: "0.8rem", color: "#1ab189", fontWeight: 600 }}
+            >
+              {formatDateTime(
+                selectedAppointment.appointment_date,
+                selectedAppointment.appointment_time,
+              )}
+            </p>
+            <p
+              className="text-center mb-5"
+              style={{ fontSize: "0.78rem", color: "var(--color-neutral-500)" }}
+            >
+              This will add the appointment to your calendar and notify the
+              client via email.
+            </p>
+            <Field label="Add a note (optional)">
+              <textarea
+                value={appointmentActionNotes}
+                onChange={(e) => setAppointmentActionNotes(e.target.value)}
+                placeholder="e.g., Looking forward to meeting you!"
+                rows={3}
+                style={{ ...baseInput, resize: "none" }}
+                onFocus={tealFocus}
+                onBlur={blurReset}
+              />
+            </Field>
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => {
+                  setShowConfirmAppointmentModal(false);
+                  setSelectedAppointment(null);
+                  setAppointmentActionNotes("");
+                }}
+                disabled={confirmAppointmentMutation.isPending}
+                className="btn btn-ghost btn-md flex-1 justify-center"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() =>
+                  confirmAppointmentMutation.mutate({
+                    id: selectedAppointment.id,
+                    notes: appointmentActionNotes,
+                  })
+                }
+                disabled={confirmAppointmentMutation.isPending}
+                className="btn btn-primary btn-md flex-1 justify-center flex items-center gap-2"
+                style={{
+                  opacity: confirmAppointmentMutation.isPending ? 0.6 : 1,
+                }}
+              >
+                {confirmAppointmentMutation.isPending ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faSpinner}
+                      className="animate-spin"
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Confirming…
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faCheck}
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Confirm
+                  </>
+                )}
+              </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
-      {/* Cancel Appointment Modal */}
+      {/* ── Cancel / Decline Appointment Modal ── */}
       {showCancelAppointmentModal && selectedAppointment && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-md w-full">
-            <div className="p-6">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <FontAwesomeIcon
-                  icon={faExclamationTriangle}
-                  className="text-red-600 text-xl"
-                />
-              </div>
-              <h3 className="heading-4 text-neutral-900 text-center mb-2">
-                {selectedAppointment.status === "pending"
-                  ? "Decline Appointment?"
-                  : "Cancel Appointment?"}
-              </h3>
-              <p className="text-neutral-600 text-center mb-6">
-                {selectedAppointment.status === "pending"
-                  ? "Decline the appointment request from"
-                  : "Cancel the confirmed appointment with"}{" "}
-                <strong>{selectedAppointment.client_name}</strong>? The client
-                will be notified.
-              </p>
-              <div className="mb-4">
-                <label className="block text-neutral-700 font-semibold mb-2 text-sm">
-                  Reason (optional)
-                </label>
-                <textarea
-                  value={appointmentActionNotes}
-                  onChange={(e) => setAppointmentActionNotes(e.target.value)}
-                  placeholder="Let the client know why..."
-                  rows={3}
-                  className="w-full px-4 py-3 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 resize-none"
-                />
-              </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    setShowCancelAppointmentModal(false);
-                    setSelectedAppointment(null);
-                    setAppointmentActionNotes("");
-                  }}
-                  disabled={cancelAppointmentMutation.isPending}
-                  className="flex-1 btn-secondary disabled:opacity-50"
-                >
-                  Go Back
-                </button>
-                <button
-                  onClick={handleCancelAppointment}
-                  disabled={cancelAppointmentMutation.isPending}
-                  className="flex-1 px-5 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {cancelAppointmentMutation.isPending ? (
-                    <>
-                      <FontAwesomeIcon
-                        icon={faSpinner}
-                        className="animate-spin"
-                      />
-                      Processing...
-                    </>
-                  ) : (
-                    <>
-                      <FontAwesomeIcon icon={faBan} />
-                      {selectedAppointment.status === "pending"
-                        ? "Decline"
-                        : "Cancel"}
-                    </>
-                  )}
-                </button>
-              </div>
+        <Modal
+          onClose={() => {
+            setShowCancelAppointmentModal(false);
+            setSelectedAppointment(null);
+            setAppointmentActionNotes("");
+          }}
+        >
+          <div
+            className="rounded-2xl max-w-md w-full"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+              padding: "1.75rem",
+            }}
+          >
+            <div
+              className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+              style={{ backgroundColor: "#fef2f2" }}
+            >
+              <FontAwesomeIcon
+                icon={faExclamationTriangle}
+                style={{ color: "#ef4444", fontSize: "1.1rem" }}
+              />
+            </div>
+            <h3
+              className="font-semibold text-center mb-2"
+              style={{
+                fontSize: "1.0625rem",
+                color: "var(--color-neutral-900)",
+              }}
+            >
+              {selectedAppointment.status === "pending"
+                ? "Decline Appointment?"
+                : "Cancel Appointment?"}
+            </h3>
+            <p
+              className="text-center mb-5"
+              style={{
+                fontSize: "0.875rem",
+                color: "var(--color-neutral-500)",
+              }}
+            >
+              {selectedAppointment.status === "pending"
+                ? "Decline the request from"
+                : "Cancel the confirmed appointment with"}{" "}
+              <strong style={{ color: "var(--color-neutral-900)" }}>
+                {selectedAppointment.client_name}
+              </strong>
+              ? The client will be notified.
+            </p>
+            <Field label="Reason (optional)">
+              <textarea
+                value={appointmentActionNotes}
+                onChange={(e) => setAppointmentActionNotes(e.target.value)}
+                placeholder="Let the client know why…"
+                rows={3}
+                style={{ ...baseInput, resize: "none" }}
+                onFocus={tealFocus}
+                onBlur={blurReset}
+              />
+            </Field>
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => {
+                  setShowCancelAppointmentModal(false);
+                  setSelectedAppointment(null);
+                  setAppointmentActionNotes("");
+                }}
+                disabled={cancelAppointmentMutation.isPending}
+                className="btn btn-ghost btn-md flex-1 justify-center"
+              >
+                Go Back
+              </button>
+              <button
+                onClick={() =>
+                  cancelAppointmentMutation.mutate({
+                    id: selectedAppointment.id,
+                    reason: appointmentActionNotes,
+                  })
+                }
+                disabled={cancelAppointmentMutation.isPending}
+                className="btn btn-md flex-1 justify-center flex items-center gap-2"
+                style={{
+                  backgroundColor: "#ef4444",
+                  color: "white",
+                  border: "none",
+                  opacity: cancelAppointmentMutation.isPending ? 0.6 : 1,
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "#dc2626";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "#ef4444";
+                }}
+              >
+                {cancelAppointmentMutation.isPending ? (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faSpinner}
+                      className="animate-spin"
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    Processing…
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon
+                      icon={faBan}
+                      style={{ fontSize: "0.875rem" }}
+                    />{" "}
+                    {selectedAppointment.status === "pending"
+                      ? "Decline"
+                      : "Cancel"}
+                  </>
+                )}
+              </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

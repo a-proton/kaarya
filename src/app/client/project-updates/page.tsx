@@ -1,5 +1,4 @@
 "use client";
-
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faNewspaper,
@@ -7,7 +6,6 @@ import {
   faSearch,
   faImage,
   faVideo,
-  faFileAlt,
   faComment,
   faPaperPlane,
   faClock,
@@ -17,13 +15,17 @@ import {
   faChevronUp,
   faCalendar,
   faUser,
+  faSpinner,
+  faExclamationTriangle,
+  faFolder,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { isAuthenticated } from "@/lib/auth";
 
-// ========== INTERFACES ==========
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 interface UpdateMedia {
   id: number;
   media_type: "image" | "video";
@@ -33,7 +35,6 @@ interface UpdateMedia {
   file_size: number;
   created_at: string;
 }
-
 interface ProjectUpdate {
   id: number;
   update_text: string;
@@ -44,11 +45,9 @@ interface ProjectUpdate {
   media: UpdateMedia[];
   created_at: string;
 }
-
 interface Project {
   id: number;
   project_name: string;
-  description?: string;
   status: "pending" | "in_progress" | "completed" | "cancelled" | "on_hold";
   status_display: string;
   service_provider: {
@@ -59,13 +58,11 @@ interface Project {
   };
   created_at: string;
 }
-
 interface DailyUpdate {
   id: string;
   projectId: string;
   projectName: string;
   postedBy: string;
-  providerName: string;
   providerInitials: string;
   date: string;
   timeAgo: string;
@@ -74,472 +71,789 @@ interface DailyUpdate {
   status: "completed" | "in-progress" | "blocked";
   images: string[];
   videos: string[];
-  documents: string[];
-  comments: Comment[];
+  providerColor: string;
 }
 
-interface Comment {
-  id: string;
-  author: string;
-  authorInitials: string;
-  isClient: boolean;
-  text: string;
-  timeAgo: string;
-}
+// ─── Design tokens ────────────────────────────────────────────────────────────
 
-// ========== HELPER FUNCTIONS ==========
-const getInitials = (name: string): string => {
-  if (!name) return "?";
-  const words = name.split(" ");
-  if (words.length >= 2) {
-    return `${words[0][0]}${words[1][0]}`.toUpperCase();
+const STATUS_STYLES: Record<
+  string,
+  {
+    bg: string;
+    color: string;
+    border: string;
+    icon: typeof faCheckCircle;
+    label: string;
   }
-  return words[0][0].toUpperCase();
+> = {
+  completed: {
+    bg: "rgba(26,177,137,0.1)",
+    color: "#065f46",
+    border: "rgba(26,177,137,0.3)",
+    icon: faCheckCircle,
+    label: "Completed",
+  },
+  "in-progress": {
+    bg: "rgba(59,130,246,0.1)",
+    color: "#1d4ed8",
+    border: "rgba(59,130,246,0.3)",
+    icon: faClock,
+    label: "In Progress",
+  },
+  blocked: {
+    bg: "rgba(239,68,68,0.1)",
+    color: "#991b1b",
+    border: "rgba(239,68,68,0.3)",
+    icon: faExclamationCircle,
+    label: "Blocked",
+  },
 };
 
-const getTimeAgo = (dateString: string): string => {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
+const AVATAR_COLORS = [
+  "#1ab189",
+  "#8b5cf6",
+  "#3b82f6",
+  "#f59e0b",
+  "#ec4899",
+  "#06b6d4",
+];
 
-  if (diffMins < 60)
-    return `${diffMins} minute${diffMins !== 1 ? "s" : ""} ago`;
-  if (diffHours < 24)
-    return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
-  if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? "s" : ""} ago`;
+const baseInput: React.CSSProperties = {
+  width: "100%",
+  padding: "0.625rem 1rem 0.625rem 2.5rem",
+  fontFamily: "inherit",
+  fontSize: "0.875rem",
+  color: "var(--color-neutral-900)",
+  background: "#fff",
+  border: "1px solid var(--color-neutral-200)",
+  borderRadius: "0.625rem",
+  outline: "none",
+  transition: "border-color 150ms, box-shadow 150ms",
+};
 
-  return date.toLocaleDateString("en-US", {
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const getInitials = (name: string) => {
+  if (!name) return "?";
+  const w = name.split(" ");
+  return w.length >= 2
+    ? `${w[0][0]}${w[1][0]}`.toUpperCase()
+    : w[0][0].toUpperCase();
+};
+const getTimeAgo = (d: string) => {
+  const diff = Date.now() - new Date(d).getTime();
+  const m = Math.floor(diff / 60000),
+    h = Math.floor(diff / 3600000),
+    dy = Math.floor(diff / 86400000);
+  if (m < 60) return `${m} min${m !== 1 ? "s" : ""} ago`;
+  if (h < 24) return `${h} hr${h !== 1 ? "s" : ""} ago`;
+  if (dy < 7) return `${dy} day${dy !== 1 ? "s" : ""} ago`;
+  return new Date(d).toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
     day: "numeric",
   });
 };
-
-const formatDate = (dateString: string): string => {
-  return new Date(dateString).toLocaleDateString("en-US", {
+const formatDate = (d: string) =>
+  new Date(d).toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
     day: "numeric",
   });
-};
 
-// Transform backend data to frontend format
-const transformUpdateToFrontend = (
-  update: ProjectUpdate,
-  project: Project,
-): DailyUpdate => {
-  const providerInitials = project.service_provider.profile_image
-    ? ""
-    : getInitials(project.service_provider.full_name);
+const transformUpdate = (
+  u: ProjectUpdate,
+  p: Project,
+  idx: number,
+): DailyUpdate => ({
+  id: `${p.id}-${u.id}`,
+  projectId: p.id.toString(),
+  projectName: p.project_name,
+  postedBy: u.posted_by_name,
+  providerInitials: getInitials(u.posted_by_name),
+  date: formatDate(u.created_at),
+  timeAgo: getTimeAgo(u.created_at),
+  title: u.milestone_title || "Daily Progress Update",
+  description: u.update_text,
+  status:
+    p.status === "completed"
+      ? "completed"
+      : p.status === "in_progress"
+        ? "in-progress"
+        : "blocked",
+  images: u.media
+    .filter((m) => m.media_type === "image")
+    .map((m) => m.media_url),
+  videos: u.media
+    .filter((m) => m.media_type === "video")
+    .map((m) => m.media_url),
+  providerColor: AVATAR_COLORS[idx % AVATAR_COLORS.length],
+});
 
-  return {
-    id: update.id.toString(),
-    projectId: project.id.toString(),
-    projectName: project.project_name,
-    postedBy: update.posted_by_name,
-    providerName: update.posted_by_name,
-    providerInitials: providerInitials,
-    date: formatDate(update.created_at),
-    timeAgo: getTimeAgo(update.created_at),
-    title: update.milestone_title || "Daily Progress Update",
-    description: update.update_text,
-    status:
-      project.status === "completed"
-        ? "completed"
-        : project.status === "in_progress"
-          ? "in-progress"
-          : "blocked",
-    images: update.media
-      .filter((m) => m.media_type === "image")
-      .map((m) => m.media_url),
-    videos: update.media
-      .filter((m) => m.media_type === "video")
-      .map((m) => m.media_url),
-    documents: [],
-    comments: [],
-  };
-};
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUS_STYLES[status] || STATUS_STYLES["in-progress"];
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "0.3rem",
+        fontSize: "0.6875rem",
+        fontWeight: 600,
+        padding: "0.25rem 0.625rem",
+        borderRadius: 9999,
+        background: s.bg,
+        color: s.color,
+        border: `1px solid ${s.border}`,
+        whiteSpace: "nowrap",
+      }}
+    >
+      <FontAwesomeIcon icon={s.icon} style={{ fontSize: "0.625rem" }} />
+      {s.label}
+    </span>
+  );
+}
+
+function FLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <label
+      style={{
+        display: "block",
+        fontSize: "0.75rem",
+        fontWeight: 600,
+        color: "var(--color-neutral-700)",
+        marginBottom: "0.375rem",
+        letterSpacing: "0.02em",
+      }}
+    >
+      {children}
+    </label>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ClientProjectUpdatesPage() {
   const router = useRouter();
-
-  // ========== STATE ==========
   const [projects, setProjects] = useState<Project[]>([]);
   const [allUpdates, setAllUpdates] = useState<DailyUpdate[]>([]);
-  const [selectedProject, setSelectedProject] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [expandedUpdate, setExpandedUpdate] = useState<string | null>(null);
-  const [commentText, setCommentText] = useState<{ [key: string]: string }>({});
+  const [selProject, setSelProject] = useState("all");
+  const [search, setSearch] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // ========== API CALLS ==========
-
-  // Fetch all client projects
-  const fetchProjects = async () => {
-    try {
-      const data = await api.get<{ results: Project[] }>("/api/v1/projects/");
-      return data.results || [];
-    } catch (err) {
-      console.error("Error fetching projects:", err);
-      throw err;
-    }
-  };
-
-  // Fetch updates for a specific project
-  const fetchProjectUpdates = async (
-    projectId: number,
-  ): Promise<ProjectUpdate[]> => {
-    try {
-      const data = await api.get<{ results: ProjectUpdate[] }>(
-        `/api/v1/projects/${projectId}/updates/`,
-      );
-      return data.results || [];
-    } catch (err) {
-      console.error(`Error fetching updates for project ${projectId}:`, err);
-      return [];
-    }
-  };
-
-  // Load all data on component mount
   useEffect(() => {
-    const loadData = async () => {
-      // Check authentication first
+    const load = async () => {
       if (!isAuthenticated()) {
-        console.log("❌ User not authenticated, redirecting to login...");
         router.push("/login?type=client&session=expired");
         return;
       }
-
       try {
         setLoading(true);
         setError(null);
-
-        // Fetch all projects
-        const projectsData = await fetchProjects();
-        setProjects(projectsData);
-
-        // Fetch updates for each project
-        const allUpdatesPromises = projectsData.map(
-          async (project: Project) => {
-            const updates = await fetchProjectUpdates(project.id);
-            return updates.map((update) =>
-              transformUpdateToFrontend(update, project),
-            );
-          },
+        const pd = await api.get<{ results: Project[] }>("/api/v1/projects/");
+        const projs = pd.results || [];
+        setProjects(projs);
+        const arrays = await Promise.all(
+          projs.map(async (p, i) => {
+            try {
+              const r = await api.get<{ results: ProjectUpdate[] }>(
+                `/api/v1/projects/${p.id}/updates/`,
+              );
+              return (r.results || []).map((u) => transformUpdate(u, p, i));
+            } catch {
+              return [];
+            }
+          }),
         );
-
-        const updatesArrays = await Promise.all(allUpdatesPromises);
-        const flattenedUpdates = updatesArrays.flat();
-
-        // Sort by date (newest first)
-        flattenedUpdates.sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+        setAllUpdates(
+          arrays
+            .flat()
+            .sort(
+              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+            ),
         );
-
-        setAllUpdates(flattenedUpdates);
-      } catch (err: any) {
-        // The api utility will handle 401 errors and redirect automatically
-        // But we can still set error state for other types of errors
-        if (err.status !== 401) {
+      } catch (e: unknown) {
+        const err = e as { status?: number; message?: string };
+        if (err.status !== 401)
           setError(err.message || "Failed to load updates");
-        }
-        console.error("Error loading data:", err);
       } finally {
         setLoading(false);
       }
     };
-
-    loadData();
+    load();
   }, [router]);
 
-  // ========== FILTERING ==========
-  const filteredUpdates = allUpdates.filter((update) => {
-    const matchesProject =
-      selectedProject === "all" || update.projectId === selectedProject;
-    const matchesSearch =
-      searchQuery === "" ||
-      update.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      update.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      update.projectName.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesProject && matchesSearch;
+  const filtered = allUpdates.filter((u) => {
+    const matchP = selProject === "all" || u.projectId === selProject;
+    const q = search.toLowerCase();
+    const matchS =
+      !q ||
+      u.title.toLowerCase().includes(q) ||
+      u.description.toLowerCase().includes(q) ||
+      u.projectName.toLowerCase().includes(q);
+    return matchP && matchS;
   });
 
-  // ========== EVENT HANDLERS ==========
-  const handleAddComment = async (updateId: string) => {
-    const comment = commentText[updateId];
-    if (!comment || comment.trim() === "") {
-      alert("Please enter a comment");
-      return;
-    }
-
-    try {
-      // TODO: Implement API call to add comment when backend supports it
-      // await api.post(`/api/v1/updates/${updateId}/comments/`, { text: comment });
-      console.log("Adding comment to update:", updateId, comment);
-      alert("Comment functionality coming soon!");
-      setCommentText({ ...commentText, [updateId]: "" });
-    } catch (err) {
-      console.error("Error adding comment:", err);
-      alert("Failed to add comment. Please try again.");
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "completed":
-        return "bg-green-50 text-green-700 border-green-200";
-      case "in-progress":
-        return "bg-blue-50 text-blue-700 border-blue-200";
-      case "blocked":
-        return "bg-red-50 text-red-700 border-red-200";
-      default:
-        return "bg-neutral-50 text-neutral-700 border-neutral-200";
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "completed":
-        return faCheckCircle;
-      case "in-progress":
-        return faClock;
-      case "blocked":
-        return faExclamationCircle;
-      default:
-        return faClock;
-    }
-  };
-
-  // ========== LOADING & ERROR STATES ==========
-  if (loading) {
+  if (loading)
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-          <p className="text-neutral-600">Loading your project updates...</p>
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "var(--color-neutral-50)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <FontAwesomeIcon
+            icon={faSpinner}
+            className="animate-spin"
+            style={{
+              fontSize: "2.5rem",
+              color: "#1ab189",
+              marginBottom: "1rem",
+            }}
+          />
+          <p
+            style={{ fontSize: "0.9375rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading your project updates…
+          </p>
         </div>
       </div>
     );
-  }
 
-  if (error) {
+  if (error)
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
-          <h3 className="text-red-800 font-semibold mb-2">
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "var(--color-neutral-50)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            background: "#fff",
+            border: "1px solid var(--color-neutral-200)",
+            borderRadius: "1.25rem",
+            padding: "3rem",
+            maxWidth: 420,
+            textAlign: "center",
+          }}
+        >
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              background: "rgba(239,68,68,0.1)",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 1.25rem",
+            }}
+          >
+            <FontAwesomeIcon
+              icon={faExclamationTriangle}
+              style={{ color: "#ef4444", fontSize: "1.25rem" }}
+            />
+          </div>
+          <h3
+            style={{
+              fontSize: "1.0625rem",
+              fontWeight: 700,
+              color: "var(--color-neutral-900)",
+              marginBottom: "0.5rem",
+            }}
+          >
             Error Loading Updates
           </h3>
-          <p className="text-red-600">{error}</p>
+          <p
+            style={{
+              color: "var(--color-neutral-500)",
+              fontSize: "0.875rem",
+              marginBottom: "1.5rem",
+            }}
+          >
+            {error}
+          </p>
           <button
             onClick={() => window.location.reload()}
-            className="mt-4 btn-primary"
+            className="btn btn-primary"
           >
-            Retry
+            Try Again
           </button>
         </div>
       </div>
     );
-  }
 
-  // ========== RENDER ==========
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h1 className="heading-2 text-neutral-900 mb-1">Daily Updates</h1>
-            <p className="text-neutral-600 body-regular">
-              View daily progress updates posted by your service providers
-            </p>
-          </div>
-        </div>
+    <div style={{ minHeight: "100vh", background: "var(--color-neutral-50)" }}>
+      <style>{`
+        .animate-spin { animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .upd-card { transition: box-shadow 150ms, border-color 150ms; }
+        .upd-card:hover { box-shadow: 0 8px 28px rgba(0,0,0,0.09) !important; border-color: var(--color-neutral-300) !important; }
+        .media-thumb { transition: opacity 150ms; cursor: pointer; }
+        .media-thumb:hover { opacity: 0.88; }
+        .cmt-btn:hover { color: #1ab189 !important; }
+        .comment-ta:focus { border-color: #1ab189 !important; box-shadow: 0 0 0 3px rgba(26,177,137,0.12) !important; outline: none; }
+        .sel-focus:focus { border-color: #1ab189 !important; box-shadow: 0 0 0 3px rgba(26,177,137,0.12) !important; outline: none; }
+        .inp-focus:focus { border-color: #1ab189 !important; box-shadow: 0 0 0 3px rgba(26,177,137,0.12) !important; outline: none; }
+      `}</style>
+
+      {/* Page header */}
+      <div
+        style={{
+          background: "#fff",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.5rem 2rem",
+        }}
+      >
+        <h1
+          style={{
+            fontSize: "1.375rem",
+            fontWeight: 700,
+            color: "var(--color-neutral-900)",
+            margin: 0,
+          }}
+        >
+          Daily Updates
+        </h1>
+        <p
+          style={{
+            fontSize: "0.875rem",
+            color: "var(--color-neutral-500)",
+            margin: "0.25rem 0 0",
+          }}
+        >
+          Progress updates from your service providers
+        </p>
       </div>
 
-      <div className="p-8 max-w-7xl mx-auto">
-        {/* Filters and Search */}
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 mb-6">
-          <div className="flex flex-col md:flex-row gap-4">
-            {/* Project Filter */}
-            <div className="flex-1">
-              <label className="block text-neutral-700 font-semibold mb-2 body-small">
+      <div style={{ padding: "2rem", maxWidth: 1100, margin: "0 auto" }}>
+        {/* Filters card */}
+        <div
+          style={{
+            background: "#fff",
+            border: "1px solid var(--color-neutral-200)",
+            borderRadius: "1rem",
+            padding: "1.25rem 1.5rem",
+            marginBottom: "1.5rem",
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "1rem",
+            }}
+          >
+            {/* Project */}
+            <div>
+              <FLabel>Project</FLabel>
+              <div style={{ position: "relative" }}>
                 <FontAwesomeIcon
-                  icon={faFilter}
-                  className="mr-2 text-primary-600"
+                  icon={faFolder}
+                  style={{
+                    position: "absolute",
+                    left: "0.875rem",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    color: "#1ab189",
+                    fontSize: "0.75rem",
+                    pointerEvents: "none",
+                  }}
                 />
-                Filter by Project
-              </label>
-              <select
-                value={selectedProject}
-                onChange={(e) => setSelectedProject(e.target.value)}
-                className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all cursor-pointer"
-              >
-                <option value="all">All Projects ({projects.length})</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id.toString()}>
-                    {project.project_name}
-                  </option>
-                ))}
-              </select>
+                <select
+                  value={selProject}
+                  onChange={(e) => setSelProject(e.target.value)}
+                  className="sel-focus"
+                  style={{
+                    ...baseInput,
+                    cursor: "pointer",
+                    appearance: "none",
+                  }}
+                >
+                  <option value="all">All Projects ({projects.length})</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id.toString()}>
+                      {p.project_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-
             {/* Search */}
-            <div className="flex-1">
-              <label className="block text-neutral-700 font-semibold mb-2 body-small">
+            <div>
+              <FLabel>Search</FLabel>
+              <div style={{ position: "relative" }}>
                 <FontAwesomeIcon
                   icon={faSearch}
-                  className="mr-2 text-primary-600"
+                  style={{
+                    position: "absolute",
+                    left: "0.875rem",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    color: "var(--color-neutral-400)",
+                    fontSize: "0.75rem",
+                    pointerEvents: "none",
+                  }}
                 />
-                Search Updates
-              </label>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by title, description, or project..."
-                className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
-              />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by title, description, project…"
+                  className="inp-focus"
+                  style={{ ...baseInput }}
+                />
+              </div>
             </div>
           </div>
 
-          {/* Active Filters Display */}
-          {(selectedProject !== "all" || searchQuery) && (
-            <div className="flex items-center gap-2 mt-4 pt-4 border-t border-neutral-200">
-              <span className="text-neutral-600 text-sm font-medium">
-                Active Filters:
+          {(selProject !== "all" || search) && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                marginTop: "1rem",
+                paddingTop: "1rem",
+                borderTop: "1px solid var(--color-neutral-200)",
+                flexWrap: "wrap",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "0.75rem",
+                  color: "var(--color-neutral-500)",
+                  fontWeight: 500,
+                }}
+              >
+                Filters:
               </span>
-              {selectedProject !== "all" && (
-                <span className="px-3 py-1 bg-primary-50 text-primary-700 rounded-lg text-sm font-medium border border-primary-200">
+              {selProject !== "all" && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.3rem",
+                    padding: "0.25rem 0.75rem",
+                    borderRadius: 9999,
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    background: "rgba(26,177,137,0.08)",
+                    color: "#065f46",
+                    border: "1px solid rgba(26,177,137,0.2)",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faFolder}
+                    style={{ fontSize: "0.6rem" }}
+                  />
                   {
-                    projects.find((p) => p.id.toString() === selectedProject)
+                    projects.find((p) => p.id.toString() === selProject)
                       ?.project_name
                   }
                 </span>
               )}
-              {searchQuery && (
-                <span className="px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium border border-blue-200">
-                  Search: "{searchQuery}"
+              {search && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.3rem",
+                    padding: "0.25rem 0.75rem",
+                    borderRadius: 9999,
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    background: "var(--color-neutral-100)",
+                    color: "var(--color-neutral-700)",
+                    border: "1px solid var(--color-neutral-200)",
+                  }}
+                >
+                  "{search}"
                 </span>
               )}
+              <button
+                onClick={() => {
+                  setSelProject("all");
+                  setSearch("");
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--color-neutral-500)",
+                  fontSize: "0.75rem",
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                  padding: 0,
+                }}
+              >
+                Clear all
+              </button>
             </div>
           )}
         </div>
 
-        {/* Updates List */}
-        {filteredUpdates.length === 0 ? (
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
-            <FontAwesomeIcon
-              icon={faNewspaper}
-              className="text-6xl text-neutral-300 mb-4"
-            />
-            <h3 className="heading-4 text-neutral-900 mb-2">
-              No Daily Updates Found
+        {/* Updates */}
+        {filtered.length === 0 ? (
+          <div
+            style={{
+              background: "#fff",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "1rem",
+              padding: "4rem 2rem",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                width: 64,
+                height: 64,
+                background: "rgba(26,177,137,0.08)",
+                borderRadius: "50%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 1.25rem",
+              }}
+            >
+              <FontAwesomeIcon
+                icon={faNewspaper}
+                style={{ color: "#1ab189", fontSize: "1.5rem" }}
+              />
+            </div>
+            <h3
+              style={{
+                fontSize: "1rem",
+                fontWeight: 700,
+                color: "var(--color-neutral-900)",
+                marginBottom: "0.5rem",
+              }}
+            >
+              No Updates Found
             </h3>
-            <p className="text-neutral-600">
-              {searchQuery || selectedProject !== "all"
-                ? "Try adjusting your filters or search query"
-                : "Your service providers haven't posted any daily updates yet"}
+            <p
+              style={{
+                fontSize: "0.875rem",
+                color: "var(--color-neutral-500)",
+              }}
+            >
+              {search || selProject !== "all"
+                ? "Try adjusting your filters"
+                : "Your service providers haven't posted any updates yet"}
             </p>
           </div>
         ) : (
-          <div className="space-y-6">
-            {filteredUpdates.map((update) => (
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
+          >
+            {filtered.map((upd) => (
               <div
-                key={update.id}
-                className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden hover:shadow-lg transition-shadow"
+                key={upd.id}
+                className="upd-card"
+                style={{
+                  background: "#fff",
+                  border: "1px solid var(--color-neutral-200)",
+                  borderRadius: "1rem",
+                  overflow: "hidden",
+                }}
               >
-                {/* Update Header */}
-                <div className="p-6 border-b border-neutral-200">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-12 h-12 rounded-full bg-primary-600 flex items-center justify-center text-neutral-0 font-semibold flex-shrink-0">
-                        {update.providerInitials}
+                {/* Header */}
+                <div
+                  style={{
+                    padding: "1.25rem 1.5rem",
+                    borderBottom: "1px solid var(--color-neutral-200)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: "1rem",
+                      marginBottom: "1rem",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: "50%",
+                        backgroundColor: upd.providerColor,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "white",
+                        fontWeight: 700,
+                        fontSize: "0.875rem",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {upd.providerInitials}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                          gap: "0.5rem",
+                          marginBottom: "0.5rem",
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: "0.6875rem",
+                            fontWeight: 600,
+                            padding: "0.2rem 0.625rem",
+                            borderRadius: 9999,
+                            background: "rgba(26,177,137,0.1)",
+                            color: "#065f46",
+                            border: "1px solid rgba(26,177,137,0.2)",
+                          }}
+                        >
+                          {upd.projectName}
+                        </span>
+                        <StatusBadge status={upd.status} />
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-semibold px-2 py-1 bg-primary-50 text-primary-700 border border-primary-200 rounded">
-                            {update.projectName}
-                          </span>
+                      <h2
+                        style={{
+                          fontSize: "1rem",
+                          fontWeight: 700,
+                          color: "var(--color-neutral-900)",
+                          margin: "0 0 0.5rem",
+                        }}
+                      >
+                        {upd.title}
+                      </h2>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                          gap: "1rem",
+                        }}
+                      >
+                        {[
+                          { icon: faUser, label: upd.postedBy },
+                          { icon: faCalendar, label: upd.date },
+                          { icon: faClock, label: upd.timeAgo },
+                        ].map(({ icon, label }, metaIdx) => (
                           <span
-                            className={`text-xs font-semibold px-2 py-1 border rounded flex items-center gap-1 ${getStatusColor(
-                              update.status,
-                            )}`}
+                            key={metaIdx}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.35rem",
+                              fontSize: "0.8125rem",
+                              color: "var(--color-neutral-500)",
+                            }}
                           >
                             <FontAwesomeIcon
-                              icon={getStatusIcon(update.status)}
+                              icon={icon}
+                              style={{ fontSize: "0.625rem" }}
                             />
-                            {update.status.replace("-", " ").toUpperCase()}
+                            {label}
                           </span>
-                        </div>
-                        <h2 className="heading-4 text-neutral-900 mb-1">
-                          {update.title}
-                        </h2>
-                        <div className="flex items-center gap-4 text-sm text-neutral-600">
-                          <span className="flex items-center gap-1">
-                            <FontAwesomeIcon
-                              icon={faUser}
-                              className="text-xs"
-                            />
-                            <span className="font-medium">Posted by:</span>{" "}
-                            {update.postedBy}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <FontAwesomeIcon
-                              icon={faCalendar}
-                              className="text-xs"
-                            />
-                            {update.date}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <FontAwesomeIcon
-                              icon={faClock}
-                              className="text-xs"
-                            />
-                            {update.timeAgo}
-                          </span>
-                        </div>
+                        ))}
                       </div>
                     </div>
                   </div>
 
-                  {/* Description */}
-                  <p className="text-neutral-700 leading-relaxed whitespace-pre-wrap">
-                    {update.description}
-                  </p>
+                  {/* Description box */}
+                  <div
+                    style={{
+                      background: "var(--color-neutral-50)",
+                      border: "1px solid var(--color-neutral-200)",
+                      borderRadius: "0.75rem",
+                      padding: "0.875rem 1rem",
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: "0.875rem",
+                        color: "var(--color-neutral-700)",
+                        lineHeight: 1.6,
+                        margin: 0,
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {upd.description}
+                    </p>
+                  </div>
                 </div>
 
-                {/* Media Section */}
-                {(update.images.length > 0 ||
-                  update.videos.length > 0 ||
-                  update.documents.length > 0) && (
-                  <div className="p-6 bg-neutral-50 border-b border-neutral-200">
-                    {/* Images */}
-                    {update.images.length > 0 && (
-                      <div className="mb-4">
-                        <h3 className="font-semibold text-neutral-900 mb-3 flex items-center gap-2">
+                {/* Media */}
+                {(upd.images.length > 0 || upd.videos.length > 0) && (
+                  <div
+                    style={{
+                      padding: "1.25rem 1.5rem",
+                      background: "var(--color-neutral-50)",
+                      borderBottom: "1px solid var(--color-neutral-200)",
+                    }}
+                  >
+                    {upd.images.length > 0 && (
+                      <div
+                        style={{
+                          marginBottom: upd.videos.length ? "1.25rem" : 0,
+                        }}
+                      >
+                        <p
+                          style={{
+                            fontSize: "0.8125rem",
+                            fontWeight: 600,
+                            color: "var(--color-neutral-700)",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.375rem",
+                            margin: "0 0 0.75rem",
+                          }}
+                        >
                           <FontAwesomeIcon
                             icon={faImage}
-                            className="text-primary-600"
+                            style={{ color: "#1ab189", fontSize: "0.75rem" }}
                           />
-                          Photos ({update.images.length})
-                        </h3>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                          {update.images.map((image, index) => (
+                          Photos ({upd.images.length})
+                        </p>
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(3, 1fr)",
+                            gap: "0.5rem",
+                          }}
+                        >
+                          {upd.images.map((src, i) => (
                             <div
-                              key={index}
-                              className="aspect-video bg-neutral-200 rounded-lg overflow-hidden cursor-pointer hover:opacity-90 transition-opacity"
+                              key={i}
+                              className="media-thumb"
+                              style={{
+                                aspectRatio: "16/9",
+                                borderRadius: "0.625rem",
+                                overflow: "hidden",
+                              }}
+                              onClick={() => window.open(src, "_blank")}
                             >
                               <img
-                                src={image}
-                                alt={`Update image ${index + 1}`}
-                                className="w-full h-full object-cover"
+                                src={src}
+                                alt={`Image ${i + 1}`}
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "cover",
+                                }}
                                 onError={(e) => {
-                                  e.currentTarget.src =
-                                    "https://via.placeholder.com/400x300?text=Image+Not+Found";
+                                  (e.currentTarget as HTMLImageElement).src =
+                                    "https://via.placeholder.com/400x300?text=Not+Found";
                                 }}
                               />
                             </div>
@@ -547,59 +861,46 @@ export default function ClientProjectUpdatesPage() {
                         </div>
                       </div>
                     )}
-
-                    {/* Videos */}
-                    {update.videos.length > 0 && (
-                      <div className="mb-4">
-                        <h3 className="font-semibold text-neutral-900 mb-3 flex items-center gap-2">
+                    {upd.videos.length > 0 && (
+                      <div>
+                        <p
+                          style={{
+                            fontSize: "0.8125rem",
+                            fontWeight: 600,
+                            color: "var(--color-neutral-700)",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.375rem",
+                            margin: "0 0 0.75rem",
+                          }}
+                        >
                           <FontAwesomeIcon
                             icon={faVideo}
-                            className="text-primary-600"
+                            style={{ color: "#1ab189", fontSize: "0.75rem" }}
                           />
-                          Videos ({update.videos.length})
-                        </h3>
-                        <div className="space-y-2">
-                          {update.videos.map((video, index) => (
+                          Videos ({upd.videos.length})
+                        </p>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "0.5rem",
+                          }}
+                        >
+                          {upd.videos.map((src, i) => (
                             <div
-                              key={index}
-                              className="aspect-video bg-neutral-900 rounded-lg overflow-hidden"
+                              key={i}
+                              style={{
+                                borderRadius: "0.75rem",
+                                overflow: "hidden",
+                                background: "var(--color-neutral-900)",
+                              }}
                             >
                               <video
-                                src={video}
+                                src={src}
                                 controls
-                                className="w-full h-full"
-                              >
-                                Your browser does not support video playback.
-                              </video>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Documents */}
-                    {update.documents.length > 0 && (
-                      <div>
-                        <h3 className="font-semibold text-neutral-900 mb-3 flex items-center gap-2">
-                          <FontAwesomeIcon
-                            icon={faFileAlt}
-                            className="text-primary-600"
-                          />
-                          Documents ({update.documents.length})
-                        </h3>
-                        <div className="space-y-2">
-                          {update.documents.map((doc, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center gap-3 p-3 bg-neutral-0 rounded-lg border border-neutral-200 hover:bg-neutral-50 cursor-pointer transition-colors"
-                            >
-                              <FontAwesomeIcon
-                                icon={faFileAlt}
-                                className="text-primary-600 text-xl"
+                                style={{ width: "100%", display: "block" }}
                               />
-                              <span className="font-medium text-neutral-900">
-                                {doc}
-                              </span>
                             </div>
                           ))}
                         </div>
@@ -608,90 +909,128 @@ export default function ClientProjectUpdatesPage() {
                   </div>
                 )}
 
-                {/* Comments Section */}
-                <div className="p-6">
+                {/* Comments */}
+                <div style={{ padding: "1rem 1.5rem" }}>
                   <button
+                    className="cmt-btn"
                     onClick={() =>
-                      setExpandedUpdate(
-                        expandedUpdate === update.id ? null : update.id,
-                      )
+                      setExpandedId(expandedId === upd.id ? null : upd.id)
                     }
-                    className="flex items-center gap-2 text-neutral-700 hover:text-primary-600 font-semibold mb-4 transition-colors"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "var(--color-neutral-600)",
+                      fontWeight: 600,
+                      fontSize: "0.875rem",
+                      padding: 0,
+                      marginBottom: expandedId === upd.id ? "1rem" : 0,
+                      transition: "color 150ms",
+                    }}
                   >
-                    <FontAwesomeIcon icon={faComment} />
-                    <span>Comments ({update.comments.length})</span>
                     <FontAwesomeIcon
-                      icon={
-                        expandedUpdate === update.id
-                          ? faChevronUp
-                          : faChevronDown
-                      }
-                      className="text-sm"
+                      icon={faComment}
+                      style={{ fontSize: "0.875rem" }}
+                    />
+                    Add Comment
+                    <FontAwesomeIcon
+                      icon={expandedId === upd.id ? faChevronUp : faChevronDown}
+                      style={{ fontSize: "0.75rem" }}
                     />
                   </button>
 
-                  {expandedUpdate === update.id && (
-                    <div className="space-y-4">
-                      {/* Existing Comments */}
-                      {update.comments.map((comment) => (
+                  {expandedId === upd.id && (
+                    <div
+                      style={{
+                        paddingTop: "0.875rem",
+                        borderTop: "1px solid var(--color-neutral-200)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "0.875rem",
+                          alignItems: "flex-start",
+                        }}
+                      >
                         <div
-                          key={comment.id}
-                          className={`flex gap-3 p-4 rounded-lg ${
-                            comment.isClient ? "bg-primary-50" : "bg-neutral-50"
-                          }`}
+                          style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: "50%",
+                            backgroundColor: "#1ab189",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            color: "white",
+                            fontWeight: 700,
+                            fontSize: "0.75rem",
+                            flexShrink: 0,
+                          }}
                         >
-                          <div
-                            className={`w-10 h-10 rounded-full flex items-center justify-center text-neutral-0 font-semibold flex-shrink-0 ${
-                              comment.isClient
-                                ? "bg-blue-600"
-                                : "bg-primary-600"
-                            }`}
-                          >
-                            {comment.authorInitials}
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="font-semibold text-neutral-900">
-                                {comment.author}
-                              </span>
-                              {comment.isClient && (
-                                <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded">
-                                  You
-                                </span>
-                              )}
-                              <span className="text-xs text-neutral-500">
-                                {comment.timeAgo}
-                              </span>
-                            </div>
-                            <p className="text-neutral-700">{comment.text}</p>
-                          </div>
-                        </div>
-                      ))}
-
-                      {/* Add Comment */}
-                      <div className="flex gap-3 pt-4 border-t border-neutral-200">
-                        <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-neutral-0 font-semibold flex-shrink-0">
                           CL
                         </div>
-                        <div className="flex-1">
+                        <div style={{ flex: 1 }}>
                           <textarea
-                            value={commentText[update.id] || ""}
+                            value={commentText[upd.id] || ""}
+                            rows={3}
                             onChange={(e) =>
                               setCommentText({
                                 ...commentText,
-                                [update.id]: e.target.value,
+                                [upd.id]: e.target.value,
                               })
                             }
-                            placeholder="Add a comment or ask a question..."
-                            rows={3}
-                            className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all resize-none"
+                            placeholder="Add a comment or ask a question…"
+                            className="comment-ta"
+                            style={{
+                              width: "100%",
+                              padding: "0.625rem 1rem",
+                              fontFamily: "inherit",
+                              fontSize: "0.875rem",
+                              color: "var(--color-neutral-900)",
+                              background: "#fff",
+                              border: "1px solid var(--color-neutral-200)",
+                              borderRadius: "0.625rem",
+                              resize: "none",
+                              transition:
+                                "border-color 150ms, box-shadow 150ms",
+                              boxSizing: "border-box",
+                            }}
                           />
-                          <div className="flex justify-end mt-2">
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "flex-end",
+                              marginTop: "0.5rem",
+                            }}
+                          >
                             <button
-                              onClick={() => handleAddComment(update.id)}
-                              className="btn-primary text-sm flex items-center gap-2"
+                              onClick={() => {
+                                const c = commentText[upd.id];
+                                if (!c?.trim()) {
+                                  alert("Please enter a comment");
+                                  return;
+                                }
+                                alert("Comment functionality coming soon!");
+                                setCommentText({
+                                  ...commentText,
+                                  [upd.id]: "",
+                                });
+                              }}
+                              className="btn btn-primary btn-sm"
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "0.4rem",
+                              }}
                             >
-                              <FontAwesomeIcon icon={faPaperPlane} />
+                              <FontAwesomeIcon
+                                icon={faPaperPlane}
+                                style={{ fontSize: "0.7rem" }}
+                              />
                               Post Comment
                             </button>
                           </div>

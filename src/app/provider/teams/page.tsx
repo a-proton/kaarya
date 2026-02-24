@@ -5,7 +5,6 @@ import {
   faSearch,
   faPlus,
   faEllipsisVertical,
-  faChevronDown,
   faEnvelope,
   faPhone,
   faChevronLeft,
@@ -17,12 +16,17 @@ import {
   faSpinner,
   faTimes,
   faCheck,
+  faExclamationTriangle,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
+/* ─────────────────────────────────────────── */
+/* Types                                        */
+/* ─────────────────────────────────────────── */
 interface TeamMember {
   id: number;
   full_name: string;
@@ -47,206 +51,203 @@ interface TeamMembersResponse {
 
 type TabFilter = "all" | "active" | "inactive" | "onleave";
 
+/* ─────────────────────────────────────────── */
+/* Helpers                                      */
+/* ─────────────────────────────────────────── */
+const getInitials = (name: string) =>
+  name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+
+const AVATAR_COLORS = [
+  "#1ab189",
+  "#3b82f6",
+  "#f59e0b",
+  "#8b5cf6",
+  "#10b981",
+  "#06b6d4",
+  "#f97316",
+  "#ec4899",
+  "#6366f1",
+  "#14b8a6",
+];
+const avatarColor = (id: number) => AVATAR_COLORS[id % AVATAR_COLORS.length];
+
+const STATUS_STYLES: Record<
+  string,
+  { background: string; color: string; border: string }
+> = {
+  active: {
+    background: "rgba(22,163,74,0.1)",
+    color: "#16a34a",
+    border: "1px solid rgba(22,163,74,0.2)",
+  },
+  inactive: {
+    background: "rgba(115,115,115,0.1)",
+    color: "#737373",
+    border: "1px solid rgba(115,115,115,0.2)",
+  },
+  on_leave: {
+    background: "rgba(217,119,6,0.1)",
+    color: "#d97706",
+    border: "1px solid rgba(217,119,6,0.2)",
+  },
+};
+
+const formatStatus = (status: string) =>
+  ({ active: "Active", inactive: "Inactive", on_leave: "On Leave" })[status] ??
+  status;
+
+const PER_PAGE = 6;
+
+/* ─────────────────────────────────────────── */
+/* Component                                   */
+/* ─────────────────────────────────────────── */
 export default function TeamPage() {
+  const router = useRouter();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<TabFilter>("active");
+
+  const [activeTab, setActiveTab] = useState<TabFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [roleFilter, setRoleFilter] = useState("All Roles");
-  const [departmentFilter, setDepartmentFilter] = useState("All Departments");
-  const [sortBy, setSortBy] = useState("Name");
   const [currentPage, setCurrentPage] = useState(1);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
-  const [successMessage, setSuccessMessage] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
+  const [showToast, setShowToast] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
+
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Fetch team members from API
-  const {
-    data: teamData,
-    isLoading,
-    isError,
-    error,
-  } = useQuery<TeamMember[]>({
-    queryKey: [
-      "team-members",
-      activeTab,
-      searchQuery,
-      roleFilter,
-      departmentFilter,
-    ],
+  /* ── Query ── */
+  const { data, isLoading, error } = useQuery<TeamMember[]>({
+    queryKey: ["team-members", searchQuery],
     queryFn: async () => {
       const params = new URLSearchParams();
-
-      // Add filters
       if (searchQuery) params.append("search", searchQuery);
-      if (roleFilter !== "All Roles") params.append("role", roleFilter);
-      if (departmentFilter !== "All Departments")
-        params.append("department", departmentFilter);
-
-      // Status filtering
-      if (activeTab === "active") params.append("status", "active");
-      else if (activeTab === "inactive") params.append("status", "inactive");
-      else if (activeTab === "onleave") params.append("status", "on_leave");
-
       const response = await api.get<TeamMember[] | TeamMembersResponse>(
-        `/api/v1/employees/?${params.toString()}`
+        `/api/v1/employees/?${params.toString()}`,
       );
-
-      // Handle both array and paginated response
-      return Array.isArray(response) ? response : response.results || [];
+      return Array.isArray(response) ? response : (response.results ?? []);
     },
+    staleTime: 30000,
   });
 
-  // Delete mutation
+  /* ── Delete mutation ── */
   const deleteMutation = useMutation({
-    mutationFn: async (employeeId: number) => {
-      await api.delete(`/api/v1/employees/${employeeId}/`);
-    },
+    mutationFn: (memberId: number) =>
+      api.delete(`/api/v1/employees/${memberId}/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["team-members"] });
-      showSuccessNotification("Team member deleted successfully");
+      notify("Team member deleted successfully");
+      setDeleteTarget(null);
+      setOpenDropdown(null);
     },
-    onError: (error: any) => {
-      alert(`Failed to delete team member: ${error.message}`);
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
+      alert(
+        `Failed to delete: ${e.data?.detail ?? e.message ?? "Unknown error"}`,
+      );
+      setDeleteTarget(null);
     },
   });
 
+  const notify = (msg: string) => {
+    setToastMsg(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
+
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handler = (e: MouseEvent) => {
       if (
         dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
+        !dropdownRef.current.contains(e.target as Node)
+      )
         setOpenDropdown(null);
-      }
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const showSuccessNotification = (message: string) => {
-    setSuccessMessage(message);
-    setShowSuccessMessage(true);
-    setTimeout(() => {
-      setShowSuccessMessage(false);
-    }, 3000);
-  };
+  const members = data ?? [];
 
-  const handleAction = (
-    action: string,
-    memberId: number,
-    memberName: string
-  ) => {
-    setOpenDropdown(null);
-    if (action === "view") {
-      window.location.href = `/provider/teams/${memberId}`;
-    } else if (action === "update") {
-      window.location.href = `/provider/teams/${memberId}/edit`;
-    } else if (
-      action === "delete" &&
-      confirm(`Are you sure you want to delete "${memberName}"?`)
-    ) {
-      deleteMutation.mutate(memberId);
-    }
-  };
+  const filtered = members.filter((m) => {
+    if (activeTab === "active" && m.status !== "active") return false;
+    if (activeTab === "inactive" && m.status !== "inactive") return false;
+    if (activeTab === "onleave" && m.status !== "on_leave") return false;
+    return true;
+  });
 
-  const getStatusBadgeColor = (status: string) => {
-    const colors = {
-      active: "bg-green-100 text-green-700 border-green-200",
-      inactive: "bg-neutral-100 text-neutral-600 border-neutral-200",
-      on_leave: "bg-yellow-100 text-yellow-700 border-yellow-200",
-    };
-    return colors[status as keyof typeof colors] || colors.inactive;
-  };
+  const activeCount = members.filter((m) => m.status === "active").length;
+  const onLeaveCount = members.filter((m) => m.status === "on_leave").length;
+  const inactiveCount = members.filter((m) => m.status === "inactive").length;
 
-  const getSkillColor = (skill: string) => {
-    const colors: { [key: string]: string } = {
-      Electrical: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      Plumbing: "bg-blue-100 text-blue-700 border-blue-200",
-      HVAC: "bg-orange-100 text-orange-700 border-orange-200",
-      Carpentry: "bg-amber-100 text-amber-700 border-amber-200",
-      "Project Management": "bg-primary-50 text-primary-700 border-primary-200",
-      Supervision: "bg-purple-100 text-purple-700 border-purple-200",
-      Design: "bg-pink-100 text-pink-700 border-pink-200",
-      Landscaping: "bg-green-100 text-green-700 border-green-200",
-    };
-    return (
-      colors[skill] || "bg-neutral-100 text-neutral-600 border-neutral-200"
-    );
-  };
-
-  const formatStatusDisplay = (status: string) => {
-    const displays: { [key: string]: string } = {
-      active: "Active",
-      inactive: "Inactive",
-      on_leave: "On Leave",
-    };
-    return displays[status] || status;
-  };
-
-  // Process data
-  const teamMembers = teamData || [];
-
-  const activeCount = teamMembers.filter((m) => m.status === "active").length;
-  const inactiveCount = teamMembers.filter(
-    (m) => m.status === "inactive"
-  ).length;
-  const onLeaveCount = teamMembers.filter(
-    (m) => m.status === "on_leave"
-  ).length;
-
-  // Pagination
-  const itemsPerPage = 6;
-  const totalPages = Math.ceil(teamMembers.length / itemsPerPage);
-  const paginatedMembers = teamMembers.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+  const totalPages = Math.ceil(filtered.length / PER_PAGE);
+  const paginated = filtered.slice(
+    (currentPage - 1) * PER_PAGE,
+    currentPage * PER_PAGE,
   );
 
-  // Get unique roles and departments for filters
-  const uniqueRoles = Array.from(
-    new Set(teamMembers.map((m) => m.role).filter(Boolean))
-  );
-  const uniqueDepartments = Array.from(
-    new Set(teamMembers.map((m) => m.department).filter(Boolean))
-  );
+  const tabStyle = (tab: TabFilter): React.CSSProperties => ({
+    padding: "0.875rem 0",
+    fontWeight: 500,
+    fontSize: "0.875rem",
+    background: "none",
+    border: "none",
+    borderBottom:
+      activeTab === tab ? "2px solid #1ab189" : "2px solid transparent",
+    color: activeTab === tab ? "#1ab189" : "var(--color-neutral-600)",
+    cursor: "pointer",
+    whiteSpace: "nowrap" as const,
+    transition: "color 150ms",
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+  });
 
-  // Loading state
+  /* ── Loading / error ── */
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading team members...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading team members…
+          </p>
         </div>
       </div>
     );
   }
 
-  // Error state
-  if (isError) {
+  if (error) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FontAwesomeIcon icon={faTimes} className="text-red-600 text-2xl" />
-          </div>
-          <h3 className="text-lg font-semibold text-red-900 mb-2">
-            Error Loading Team Members
-          </h3>
-          <p className="text-red-700 mb-4">
-            {error instanceof Error
-              ? error.message
-              : "Failed to load team members"}
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
+        <div className="text-center">
+          <p className="mb-4" style={{ color: "#ef4444" }}>
+            Error loading team members
           </p>
           <button
             onClick={() => window.location.reload()}
-            className="btn-primary"
+            className="btn btn-primary btn-md"
           >
-            Try Again
+            Retry
           </button>
         </div>
       </div>
@@ -254,59 +255,113 @@ export default function TeamPage() {
   }
 
   return (
-    <div className="flex-1 bg-neutral-50">
-      {/* Success Toast */}
-      {showSuccessMessage && (
-        <div className="fixed top-8 right-8 z-[60] animate-slide-in-right">
-          <div className="bg-green-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 min-w-[300px]">
-            <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
-              <FontAwesomeIcon icon={faCheck} />
-            </div>
-            <div className="flex-1">
-              <p className="font-semibold">{successMessage}</p>
-            </div>
-            <button
-              onClick={() => setShowSuccessMessage(false)}
-              className="text-neutral-0 hover:text-neutral-200 transition-colors"
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* Toast */}
+      {showToast && (
+        <div
+          className="fixed top-5 right-5 z-[60]"
+          style={{ minWidth: "17rem" }}
+        >
+          <div
+            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+            style={{
+              backgroundColor: "var(--color-neutral-900)",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div
+              className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: "#1ab189" }}
             >
-              <FontAwesomeIcon icon={faTimes} />
+              <FontAwesomeIcon
+                icon={faCheck}
+                style={{ color: "white", fontSize: "0.6rem" }}
+              />
+            </div>
+            <p
+              className="flex-1 font-medium"
+              style={{ fontSize: "0.875rem", color: "white" }}
+            >
+              {toastMsg}
+            </p>
+            <button
+              onClick={() => setShowToast(false)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "rgba(255,255,255,0.5)",
+                padding: 0,
+              }}
+            >
+              <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
             </button>
           </div>
         </div>
       )}
 
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex items-center justify-between">
+      {/* Page header */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.125rem 2rem",
+        }}
+      >
+        <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h2 className="heading-2 text-neutral-900">Team Members</h2>
-            <p className="text-neutral-600 body-regular mt-1">
-              Manage your team and their assignments
+            <h1
+              className="font-bold"
+              style={{
+                fontSize: "1.375rem",
+                color: "var(--color-neutral-900)",
+                lineHeight: 1.2,
+              }}
+            >
+              Team Members
+            </h1>
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--color-neutral-500)",
+                marginTop: "0.125rem",
+              }}
+            >
+              Manage your team and their assignments ({members.length} total)
             </p>
           </div>
           <Link
             href="/provider/teams/create"
-            className="btn-primary flex items-center gap-2 shadow-lg"
+            className="btn btn-primary btn-md flex items-center gap-2"
           >
-            <FontAwesomeIcon icon={faPlus} />
+            <FontAwesomeIcon icon={faPlus} style={{ fontSize: "0.8rem" }} />
             Add Team Member
           </Link>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8">
-        <div className="flex items-center gap-6">
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "0 2rem",
+          overflowX: "auto",
+        }}
+      >
+        <div
+          className="flex items-center gap-6"
+          style={{ minWidth: "max-content" }}
+        >
           <button
             onClick={() => {
               setActiveTab("all");
               setCurrentPage(1);
             }}
-            className={`py-4 border-b-2 font-medium transition-colors ${
-              activeTab === "all"
-                ? "border-primary-600 text-primary-600"
-                : "border-transparent text-neutral-600 hover:text-neutral-900"
-            }`}
+            style={tabStyle("all")}
           >
             All Members
           </button>
@@ -315,14 +370,18 @@ export default function TeamPage() {
               setActiveTab("active");
               setCurrentPage(1);
             }}
-            className={`py-4 border-b-2 font-medium transition-colors flex items-center gap-2 ${
-              activeTab === "active"
-                ? "border-primary-600 text-primary-600"
-                : "border-transparent text-neutral-600 hover:text-neutral-900"
-            }`}
+            style={tabStyle("active")}
           >
             Active
-            <span className="px-2 py-0.5 bg-green-600 text-neutral-0 rounded-full text-xs font-semibold">
+            <span
+              className="rounded-full font-bold"
+              style={{
+                fontSize: "0.6rem",
+                padding: "0.15rem 0.45rem",
+                backgroundColor: "#16a34a",
+                color: "white",
+              }}
+            >
               {activeCount}
             </span>
           </button>
@@ -331,14 +390,18 @@ export default function TeamPage() {
               setActiveTab("onleave");
               setCurrentPage(1);
             }}
-            className={`py-4 border-b-2 font-medium transition-colors flex items-center gap-2 ${
-              activeTab === "onleave"
-                ? "border-primary-600 text-primary-600"
-                : "border-transparent text-neutral-600 hover:text-neutral-900"
-            }`}
+            style={tabStyle("onleave")}
           >
             On Leave
-            <span className="px-2 py-0.5 bg-yellow-600 text-neutral-0 rounded-full text-xs font-semibold">
+            <span
+              className="rounded-full font-bold"
+              style={{
+                fontSize: "0.6rem",
+                padding: "0.15rem 0.45rem",
+                backgroundColor: "#d97706",
+                color: "white",
+              }}
+            >
               {onLeaveCount}
             </span>
           </button>
@@ -347,342 +410,566 @@ export default function TeamPage() {
               setActiveTab("inactive");
               setCurrentPage(1);
             }}
-            className={`py-4 border-b-2 font-medium transition-colors ${
-              activeTab === "inactive"
-                ? "border-primary-600 text-primary-600"
-                : "border-transparent text-neutral-600 hover:text-neutral-900"
-            }`}
+            style={tabStyle("inactive")}
           >
             Inactive
+            <span
+              className="rounded-full font-bold"
+              style={{
+                fontSize: "0.6rem",
+                padding: "0.15rem 0.45rem",
+                backgroundColor: "var(--color-neutral-400)",
+                color: "white",
+              }}
+            >
+              {inactiveCount}
+            </span>
           </button>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="bg-neutral-0 px-8 py-4 border-b border-neutral-200">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="relative">
-              <FontAwesomeIcon
-                icon={faSearch}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 text-sm"
-              />
-              <input
-                type="text"
-                placeholder="Search team members..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 pr-4 py-2 bg-neutral-0 border border-neutral-200 rounded-lg w-64 focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-small"
-              />
-            </div>
-
-            <div className="relative">
-              <select
-                value={roleFilter}
-                onChange={(e) => setRoleFilter(e.target.value)}
-                className="appearance-none pl-4 pr-10 py-2 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-small cursor-pointer"
-              >
-                <option>All Roles</option>
-                {uniqueRoles.map((role) => (
-                  <option key={role} value={role}>
-                    {role}
-                  </option>
-                ))}
-              </select>
-              <FontAwesomeIcon
-                icon={faChevronDown}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 text-xs pointer-events-none"
-              />
-            </div>
-
-            <div className="relative">
-              <select
-                value={departmentFilter}
-                onChange={(e) => setDepartmentFilter(e.target.value)}
-                className="appearance-none pl-4 pr-10 py-2 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-small cursor-pointer"
-              >
-                <option>All Departments</option>
-                {uniqueDepartments.map((dept) => (
-                  <option key={dept} value={dept}>
-                    {dept}
-                  </option>
-                ))}
-              </select>
-              <FontAwesomeIcon
-                icon={faChevronDown}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 text-xs pointer-events-none"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
-                className="appearance-none pl-4 pr-10 py-2 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-small cursor-pointer"
-              >
-                <option>Sort by: Name</option>
-                <option>Sort by: Role</option>
-                <option>Sort by: Projects</option>
-                <option>Sort by: Join Date</option>
-              </select>
-              <FontAwesomeIcon
-                icon={faChevronDown}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 text-xs pointer-events-none"
-              />
-            </div>
-
-            <button
-              className="p-2 bg-neutral-0 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors"
-              aria-label="More options"
-            >
-              <FontAwesomeIcon
-                icon={faEllipsisVertical}
-                className="text-neutral-600"
-              />
-            </button>
-          </div>
+      {/* Search */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "0.875rem 2rem",
+        }}
+      >
+        <div className="relative" style={{ width: "17rem" }}>
+          <FontAwesomeIcon
+            icon={faSearch}
+            className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+            style={{ color: "var(--color-neutral-400)", fontSize: "0.75rem" }}
+          />
+          <input
+            type="text"
+            placeholder="Search team members…"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setCurrentPage(1);
+            }}
+            style={{
+              width: "100%",
+              padding: "0.5rem 1rem 0.5rem 2rem",
+              fontFamily: "var(--font-sans)",
+              fontSize: "0.8125rem",
+              color: "var(--color-neutral-900)",
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "0.625rem",
+              outline: "none",
+              transition: "border-color 150ms, box-shadow 150ms",
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = "#1ab189";
+              e.currentTarget.style.boxShadow =
+                "0 0 0 3px rgba(26,177,137,0.12)";
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = "var(--color-neutral-200)";
+              e.currentTarget.style.boxShadow = "none";
+            }}
+          />
         </div>
       </div>
 
-      {/* Team Members Table */}
-      <div className="p-8">
-        {paginatedMembers.length === 0 ? (
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
-            <div className="w-16 h-16 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <FontAwesomeIcon
-                icon={faUserGroup}
-                className="text-neutral-400 text-2xl"
-              />
-            </div>
-            <h3 className="text-lg font-semibold text-neutral-900 mb-2">
-              No Team Members Found
+      {/* Content */}
+      <div style={{ padding: "1.75rem 2rem" }}>
+        {filtered.length === 0 ? (
+          <div className="text-center" style={{ paddingTop: "4rem" }}>
+            <div style={{ fontSize: "3.5rem", marginBottom: "1rem" }}>👷</div>
+            <h3
+              className="font-semibold mb-2"
+              style={{
+                fontSize: "1.125rem",
+                color: "var(--color-neutral-900)",
+              }}
+            >
+              No team members found
             </h3>
-            <p className="text-neutral-600 mb-6">
+            <p
+              className="mb-6"
+              style={{
+                fontSize: "0.875rem",
+                color: "var(--color-neutral-500)",
+              }}
+            >
               {searchQuery
-                ? "Try adjusting your search criteria"
+                ? "Try adjusting your search query"
                 : "Get started by adding your first team member"}
             </p>
             {!searchQuery && (
-              <Link href="/provider/teams/create" className="btn-primary">
-                <FontAwesomeIcon icon={faPlus} className="mr-2" />
+              <Link
+                href="/provider/teams/create"
+                className="btn btn-primary btn-md inline-flex items-center gap-2"
+              >
+                <FontAwesomeIcon icon={faPlus} style={{ fontSize: "0.8rem" }} />
                 Add Team Member
               </Link>
             )}
           </div>
         ) : (
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
-            <div className="grid grid-cols-12 gap-4 px-6 py-4 bg-neutral-50 border-b border-neutral-200 text-neutral-600 font-semibold text-sm">
-              <div className="col-span-3">TEAM MEMBER</div>
-              <div className="col-span-2">ROLE</div>
-              <div className="col-span-3">CONTACT</div>
-              <div className="col-span-1">STATUS</div>
-              <div className="col-span-1">PROJECTS</div>
-              <div className="col-span-1">JOIN DATE</div>
-              <div className="col-span-1 text-center">ACTIONS</div>
-            </div>
-
-            <div className="divide-y divide-neutral-100">
-              {paginatedMembers.map((member) => (
-                <div
-                  key={member.id}
-                  className="grid grid-cols-12 gap-4 px-6 py-5 hover:bg-neutral-50 transition-colors group"
-                >
-                  <div className="col-span-3 flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-semibold text-base flex-shrink-0">
-                      {member.initials}
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-neutral-900 group-hover:text-primary-600 transition-colors">
-                        {member.full_name}
-                      </h4>
-                      <p className="text-neutral-500 text-sm">
-                        {member.department || "No Department"}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="col-span-2 flex items-center">
-                    <span className="text-neutral-700">
-                      {member.role || "N/A"}
-                    </span>
-                  </div>
-
-                  <div className="col-span-3 flex flex-col justify-center gap-1">
-                    <div className="flex items-center gap-2 text-neutral-600 text-sm">
-                      <FontAwesomeIcon
-                        icon={faEnvelope}
-                        className="text-neutral-400 text-xs"
-                      />
-                      <span>{member.email || "N/A"}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-neutral-600 text-sm">
-                      <FontAwesomeIcon
-                        icon={faPhone}
-                        className="text-neutral-400 text-xs"
-                      />
-                      <span>{member.phone || "N/A"}</span>
-                    </div>
-                  </div>
-
-                  <div className="col-span-1 flex items-center">
-                    <span
-                      className={`px-2 py-1 rounded-lg text-xs font-semibold border ${getStatusBadgeColor(
-                        member.status
-                      )}`}
-                    >
-                      {formatStatusDisplay(member.status)}
-                    </span>
-                  </div>
-
-                  <div className="col-span-1 flex items-center">
-                    <div className="flex items-center gap-2">
-                      <FontAwesomeIcon
-                        icon={faUserGroup}
-                        className="text-neutral-400 text-sm"
-                      />
-                      <span className="font-semibold text-neutral-900">
-                        {member.projects_count}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="col-span-1 flex items-center text-neutral-700">
-                    <span>
-                      {member.join_date
-                        ? new Date(member.join_date).toLocaleDateString(
-                            "en-US",
-                            {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                            }
-                          )
-                        : "N/A"}
-                    </span>
-                  </div>
-
-                  <div className="col-span-1 flex items-center justify-center">
-                    <div
-                      className="relative"
-                      ref={
-                        openDropdown === member.id.toString()
-                          ? dropdownRef
-                          : null
-                      }
-                    >
-                      <button
-                        onClick={() =>
-                          setOpenDropdown(
-                            openDropdown === member.id.toString()
-                              ? null
-                              : member.id.toString()
-                          )
-                        }
-                        className="p-2 rounded-lg hover:bg-neutral-100 transition-colors"
-                        aria-label="Actions"
+          <div
+            className="rounded-2xl overflow-hidden"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            <div style={{ overflowX: "auto" }}>
+              <table
+                style={{
+                  width: "100%",
+                  minWidth: "56rem",
+                  borderCollapse: "collapse",
+                }}
+              >
+                <thead>
+                  <tr
+                    style={{
+                      backgroundColor: "var(--color-neutral-50)",
+                      borderBottom: "1px solid var(--color-neutral-200)",
+                    }}
+                  >
+                    {[
+                      "Team Member",
+                      "Role",
+                      "Contact",
+                      "Status",
+                      "Projects",
+                      "Join Date",
+                      "Actions",
+                    ].map((h, i) => (
+                      <th
+                        key={h}
+                        style={{
+                          padding: "0.75rem 1.5rem",
+                          textAlign: i === 6 ? "center" : "left",
+                          fontSize: "0.65rem",
+                          fontWeight: 700,
+                          color: "var(--color-neutral-400)",
+                          textTransform: "uppercase" as const,
+                          letterSpacing: "0.06em",
+                          whiteSpace: "nowrap" as const,
+                        }}
                       >
-                        <FontAwesomeIcon
-                          icon={faEllipsisVertical}
-                          className="text-neutral-600"
-                        />
-                      </button>
-
-                      {openDropdown === member.id.toString() && (
-                        <div className="absolute right-0 mt-2 w-48 bg-neutral-0 rounded-lg shadow-lg border border-neutral-200 py-1 z-10">
-                          <button
-                            onClick={() =>
-                              handleAction("view", member.id, member.full_name)
-                            }
-                            className="w-full px-4 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-3 transition-colors"
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginated.map((member, idx) => (
+                    <tr
+                      key={member.id}
+                      style={{
+                        borderTop:
+                          idx === 0
+                            ? "none"
+                            : "1px solid var(--color-neutral-100)",
+                        transition: "background-color 120ms",
+                      }}
+                      onMouseEnter={(e) => {
+                        (
+                          e.currentTarget as HTMLTableRowElement
+                        ).style.backgroundColor = "var(--color-neutral-50)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (
+                          e.currentTarget as HTMLTableRowElement
+                        ).style.backgroundColor = "transparent";
+                      }}
+                    >
+                      {/* Member */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-semibold flex-shrink-0"
+                            style={{
+                              backgroundColor: avatarColor(member.id),
+                              color: "white",
+                              fontSize: "0.8rem",
+                            }}
                           >
-                            <FontAwesomeIcon
-                              icon={faEye}
-                              className="text-blue-600 w-4"
-                            />
-                            View
-                          </button>
-                          <button
-                            onClick={() =>
-                              handleAction(
-                                "update",
-                                member.id,
-                                member.full_name
-                              )
-                            }
-                            className="w-full px-4 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-3 transition-colors"
-                          >
-                            <FontAwesomeIcon
-                              icon={faPenToSquare}
-                              className="text-green-600 w-4"
-                            />
-                            Update
-                          </button>
-                          <button
-                            onClick={() =>
-                              handleAction(
-                                "delete",
-                                member.id,
-                                member.full_name
-                              )
-                            }
-                            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors"
-                          >
-                            <FontAwesomeIcon icon={faTrash} className="w-4" />
-                            Delete
-                          </button>
+                            {member.initials || getInitials(member.full_name)}
+                          </div>
+                          <div className="min-w-0">
+                            <h4
+                              className="font-semibold whitespace-nowrap"
+                              style={{
+                                fontSize: "0.9rem",
+                                color: "var(--color-neutral-900)",
+                              }}
+                            >
+                              {member.full_name}
+                            </h4>
+                            <p
+                              style={{
+                                fontSize: "0.75rem",
+                                color: "var(--color-neutral-400)",
+                              }}
+                            >
+                              {member.department || "—"}
+                            </p>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
+                      </td>
+
+                      {/* Role */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <span
+                          style={{
+                            fontSize: "0.8125rem",
+                            color: "var(--color-neutral-700)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {member.role || "—"}
+                        </span>
+                      </td>
+
+                      {/* Contact */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <p
+                          className="whitespace-nowrap"
+                          style={{
+                            fontSize: "0.8125rem",
+                            color: "var(--color-neutral-700)",
+                          }}
+                        >
+                          <FontAwesomeIcon
+                            icon={faEnvelope}
+                            style={{
+                              color: "#1ab189",
+                              fontSize: "0.7rem",
+                              marginRight: "0.375rem",
+                            }}
+                          />
+                          {member.email || "—"}
+                        </p>
+                        <p
+                          className="whitespace-nowrap mt-0.5"
+                          style={{
+                            fontSize: "0.78rem",
+                            color: "var(--color-neutral-500)",
+                          }}
+                        >
+                          <FontAwesomeIcon
+                            icon={faPhone}
+                            style={{
+                              color: "var(--color-neutral-300)",
+                              fontSize: "0.7rem",
+                              marginRight: "0.375rem",
+                            }}
+                          />
+                          {member.phone || "—"}
+                        </p>
+                      </td>
+
+                      {/* Status */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <span
+                          style={{
+                            padding: "0.25rem 0.625rem",
+                            borderRadius: "9999px",
+                            fontSize: "0.7rem",
+                            fontWeight: 600,
+                            whiteSpace: "nowrap" as const,
+                            ...(STATUS_STYLES[member.status] ??
+                              STATUS_STYLES.inactive),
+                          }}
+                        >
+                          {formatStatus(member.status)}
+                        </span>
+                      </td>
+
+                      {/* Projects */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <div className="flex items-center gap-2">
+                          <FontAwesomeIcon
+                            icon={faUserGroup}
+                            style={{ color: "#1ab189", fontSize: "0.75rem" }}
+                          />
+                          <span
+                            className="font-semibold"
+                            style={{
+                              fontSize: "0.875rem",
+                              color: "var(--color-neutral-900)",
+                            }}
+                          >
+                            {member.projects_count}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Join Date */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <span
+                          style={{
+                            fontSize: "0.8rem",
+                            color: "var(--color-neutral-600)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {member.join_date
+                            ? new Date(member.join_date).toLocaleDateString(
+                                "en-US",
+                                {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                },
+                              )
+                            : "—"}
+                        </span>
+                      </td>
+
+                      {/* Actions */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <div className="flex justify-center">
+                          <div
+                            className="relative"
+                            ref={
+                              openDropdown === member.id.toString()
+                                ? dropdownRef
+                                : null
+                            }
+                          >
+                            <button
+                              onClick={() =>
+                                setOpenDropdown(
+                                  openDropdown === member.id.toString()
+                                    ? null
+                                    : member.id.toString(),
+                                )
+                              }
+                              aria-label="Member actions"
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                padding: "0.5rem",
+                                borderRadius: "0.5rem",
+                                color: "var(--color-neutral-600)",
+                              }}
+                              onMouseEnter={(e) => {
+                                (
+                                  e.currentTarget as HTMLButtonElement
+                                ).style.backgroundColor =
+                                  "var(--color-neutral-100)";
+                              }}
+                              onMouseLeave={(e) => {
+                                (
+                                  e.currentTarget as HTMLButtonElement
+                                ).style.backgroundColor = "transparent";
+                              }}
+                            >
+                              <FontAwesomeIcon
+                                icon={faEllipsisVertical}
+                                style={{ fontSize: "0.9rem" }}
+                              />
+                            </button>
+
+                            {openDropdown === member.id.toString() && (
+                              <div
+                                className="absolute right-0 rounded-xl overflow-hidden z-10"
+                                style={{
+                                  marginTop: "0.5rem",
+                                  width: "11rem",
+                                  backgroundColor: "var(--color-neutral-0)",
+                                  border: "1px solid var(--color-neutral-200)",
+                                  boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                                }}
+                              >
+                                <Link
+                                  href={`/provider/teams/${member.id}`}
+                                  className="flex items-center gap-3 px-4 py-2.5"
+                                  style={{
+                                    fontSize: "0.8125rem",
+                                    color: "var(--color-neutral-700)",
+                                    textDecoration: "none",
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    (
+                                      e.currentTarget as HTMLAnchorElement
+                                    ).style.backgroundColor =
+                                      "var(--color-neutral-50)";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (
+                                      e.currentTarget as HTMLAnchorElement
+                                    ).style.backgroundColor = "transparent";
+                                  }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faEye}
+                                    style={{
+                                      color: "#3b82f6",
+                                      fontSize: "0.8rem",
+                                      width: "1rem",
+                                    }}
+                                  />
+                                  View Details
+                                </Link>
+                                <Link
+                                  href={`/provider/teams/${member.id}/edit`}
+                                  className="flex items-center gap-3 px-4 py-2.5"
+                                  style={{
+                                    fontSize: "0.8125rem",
+                                    color: "var(--color-neutral-700)",
+                                    textDecoration: "none",
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    (
+                                      e.currentTarget as HTMLAnchorElement
+                                    ).style.backgroundColor =
+                                      "var(--color-neutral-50)";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (
+                                      e.currentTarget as HTMLAnchorElement
+                                    ).style.backgroundColor = "transparent";
+                                  }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faPenToSquare}
+                                    style={{
+                                      color: "#1ab189",
+                                      fontSize: "0.8rem",
+                                      width: "1rem",
+                                    }}
+                                  />
+                                  Edit Member
+                                </Link>
+                                <button
+                                  onClick={() => {
+                                    setDeleteTarget({
+                                      id: member.id,
+                                      name: member.full_name,
+                                    });
+                                    setOpenDropdown(null);
+                                  }}
+                                  className="w-full flex items-center gap-3 px-4 py-2.5"
+                                  style={{
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    fontSize: "0.8125rem",
+                                    color: "#ef4444",
+                                    textAlign: "left",
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    (
+                                      e.currentTarget as HTMLButtonElement
+                                    ).style.backgroundColor = "#fef2f2";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (
+                                      e.currentTarget as HTMLButtonElement
+                                    ).style.backgroundColor = "transparent";
+                                  }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faTrash}
+                                    style={{
+                                      fontSize: "0.8rem",
+                                      width: "1rem",
+                                    }}
+                                  />
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
             {/* Pagination */}
-            <div className="px-6 py-4 border-t border-neutral-200 flex items-center justify-between">
-              <p className="text-neutral-600 text-sm">
-                Showing {(currentPage - 1) * itemsPerPage + 1}-
-                {Math.min(currentPage * itemsPerPage, teamMembers.length)} of{" "}
-                {teamMembers.length} team members
+            <div
+              className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+              style={{
+                padding: "0.875rem 1.5rem",
+                borderTop: "1px solid var(--color-neutral-200)",
+              }}
+            >
+              <p
+                style={{
+                  fontSize: "0.78rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
+                Showing {(currentPage - 1) * PER_PAGE + 1}–
+                {Math.min(currentPage * PER_PAGE, filtered.length)} of{" "}
+                {filtered.length} members
               </p>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                   disabled={currentPage === 1}
-                  className="p-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  aria-label="Previous page"
+                  style={{
+                    padding: "0.5rem 0.625rem",
+                    borderRadius: "0.5rem",
+                    border: "1px solid var(--color-neutral-200)",
+                    background: "none",
+                    cursor: "pointer",
+                    color: "var(--color-neutral-600)",
+                    opacity: currentPage === 1 ? 0.4 : 1,
+                  }}
                 >
                   <FontAwesomeIcon
                     icon={faChevronLeft}
-                    className="text-neutral-600"
+                    style={{ fontSize: "0.75rem" }}
                   />
                 </button>
-                {[...Array(totalPages)].map((_, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setCurrentPage(i + 1)}
-                    className={`w-10 h-10 rounded-lg font-medium transition-colors ${
-                      currentPage === i + 1
-                        ? "bg-primary-600 text-neutral-0"
-                        : "bg-neutral-0 text-neutral-700 border border-neutral-200 hover:bg-neutral-50"
-                    }`}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
+                {[...Array(totalPages)].map((_, i) => {
+                  const active = currentPage === i + 1;
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => setCurrentPage(i + 1)}
+                      style={{
+                        width: "2.25rem",
+                        height: "2.25rem",
+                        borderRadius: "0.5rem",
+                        fontWeight: 600,
+                        fontSize: "0.8125rem",
+                        cursor: "pointer",
+                        border: active
+                          ? "none"
+                          : "1px solid var(--color-neutral-200)",
+                        backgroundColor: active ? "#1ab189" : "transparent",
+                        color: active ? "white" : "var(--color-neutral-700)",
+                      }}
+                    >
+                      {i + 1}
+                    </button>
+                  );
+                })}
                 <button
                   onClick={() =>
                     setCurrentPage((p) => Math.min(totalPages, p + 1))
                   }
                   disabled={currentPage === totalPages}
-                  className="p-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  aria-label="Next page"
+                  style={{
+                    padding: "0.5rem 0.625rem",
+                    borderRadius: "0.5rem",
+                    border: "1px solid var(--color-neutral-200)",
+                    background: "none",
+                    cursor: "pointer",
+                    color: "var(--color-neutral-600)",
+                    opacity: currentPage === totalPages ? 0.4 : 1,
+                  }}
                 >
                   <FontAwesomeIcon
                     icon={faChevronRight}
-                    className="text-neutral-600"
+                    style={{ fontSize: "0.75rem" }}
                   />
                 </button>
               </div>
@@ -690,6 +977,92 @@ export default function TeamPage() {
           </div>
         )}
       </div>
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-2xl max-w-md w-full"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div style={{ padding: "1.75rem" }}>
+              <div
+                className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+                style={{ backgroundColor: "#fef2f2" }}
+              >
+                <FontAwesomeIcon
+                  icon={faExclamationTriangle}
+                  style={{ color: "#ef4444", fontSize: "1.1rem" }}
+                />
+              </div>
+              <h3
+                className="font-semibold text-center mb-2"
+                style={{
+                  fontSize: "1.0625rem",
+                  color: "var(--color-neutral-900)",
+                }}
+              >
+                Delete Team Member?
+              </h3>
+              <p
+                className="text-center mb-6"
+                style={{
+                  fontSize: "0.875rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
+                Are you sure you want to delete &quot;{deleteTarget.name}&quot;?
+                This action cannot be undone.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={deleteMutation.isPending}
+                  className="btn btn-ghost btn-md flex-1 justify-center"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => deleteMutation.mutate(deleteTarget.id)}
+                  disabled={deleteMutation.isPending}
+                  className="btn btn-md flex-1 justify-center flex items-center gap-2"
+                  style={{
+                    backgroundColor: "#ef4444",
+                    color: "white",
+                    border: "none",
+                    opacity: deleteMutation.isPending ? 0.6 : 1,
+                  }}
+                >
+                  {deleteMutation.isPending ? (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faSpinner}
+                        className="animate-spin"
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
+                      Deleting…
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faTrash}
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
+                      Delete
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

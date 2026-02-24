@@ -6,7 +6,6 @@ import {
   faCalendar,
   faUsers,
   faBriefcase,
-  faChevronDown,
   faArrowLeft,
   faCheck,
   faTimes,
@@ -20,25 +19,20 @@ import {
   faUserXmark,
   faUserClock,
   faHouse,
+  faExclamationCircle,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getAccessToken } from "@/lib/auth";
+import { useRouter } from "next/navigation";
+import { api } from "@/lib/api";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-
-// ==================================================================================
-// TYPES & INTERFACES
-// ==================================================================================
-
+/* ─────────────────────────────────────────── */
+/* Types                                        */
+/* ─────────────────────────────────────────── */
 interface Project {
   id: number;
   project_name: string;
-  client: {
-    id: number;
-    full_name: string;
-  } | null;
+  client: { id: number; full_name: string } | null;
   status: string;
 }
 
@@ -65,23 +59,6 @@ interface BulkAttendancePayload {
   records: AttendanceRecord[];
 }
 
-interface BulkAttendanceResponse {
-  batch_id: string;
-  records_created: number;
-  records_updated: number;
-  attendance_date: string;
-  project_id: number;
-  submitted_by: string;
-  submitted_at: string;
-  details: Array<{
-    employee_id: number;
-    employee_name: string;
-    action: "created" | "updated" | "failed";
-    attendance_id?: number;
-    error?: string;
-  }>;
-}
-
 interface AttendanceHistoryRecord {
   id: number;
   project: number;
@@ -89,1127 +66,1510 @@ interface AttendanceHistoryRecord {
   employee: number;
   employee_name: string;
   employee_role: string;
-  employee_department: string;
   attendance_date: string;
   check_in_time: string | null;
   check_out_time: string | null;
   hours_worked: string | null;
   status: "present" | "absent" | "half_day" | "leave";
   notes: string;
-  created_at: string;
 }
 
-// ==================================================================================
-// API FUNCTIONS
-// ==================================================================================
+/* ─────────────────────────────────────────── */
+/* Shared input style                           */
+/* ─────────────────────────────────────────── */
+const baseInput: React.CSSProperties = {
+  width: "100%",
+  padding: "0.625rem 1rem",
+  fontFamily: "var(--font-sans)",
+  fontSize: "0.875rem",
+  color: "var(--color-neutral-900)",
+  backgroundColor: "var(--color-neutral-0)",
+  border: "1px solid var(--color-neutral-200)",
+  borderRadius: "0.625rem",
+  outline: "none",
+  transition: "border-color 150ms, box-shadow 150ms",
+  appearance: "none" as const,
+};
 
-async function fetchProjects(): Promise<{ results: Project[] }> {
-  const token = getAccessToken();
-  if (!token) throw new Error("No authentication token found");
-
-  const response = await fetch(`${API_BASE_URL}/api/v1/projects/`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    credentials: "include",
-  });
-
-  if (!response.ok) throw new Error("Failed to fetch projects");
-  return response.json();
+function onFocusIn(
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+  >,
+) {
+  e.currentTarget.style.borderColor = "#1ab189";
+  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(26,177,137,0.12)";
+}
+function onFocusOut(
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+  >,
+) {
+  e.currentTarget.style.borderColor = "var(--color-neutral-200)";
+  e.currentTarget.style.boxShadow = "none";
 }
 
-async function fetchProjectEmployees(
-  projectId: number
-): Promise<{ results: Employee[] }> {
-  const token = getAccessToken();
-  if (!token) throw new Error("No authentication token found");
+/* ─────────────────────────────────────────── */
+/* Helpers                                      */
+/* ─────────────────────────────────────────── */
+const getInitials = (name: string) =>
+  name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 
-  const response = await fetch(
-    `${API_BASE_URL}/api/v1/projects/${projectId}/employees/`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-    }
-  );
+const AVATAR_COLORS = [
+  "#1ab189",
+  "#3b82f6",
+  "#f59e0b",
+  "#8b5cf6",
+  "#10b981",
+  "#06b6d4",
+  "#f97316",
+  "#ec4899",
+  "#6366f1",
+  "#14b8a6",
+];
+const avatarColor = (id: number) => AVATAR_COLORS[id % AVATAR_COLORS.length];
 
-  if (!response.ok) throw new Error("Failed to fetch project employees");
-
-  const data = await response.json();
-  // Handle both array and object with results
-  return Array.isArray(data) ? { results: data } : data;
-}
-
-async function submitBulkAttendance(
-  projectId: number,
-  payload: BulkAttendancePayload
-): Promise<BulkAttendanceResponse> {
-  const token = getAccessToken();
-  if (!token) throw new Error("No authentication token found");
-
-  const response = await fetch(
-    `${API_BASE_URL}/api/v1/projects/${projectId}/attendance/bulk/`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify(payload),
-    }
-  );
-
-  if (!response.ok) {
-    let errorData;
-    try {
-      errorData = await response.json();
-    } catch {
-      errorData = { detail: `HTTP ${response.status} Error` };
-    }
-
-    let errorMessage = "Failed to submit attendance";
-    if (errorData.detail) {
-      errorMessage = errorData.detail;
-    } else if (errorData.error) {
-      errorMessage = errorData.error;
-    } else if (typeof errorData === "object") {
-      const fieldErrors = Object.entries(errorData)
-        .map(([field, messages]) => {
-          const msgArray = Array.isArray(messages) ? messages : [messages];
-          return `${field}: ${msgArray.join(", ")}`;
-        })
-        .join("\n");
-      if (fieldErrors) errorMessage = fieldErrors;
-    }
-
-    throw new Error(errorMessage);
+const STATUS_CONFIG: Record<
+  AttendanceRecord["status"],
+  {
+    label: string;
+    icon: any;
+    badge: { background: string; color: string; border: string };
+    active: { background: string; color: string; border: string };
+    idle: { background: string; color: string; border: string };
   }
-
-  return response.json();
-}
-
-async function fetchProjectAttendance(
-  projectId: number,
-  params?: {
-    start_date?: string;
-    end_date?: string;
-    employee_id?: number;
-    status?: string;
-  }
-): Promise<{ results: AttendanceHistoryRecord[] }> {
-  const token = getAccessToken();
-  if (!token) throw new Error("No authentication token found");
-
-  const queryParams = new URLSearchParams();
-  if (params?.start_date) queryParams.append("start_date", params.start_date);
-  if (params?.end_date) queryParams.append("end_date", params.end_date);
-  if (params?.employee_id)
-    queryParams.append("employee_id", params.employee_id.toString());
-  if (params?.status) queryParams.append("status", params.status);
-
-  const url = `${API_BASE_URL}/api/v1/projects/${projectId}/attendance/?${queryParams}`;
-
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
+> = {
+  present: {
+    label: "Present",
+    icon: faUserCheck,
+    badge: {
+      background: "rgba(22,163,74,0.1)",
+      color: "#16a34a",
+      border: "1px solid rgba(22,163,74,0.2)",
     },
-    credentials: "include",
-  });
+    active: {
+      background: "#16a34a",
+      color: "white",
+      border: "1px solid #16a34a",
+    },
+    idle: {
+      background: "rgba(22,163,74,0.06)",
+      color: "#16a34a",
+      border: "1px solid rgba(22,163,74,0.2)",
+    },
+  },
+  absent: {
+    label: "Absent",
+    icon: faUserXmark,
+    badge: {
+      background: "rgba(239,68,68,0.1)",
+      color: "#dc2626",
+      border: "1px solid rgba(239,68,68,0.2)",
+    },
+    active: {
+      background: "#dc2626",
+      color: "white",
+      border: "1px solid #dc2626",
+    },
+    idle: {
+      background: "rgba(239,68,68,0.06)",
+      color: "#dc2626",
+      border: "1px solid rgba(239,68,68,0.2)",
+    },
+  },
+  half_day: {
+    label: "Half Day",
+    icon: faUserClock,
+    badge: {
+      background: "rgba(217,119,6,0.1)",
+      color: "#d97706",
+      border: "1px solid rgba(217,119,6,0.2)",
+    },
+    active: {
+      background: "#d97706",
+      color: "white",
+      border: "1px solid #d97706",
+    },
+    idle: {
+      background: "rgba(217,119,6,0.06)",
+      color: "#d97706",
+      border: "1px solid rgba(217,119,6,0.2)",
+    },
+  },
+  leave: {
+    label: "On Leave",
+    icon: faHouse,
+    badge: {
+      background: "rgba(59,130,246,0.1)",
+      color: "#2563eb",
+      border: "1px solid rgba(59,130,246,0.2)",
+    },
+    active: {
+      background: "#2563eb",
+      color: "white",
+      border: "1px solid #2563eb",
+    },
+    idle: {
+      background: "rgba(59,130,246,0.06)",
+      color: "#2563eb",
+      border: "1px solid rgba(59,130,246,0.2)",
+    },
+  },
+};
 
-  if (!response.ok) throw new Error("Failed to fetch attendance history");
-
-  const data = await response.json();
-  return Array.isArray(data) ? { results: data } : data;
+/* ─────────────────────────────────────────── */
+/* Small reusable pieces                       */
+/* ─────────────────────────────────────────── */
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label
+        className="block font-semibold mb-1.5"
+        style={{ fontSize: "0.8rem", color: "var(--color-neutral-700)" }}
+      >
+        {label}
+        {required && <span style={{ color: "#ef4444" }}> *</span>}
+      </label>
+      {children}
+    </div>
+  );
 }
 
-// ==================================================================================
-// MAIN COMPONENT
-// ==================================================================================
+function SectionCard({
+  icon,
+  title,
+  children,
+  action,
+}: {
+  icon: any;
+  title: string;
+  children: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div
+      className="rounded-2xl"
+      style={{
+        backgroundColor: "var(--color-neutral-0)",
+        border: "1px solid var(--color-neutral-200)",
+        padding: "1.5rem",
+      }}
+    >
+      <div className="flex items-center justify-between mb-5">
+        <h2
+          className="font-semibold flex items-center gap-2.5"
+          style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+        >
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+          >
+            <FontAwesomeIcon
+              icon={icon}
+              style={{ color: "#1ab189", fontSize: "0.875rem" }}
+            />
+          </div>
+          {title}
+        </h2>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
 
+const PER_HISTORY_PAGE = 5;
+
+/* ─────────────────────────────────────────── */
+/* Component                                   */
+/* ─────────────────────────────────────────── */
 export default function AttendancePage() {
+  const router = useRouter();
   const queryClient = useQueryClient();
 
-  // State
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [attendanceDate, setAttendanceDate] = useState<string>(
-    new Date().toISOString().split("T")[0]
+    new Date().toISOString().split("T")[0],
   );
   const [attendanceRecords, setAttendanceRecords] = useState<
     AttendanceRecord[]
   >([]);
-  const [showSuccess, setShowSuccess] = useState(false);
+  const [viewMode, setViewMode] = useState<"mark" | "history">("mark");
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  const [viewMode, setViewMode] = useState<"mark" | "history">("mark");
+  const [showToast, setShowToast] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
 
-  // ==================================================================================
-  // QUERIES
-  // ==================================================================================
+  const notify = (msg: string) => {
+    setToastMsg(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
 
-  // Fetch projects
-  const { data: projectsData, isLoading: projectsLoading } = useQuery({
+  /* ── Queries ── */
+  const { data: projectsData, isLoading: projectsLoading } = useQuery<{
+    results: Project[];
+  }>({
     queryKey: ["projects"],
-    queryFn: fetchProjects,
+    queryFn: () => api.get("/api/v1/projects/"),
   });
 
-  // Fetch employees for selected project
   const {
     data: employeesData,
     isLoading: employeesLoading,
     isError: employeesError,
-  } = useQuery({
+  } = useQuery<{ results: Employee[] }>({
     queryKey: ["project-employees", selectedProject],
-    queryFn: () => fetchProjectEmployees(Number(selectedProject)),
+    queryFn: async () => {
+      const data = await api.get(
+        `/api/v1/projects/${selectedProject}/employees/`,
+      );
+      return Array.isArray(data) ? { results: data } : data;
+    },
     enabled: !!selectedProject,
   });
 
-  // Fetch attendance history for selected project
-  const { data: attendanceHistoryData, isLoading: historyLoading } = useQuery({
+  const { data: attendanceHistoryData, isLoading: historyLoading } = useQuery<{
+    results: AttendanceHistoryRecord[];
+  }>({
     queryKey: ["project-attendance", selectedProject],
-    queryFn: () => fetchProjectAttendance(Number(selectedProject)),
+    queryFn: async () => {
+      const data = await api.get(
+        `/api/v1/projects/${selectedProject}/attendance/`,
+      );
+      return Array.isArray(data) ? { results: data } : data;
+    },
     enabled: !!selectedProject && viewMode === "history",
   });
 
-  // ==================================================================================
-  // MUTATIONS
-  // ==================================================================================
-
-  const submitAttendanceMutation = useMutation({
-    mutationFn: async (data: BulkAttendancePayload & { projectId: number }) => {
-      return submitBulkAttendance(data.projectId, {
-        attendance_date: data.attendance_date,
-        records: data.records,
-      });
-    },
-    onSuccess: (response) => {
-      // Invalidate queries to refresh data
+  /* ── Mutation ── */
+  const submitMutation = useMutation({
+    mutationFn: (payload: BulkAttendancePayload) =>
+      api.post(`/api/v1/projects/${selectedProject}/attendance/bulk/`, payload),
+    onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["project-attendance", selectedProject],
       });
-
-      // Show success notification
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
-
-      // Log details
-      console.log("✅ Attendance submitted successfully:", response);
-      console.log(
-        `📊 Created: ${response.records_created}, Updated: ${response.records_updated}`
-      );
-
-      // Reset form
-      resetForm();
+      notify("Attendance saved successfully");
+      setAttendanceRecords([]);
     },
-    onError: (error: Error) => {
-      console.error("❌ Attendance submission error:", error);
-      alert(error.message || "Failed to submit attendance");
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
+      alert(
+        `Error: ${e.data?.detail ?? e.message ?? "Failed to submit attendance"}`,
+      );
     },
   });
 
-  // ==================================================================================
-  // HANDLERS
-  // ==================================================================================
-
-  const handleProjectChange = (projectId: string) => {
-    setSelectedProject(projectId);
-    setAttendanceRecords([]);
-  };
-
-  const updateAttendanceStatus = (
-    employeeId: number,
-    status: AttendanceRecord["status"]
-  ) => {
-    setAttendanceRecords((prev) =>
-      prev.map((record) =>
-        record.employee_id === employeeId ? { ...record, status } : record
-      )
-    );
-  };
-
-  const updateAttendanceField = (
-    employeeId: number,
-    field: keyof AttendanceRecord,
-    value: string
-  ) => {
-    setAttendanceRecords((prev) =>
-      prev.map((record) =>
-        record.employee_id === employeeId
-          ? { ...record, [field]: value }
-          : record
-      )
-    );
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!selectedProject) {
-      alert("Please select a project");
-      return;
-    }
-
-    if (attendanceRecords.length === 0) {
-      alert("No team members to mark attendance for");
-      return;
-    }
-
-    // Submit attendance
-    await submitAttendanceMutation.mutateAsync({
-      projectId: Number(selectedProject),
-      attendance_date: attendanceDate,
-      records: attendanceRecords,
-    });
-  };
-
-  const resetForm = () => {
-    setAttendanceRecords([]);
-    // Don't reset project/date, user might want to submit another batch
-  };
-
-  const exportAttendance = () => {
-    alert("Exporting attendance data to CSV...");
-    // TODO: Implement CSV export
-  };
-
-  // ==================================================================================
-  // DERIVED STATE
-  // ==================================================================================
-
-  const projects = projectsData?.results || [];
-  const employees = employeesData?.results || [];
-  const attendanceHistory = attendanceHistoryData?.results || [];
+  /* ── Derived state ── */
+  const projects = projectsData?.results ?? [];
+  const employees = employeesData?.results ?? [];
+  const attendanceHistory = attendanceHistoryData?.results ?? [];
 
   const selectedProjectData = projects.find(
-    (p) => p.id.toString() === selectedProject
+    (p) => p.id.toString() === selectedProject,
   );
 
-  // Initialize attendance records when employees load
+  // Initialize records when employees load
   if (
     selectedProject &&
     employees.length > 0 &&
     attendanceRecords.length === 0
   ) {
-    const initialRecords: AttendanceRecord[] = employees.map((employee) => ({
-      employee_id: employee.id,
-      status: "present",
-      check_in_time: "09:00",
-      check_out_time: "17:00",
-      notes: "",
-    }));
-    setAttendanceRecords(initialRecords);
+    setAttendanceRecords(
+      employees.map((e) => ({
+        employee_id: e.id,
+        status: "present",
+        check_in_time: "09:00",
+        check_out_time: "17:00",
+        notes: "",
+      })),
+    );
   }
 
-  // Calculate statistics
-  const calculateStats = () => {
-    const stats = {
-      present: 0,
-      absent: 0,
-      halfDay: 0,
-      leave: 0,
-      total: attendanceRecords.length,
-    };
-
-    attendanceRecords.forEach((record) => {
-      switch (record.status) {
-        case "present":
-          stats.present++;
-          break;
-        case "absent":
-          stats.absent++;
-          break;
-        case "half_day":
-          stats.halfDay++;
-          break;
-        case "leave":
-          stats.leave++;
-          break;
-      }
-    });
-
-    return stats;
-  };
-
-  const stats = calculateStats();
-
-  // Group attendance history by date
-  const groupedHistory = attendanceHistory.reduce((acc, record) => {
-    const date = record.attendance_date;
-    if (!acc[date]) {
-      acc[date] = [];
-    }
-    acc[date].push(record);
-    return acc;
-  }, {} as Record<string, AttendanceHistoryRecord[]>);
-
-  const historyDates = Object.keys(groupedHistory).sort().reverse();
-
-  // Filter history
-  const filteredDates = searchQuery
-    ? historyDates.filter((date) => {
-        const records = groupedHistory[date];
-        return records.some(
-          (r) =>
-            r.employee_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            r.project_name.toLowerCase().includes(searchQuery.toLowerCase())
-        );
-      })
-    : historyDates;
-
-  const totalPages = Math.ceil(filteredDates.length / 5);
-  const paginatedDates = filteredDates.slice(
-    (currentPage - 1) * 5,
-    currentPage * 5
+  const stats = attendanceRecords.reduce(
+    (acc, r) => {
+      acc[r.status]++;
+      return acc;
+    },
+    { present: 0, absent: 0, half_day: 0, leave: 0 } as Record<
+      AttendanceRecord["status"],
+      number
+    >,
   );
 
-  // Helper functions
-  const getStatusIcon = (status: AttendanceRecord["status"]) => {
-    switch (status) {
-      case "present":
-        return faUserCheck;
-      case "absent":
-        return faUserXmark;
-      case "half_day":
-        return faUserClock;
-      case "leave":
-        return faHouse;
-    }
+  const groupedHistory = attendanceHistory.reduce(
+    (acc, record) => {
+      const d = record.attendance_date;
+      if (!acc[d]) acc[d] = [];
+      acc[d].push(record);
+      return acc;
+    },
+    {} as Record<string, AttendanceHistoryRecord[]>,
+  );
+
+  const historyDates = Object.keys(groupedHistory).sort().reverse();
+  const filteredDates = searchQuery
+    ? historyDates.filter((date) =>
+        groupedHistory[date].some(
+          (r) =>
+            r.employee_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            r.project_name.toLowerCase().includes(searchQuery.toLowerCase()),
+        ),
+      )
+    : historyDates;
+
+  const totalPages = Math.ceil(filteredDates.length / PER_HISTORY_PAGE);
+  const paginatedDates = filteredDates.slice(
+    (currentPage - 1) * PER_HISTORY_PAGE,
+    currentPage * PER_HISTORY_PAGE,
+  );
+
+  /* ── Handlers ── */
+  const updateStatus = (
+    employeeId: number,
+    status: AttendanceRecord["status"],
+  ) => {
+    setAttendanceRecords((prev) =>
+      prev.map((r) => (r.employee_id === employeeId ? { ...r, status } : r)),
+    );
   };
 
-  const getStatusColor = (status: AttendanceRecord["status"]) => {
-    switch (status) {
-      case "present":
-        return "bg-green-100 text-green-700 border-green-300 hover:bg-green-200";
-      case "absent":
-        return "bg-red-100 text-red-700 border-red-300 hover:bg-red-200";
-      case "half_day":
-        return "bg-yellow-100 text-yellow-700 border-yellow-300 hover:bg-yellow-200";
-      case "leave":
-        return "bg-blue-100 text-blue-700 border-blue-300 hover:bg-blue-200";
-    }
+  const updateField = (
+    employeeId: number,
+    field: keyof AttendanceRecord,
+    value: string,
+  ) => {
+    setAttendanceRecords((prev) =>
+      prev.map((r) =>
+        r.employee_id === employeeId ? { ...r, [field]: value } : r,
+      ),
+    );
   };
 
-  const getStatusBadgeColor = (status: AttendanceRecord["status"]) => {
-    switch (status) {
-      case "present":
-        return "bg-green-50 text-green-700 border-green-200";
-      case "absent":
-        return "bg-red-50 text-red-700 border-red-200";
-      case "half_day":
-        return "bg-yellow-50 text-yellow-700 border-yellow-200";
-      case "leave":
-        return "bg-blue-50 text-blue-700 border-blue-200";
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProject) {
+      alert("Please select a project");
+      return;
     }
+    if (attendanceRecords.length === 0) {
+      alert("No team members to mark attendance for");
+      return;
+    }
+    submitMutation.mutate({
+      attendance_date: attendanceDate,
+      records: attendanceRecords,
+    });
   };
 
-  const getStatusLabel = (status: AttendanceRecord["status"]) => {
-    switch (status) {
-      case "present":
-        return "Present";
-      case "absent":
-        return "Absent";
-      case "half_day":
-        return "Half Day";
-      case "leave":
-        return "On Leave";
-    }
-  };
+  const isSubmitting = submitMutation.isPending;
 
-  // ==================================================================================
-  // LOADING STATE
-  // ==================================================================================
-
+  /* ── Loading ── */
   if (projectsLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading projects...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading projects…
+          </p>
         </div>
       </div>
     );
   }
 
-  // ==================================================================================
-  // RENDER
-  // ==================================================================================
-
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex items-center gap-4 mb-2">
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* Toast */}
+      {showToast && (
+        <div
+          className="fixed top-5 right-5 z-[60]"
+          style={{ minWidth: "17rem" }}
+        >
+          <div
+            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+            style={{
+              backgroundColor: "var(--color-neutral-900)",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div
+              className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: "#1ab189" }}
+            >
+              <FontAwesomeIcon
+                icon={faCheck}
+                style={{ color: "white", fontSize: "0.6rem" }}
+              />
+            </div>
+            <p
+              className="flex-1 font-medium"
+              style={{ fontSize: "0.875rem", color: "white" }}
+            >
+              {toastMsg}
+            </p>
+            <button
+              onClick={() => setShowToast(false)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "rgba(255,255,255,0.5)",
+                padding: 0,
+              }}
+            >
+              <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Page header */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.125rem 2rem",
+        }}
+      >
+        <div className="flex items-center gap-3 mb-4">
           <button
-            onClick={() => window.history.back()}
-            className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
+            onClick={() => router.back()}
             aria-label="Go back"
+            style={{
+              width: "2.25rem",
+              height: "2.25rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "transparent",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "0.625rem",
+              cursor: "pointer",
+              color: "var(--color-neutral-500)",
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                "var(--color-neutral-100)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                "transparent";
+            }}
           >
             <FontAwesomeIcon
               icon={faArrowLeft}
-              className="text-neutral-600 text-lg"
+              style={{ fontSize: "0.85rem" }}
             />
           </button>
-          <div className="flex-1">
-            <h1 className="heading-2 text-neutral-900 flex items-center gap-3">
-              <FontAwesomeIcon
-                icon={faClipboardCheck}
-                className="text-primary-600"
-              />
+          <div>
+            <h1
+              className="font-bold"
+              style={{
+                fontSize: "1.375rem",
+                color: "var(--color-neutral-900)",
+                lineHeight: 1.2,
+              }}
+            >
               Attendance Management
             </h1>
-            <p className="text-neutral-600 body-regular mt-1">
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--color-neutral-500)",
+                marginTop: "0.125rem",
+              }}
+            >
               Track team member attendance for projects
             </p>
           </div>
         </div>
 
-        {/* View Mode Toggle */}
-        <div className="flex items-center gap-3 mt-4">
-          <button
-            onClick={() => setViewMode("mark")}
-            className={`px-5 py-2.5 rounded-lg font-medium transition-all ${
-              viewMode === "mark"
-                ? "bg-primary-600 text-neutral-0 shadow-md"
-                : "bg-neutral-0 text-neutral-700 border border-neutral-200 hover:bg-neutral-50"
-            }`}
-          >
-            <FontAwesomeIcon icon={faClipboardCheck} className="mr-2" />
-            Mark Attendance
-          </button>
-          <button
-            onClick={() => setViewMode("history")}
-            className={`px-5 py-2.5 rounded-lg font-medium transition-all ${
-              viewMode === "history"
-                ? "bg-primary-600 text-neutral-0 shadow-md"
-                : "bg-neutral-0 text-neutral-700 border border-neutral-200 hover:bg-neutral-50"
-            }`}
-          >
-            <FontAwesomeIcon icon={faCalendar} className="mr-2" />
-            Attendance History
-            {attendanceHistory.length > 0 && (
-              <span className="ml-2 px-2 py-0.5 bg-primary-500 text-neutral-0 rounded-full text-xs">
-                {historyDates.length}
-              </span>
-            )}
-          </button>
+        {/* View mode tabs */}
+        <div
+          className="flex items-center gap-6"
+          style={{
+            borderTop: "1px solid var(--color-neutral-200)",
+            marginLeft: "-2rem",
+            marginRight: "-2rem",
+            paddingLeft: "2rem",
+            paddingRight: "2rem",
+            marginBottom: "-1.125rem",
+            overflowX: "auto",
+          }}
+        >
+          {(["mark", "history"] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => {
+                setViewMode(mode);
+                setCurrentPage(1);
+              }}
+              style={{
+                padding: "0.875rem 0",
+                fontWeight: 500,
+                fontSize: "0.875rem",
+                background: "none",
+                border: "none",
+                borderBottom:
+                  viewMode === mode
+                    ? "2px solid #1ab189"
+                    : "2px solid transparent",
+                color:
+                  viewMode === mode ? "#1ab189" : "var(--color-neutral-600)",
+                cursor: "pointer",
+                whiteSpace: "nowrap" as const,
+                transition: "color 150ms",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+              }}
+            >
+              <FontAwesomeIcon
+                icon={mode === "mark" ? faClipboardCheck : faCalendar}
+                style={{ fontSize: "0.8rem" }}
+              />
+              {mode === "mark" ? "Mark Attendance" : "Attendance History"}
+              {mode === "history" && historyDates.length > 0 && (
+                <span
+                  className="rounded-full font-bold"
+                  style={{
+                    fontSize: "0.6rem",
+                    padding: "0.15rem 0.45rem",
+                    backgroundColor: "#1ab189",
+                    color: "white",
+                  }}
+                >
+                  {historyDates.length}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Success Toast */}
-      {showSuccess && (
-        <div className="fixed top-8 right-8 z-50 animate-slide-in-right">
-          <div className="bg-green-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3">
-            <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-              <FontAwesomeIcon icon={faCheck} />
-            </div>
-            <div>
-              <p className="font-semibold">Attendance Saved Successfully!</p>
-              <p className="text-green-100 text-sm">
-                All records have been submitted
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="p-8 max-w-7xl mx-auto">
+      {/* Body */}
+      <div
+        style={{ padding: "1.75rem 2rem", maxWidth: "72rem", margin: "0 auto" }}
+      >
         {viewMode === "mark" ? (
-          /* Mark Attendance View */
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Project & Date Selection */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Project Selection */}
-                <div>
-                  <label
-                    htmlFor="project"
-                    className="block text-neutral-700 font-semibold mb-3 body-small flex items-center gap-2"
+          /* ── Mark Attendance ── */
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Project & Date */}
+            <SectionCard icon={faBriefcase} title="Project & Date">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <Field label="Project" required>
+                  <select
+                    value={selectedProject}
+                    onChange={(e) => {
+                      setSelectedProject(e.target.value);
+                      setAttendanceRecords([]);
+                    }}
+                    required
+                    disabled={isSubmitting}
+                    style={{
+                      ...baseInput,
+                      cursor: "pointer",
+                      opacity: isSubmitting ? 0.6 : 1,
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a1a1aa' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                      backgroundRepeat: "no-repeat",
+                      backgroundPosition: "right 0.875rem center",
+                      paddingRight: "2.5rem",
+                    }}
+                    onFocus={onFocusIn}
+                    onBlur={onFocusOut}
                   >
-                    <FontAwesomeIcon
-                      icon={faBriefcase}
-                      className="text-primary-600"
-                    />
-                    Select Project <span className="text-red-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <select
-                      id="project"
-                      value={selectedProject}
-                      onChange={(e) => handleProjectChange(e.target.value)}
-                      required
-                      className="w-full appearance-none px-4 py-3.5 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
-                    >
-                      <option value="">Choose a project...</option>
-                      {projects.map((project) => (
-                        <option key={project.id} value={project.id}>
-                          {project.project_name} -{" "}
-                          {project.client?.full_name || "No client"}
-                        </option>
-                      ))}
-                    </select>
-                    <FontAwesomeIcon
-                      icon={faChevronDown}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"
-                    />
-                  </div>
+                    <option value="">Choose a project…</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.project_name} — {p.client?.full_name ?? "No client"}
+                      </option>
+                    ))}
+                  </select>
                   {selectedProjectData && (
-                    <div className="mt-3 p-3 bg-primary-50 rounded-lg border border-primary-200">
-                      <p className="text-primary-700 text-sm">
-                        <span className="font-semibold">Client:</span>{" "}
-                        {selectedProjectData.client?.full_name || "Unassigned"}
-                      </p>
-                      <p className="text-primary-700 text-sm">
-                        <span className="font-semibold">Team Size:</span>{" "}
-                        {employees.length} members
+                    <div
+                      className="mt-2 rounded-xl flex items-start gap-3 px-4 py-2.5"
+                      style={{
+                        backgroundColor: "rgba(26,177,137,0.06)",
+                        border: "1px solid rgba(26,177,137,0.2)",
+                      }}
+                    >
+                      <FontAwesomeIcon
+                        icon={faUsers}
+                        style={{
+                          color: "#1ab189",
+                          fontSize: "0.8rem",
+                          marginTop: "0.15rem",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <p
+                        style={{
+                          fontSize: "0.8rem",
+                          color: "var(--color-neutral-700)",
+                        }}
+                      >
+                        <strong>
+                          {selectedProjectData.client?.full_name ??
+                            "Unassigned"}
+                        </strong>
+                        {" · "}
+                        {employees.length} team members
                       </p>
                     </div>
                   )}
-                </div>
+                </Field>
 
-                {/* Date Selection */}
-                <div>
-                  <label
-                    htmlFor="date"
-                    className="block text-neutral-700 font-semibold mb-3 body-small flex items-center gap-2"
-                  >
+                <Field label="Attendance Date" required>
+                  <div className="relative">
                     <FontAwesomeIcon
                       icon={faCalendar}
-                      className="text-primary-600"
+                      className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                      style={{ color: "#1ab189", fontSize: "0.8rem" }}
                     />
-                    Attendance Date <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    id="date"
-                    value={attendanceDate}
-                    onChange={(e) => setAttendanceDate(e.target.value)}
-                    max={new Date().toISOString().split("T")[0]}
-                    required
-                    className="w-full px-4 py-3.5 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                    <input
+                      type="date"
+                      value={attendanceDate}
+                      onChange={(e) => setAttendanceDate(e.target.value)}
+                      max={new Date().toISOString().split("T")[0]}
+                      required
+                      disabled={isSubmitting}
+                      style={{
+                        ...baseInput,
+                        paddingLeft: "2.25rem",
+                        opacity: isSubmitting ? 0.6 : 1,
+                      }}
+                      onFocus={onFocusIn}
+                      onBlur={onFocusOut}
+                    />
+                  </div>
+                  <p
+                    className="mt-1"
+                    style={{
+                      fontSize: "0.75rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    {new Date(attendanceDate + "T00:00:00").toLocaleDateString(
+                      "en-US",
+                      {
+                        weekday: "long",
+                        month: "long",
+                        day: "numeric",
+                        year: "numeric",
+                      },
+                    )}
+                  </p>
+                </Field>
+              </div>
+            </SectionCard>
+
+            {/* Stats overview */}
+            {selectedProject && attendanceRecords.length > 0 && (
+              <div
+                className="rounded-2xl"
+                style={{
+                  backgroundColor: "var(--color-neutral-0)",
+                  border: "1px solid var(--color-neutral-200)",
+                  padding: "1.25rem 1.5rem",
+                }}
+              >
+                <div className="flex items-center gap-2.5 mb-4">
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                  >
+                    <FontAwesomeIcon
+                      icon={faUsers}
+                      style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                    />
+                  </div>
+                  <h2
+                    className="font-semibold"
+                    style={{
+                      fontSize: "1rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    Attendance Overview
+                  </h2>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  {/* Total */}
+                  <div
+                    className="rounded-xl text-center"
+                    style={{
+                      padding: "0.875rem 0.5rem",
+                      backgroundColor: "var(--color-neutral-50)",
+                      border: "1px solid var(--color-neutral-200)",
+                    }}
+                  >
+                    <p
+                      className="font-bold"
+                      style={{
+                        fontSize: "1.375rem",
+                        color: "var(--color-neutral-900)",
+                      }}
+                    >
+                      {attendanceRecords.length}
+                    </p>
+                    <p
+                      style={{
+                        fontSize: "0.72rem",
+                        color: "var(--color-neutral-500)",
+                      }}
+                    >
+                      Total
+                    </p>
+                  </div>
+                  {(["present", "absent", "half_day", "leave"] as const).map(
+                    (s) => (
+                      <div
+                        key={s}
+                        className="rounded-xl text-center"
+                        style={{
+                          padding: "0.875rem 0.5rem",
+                          backgroundColor: STATUS_CONFIG[s].badge.background,
+                          border: STATUS_CONFIG[s].badge.border,
+                        }}
+                      >
+                        <p
+                          className="font-bold"
+                          style={{
+                            fontSize: "1.375rem",
+                            color: STATUS_CONFIG[s].badge.color,
+                          }}
+                        >
+                          {stats[s]}
+                        </p>
+                        <p
+                          style={{
+                            fontSize: "0.72rem",
+                            color: STATUS_CONFIG[s].badge.color,
+                          }}
+                        >
+                          {STATUS_CONFIG[s].label}
+                        </p>
+                      </div>
+                    ),
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Employee loading */}
+            {selectedProject && employeesLoading && (
+              <div
+                className="rounded-2xl flex items-center justify-center"
+                style={{
+                  backgroundColor: "var(--color-neutral-0)",
+                  border: "1px solid var(--color-neutral-200)",
+                  padding: "3rem",
+                }}
+              >
+                <div className="text-center">
+                  <FontAwesomeIcon
+                    icon={faSpinner}
+                    className="animate-spin mb-3"
+                    style={{ fontSize: "2rem", color: "#1ab189" }}
                   />
-                  <p className="mt-3 text-neutral-500 text-sm flex items-center gap-2">
-                    <FontAwesomeIcon icon={faCalendar} className="text-xs" />
-                    {new Date(attendanceDate).toLocaleDateString("en-US", {
-                      weekday: "long",
-                      month: "long",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
+                  <p
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    Loading team members…
                   </p>
                 </div>
               </div>
-            </div>
-
-            {/* Statistics Card */}
-            {selectedProject && attendanceRecords.length > 0 && (
-              <div className="bg-gradient-to-br from-primary-50 to-secondary-50 rounded-xl border border-primary-200 p-6">
-                <h3 className="font-semibold text-neutral-900 mb-4 flex items-center gap-2">
-                  <FontAwesomeIcon
-                    icon={faUsers}
-                    className="text-primary-600"
-                  />
-                  Attendance Overview
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  <div className="bg-neutral-0 rounded-lg p-4 border border-neutral-200">
-                    <p className="text-neutral-600 text-sm mb-1">Total Team</p>
-                    <p className="text-2xl font-bold text-neutral-900">
-                      {stats.total}
-                    </p>
-                  </div>
-                  <div className="bg-green-50 rounded-lg p-4 border border-green-200">
-                    <p className="text-green-700 text-sm mb-1">Present</p>
-                    <p className="text-2xl font-bold text-green-700">
-                      {stats.present}
-                    </p>
-                  </div>
-                  <div className="bg-red-50 rounded-lg p-4 border border-red-200">
-                    <p className="text-red-700 text-sm mb-1">Absent</p>
-                    <p className="text-2xl font-bold text-red-700">
-                      {stats.absent}
-                    </p>
-                  </div>
-                  <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
-                    <p className="text-yellow-700 text-sm mb-1">Half Day</p>
-                    <p className="text-2xl font-bold text-yellow-700">
-                      {stats.halfDay}
-                    </p>
-                  </div>
-                  <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                    <p className="text-blue-700 text-sm mb-1">On Leave</p>
-                    <p className="text-2xl font-bold text-blue-700">
-                      {stats.leave}
-                    </p>
-                  </div>
-                </div>
-              </div>
             )}
 
-            {/* Loading Employees */}
-            {selectedProject && employeesLoading && (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
-                <FontAwesomeIcon
-                  icon={faSpinner}
-                  className="text-primary-600 text-4xl mb-4 animate-spin"
-                />
-                <p className="text-neutral-600 font-medium">
-                  Loading team members...
-                </p>
-              </div>
-            )}
-
-            {/* Error Loading Employees */}
+            {/* Employee error */}
             {selectedProject && employeesError && (
-              <div className="bg-red-50 rounded-xl border border-red-200 p-12 text-center">
-                <FontAwesomeIcon
-                  icon={faTimes}
-                  className="text-red-600 text-4xl mb-4"
-                />
-                <p className="text-red-600 font-medium">
-                  Failed to load team members
-                </p>
+              <div
+                className="rounded-2xl flex items-center justify-center"
+                style={{
+                  backgroundColor: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  padding: "3rem",
+                }}
+              >
+                <div className="text-center">
+                  <FontAwesomeIcon
+                    icon={faExclamationCircle}
+                    className="mb-3"
+                    style={{ fontSize: "2rem", color: "#ef4444" }}
+                  />
+                  <p style={{ fontSize: "0.875rem", color: "#dc2626" }}>
+                    Failed to load team members
+                  </p>
+                </div>
               </div>
             )}
 
-            {/* Team Members Attendance */}
+            {/* Employee cards */}
             {selectedProject &&
-            !employeesLoading &&
-            !employeesError &&
-            employees.length > 0 ? (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
-                <div className="px-6 py-4 bg-neutral-50 border-b border-neutral-200">
-                  <h3 className="font-semibold text-neutral-900 flex items-center gap-2">
-                    <FontAwesomeIcon
-                      icon={faUsers}
-                      className="text-primary-600"
-                    />
-                    Team Members ({employees.length})
-                  </h3>
-                </div>
+              !employeesLoading &&
+              !employeesError &&
+              employees.length > 0 && (
+                <div
+                  className="rounded-2xl overflow-hidden"
+                  style={{
+                    backgroundColor: "var(--color-neutral-0)",
+                    border: "1px solid var(--color-neutral-200)",
+                  }}
+                >
+                  {/* Table header */}
+                  <div
+                    style={{
+                      padding: "0.75rem 1.5rem",
+                      backgroundColor: "var(--color-neutral-50)",
+                      borderBottom: "1px solid var(--color-neutral-200)",
+                    }}
+                  >
+                    <h2
+                      className="font-semibold flex items-center gap-2.5"
+                      style={{
+                        fontSize: "0.875rem",
+                        color: "var(--color-neutral-700)",
+                      }}
+                    >
+                      <FontAwesomeIcon
+                        icon={faUsers}
+                        style={{ color: "#1ab189", fontSize: "0.8rem" }}
+                      />
+                      Team Members ({employees.length})
+                    </h2>
+                  </div>
 
-                <div className="divide-y divide-neutral-100">
-                  {employees.map((employee) => {
-                    const record = attendanceRecords.find(
-                      (r) => r.employee_id === employee.id
-                    );
-                    if (!record) return null;
+                  <div
+                    style={
+                      { divideY: "1px solid var(--color-neutral-100)" } as any
+                    }
+                  >
+                    {employees.map((employee, idx) => {
+                      const record = attendanceRecords.find(
+                        (r) => r.employee_id === employee.id,
+                      );
+                      if (!record) return null;
 
-                    return (
-                      <div
-                        key={employee.id}
-                        className="p-6 hover:bg-neutral-50 transition-colors"
-                      >
-                        {/* Member Info */}
-                        <div className="flex items-start gap-4 mb-4">
-                          <div className="w-14 h-14 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-semibold text-lg flex-shrink-0">
-                            {employee.initials}
-                          </div>
-                          <div className="flex-1">
-                            <h4 className="font-semibold text-neutral-900 text-lg">
-                              {employee.full_name}
-                            </h4>
-                            <p className="text-neutral-600 text-sm">
-                              {employee.role} • {employee.department}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Attendance Status Buttons */}
-                        <div className="mb-4">
-                          <label className="block text-neutral-700 font-medium mb-2 text-sm">
-                            Attendance Status
-                          </label>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateAttendanceStatus(employee.id, "present")
-                              }
-                              className={`px-4 py-3 rounded-lg border-2 font-medium text-sm transition-all flex items-center justify-center gap-2 ${
-                                record.status === "present"
-                                  ? "bg-green-600 text-neutral-0 border-green-600 shadow-md"
-                                  : getStatusColor("present")
-                              }`}
+                      return (
+                        <div
+                          key={employee.id}
+                          style={{
+                            padding: "1.25rem 1.5rem",
+                            borderTop:
+                              idx === 0
+                                ? "none"
+                                : "1px solid var(--color-neutral-100)",
+                          }}
+                        >
+                          {/* Member info */}
+                          <div className="flex items-center gap-3 mb-4">
+                            <div
+                              className="w-10 h-10 rounded-full flex items-center justify-center font-semibold flex-shrink-0"
+                              style={{
+                                backgroundColor: avatarColor(employee.id),
+                                color: "white",
+                                fontSize: "0.8rem",
+                              }}
                             >
-                              <FontAwesomeIcon icon={faUserCheck} />
-                              Present
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateAttendanceStatus(employee.id, "absent")
-                              }
-                              className={`px-4 py-3 rounded-lg border-2 font-medium text-sm transition-all flex items-center justify-center gap-2 ${
-                                record.status === "absent"
-                                  ? "bg-red-600 text-neutral-0 border-red-600 shadow-md"
-                                  : getStatusColor("absent")
-                              }`}
-                            >
-                              <FontAwesomeIcon icon={faUserXmark} />
-                              Absent
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateAttendanceStatus(employee.id, "half_day")
-                              }
-                              className={`px-4 py-3 rounded-lg border-2 font-medium text-sm transition-all flex items-center justify-center gap-2 ${
-                                record.status === "half_day"
-                                  ? "bg-yellow-600 text-neutral-0 border-yellow-600 shadow-md"
-                                  : getStatusColor("half_day")
-                              }`}
-                            >
-                              <FontAwesomeIcon icon={faUserClock} />
-                              Half Day
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateAttendanceStatus(employee.id, "leave")
-                              }
-                              className={`px-4 py-3 rounded-lg border-2 font-medium text-sm transition-all flex items-center justify-center gap-2 ${
-                                record.status === "leave"
-                                  ? "bg-blue-600 text-neutral-0 border-blue-600 shadow-md"
-                                  : getStatusColor("leave")
-                              }`}
-                            >
-                              <FontAwesomeIcon icon={faHouse} />
-                              On Leave
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Time Fields (only for present or half_day) */}
-                        {(record.status === "present" ||
-                          record.status === "half_day") && (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                            <div>
-                              <label className="block text-neutral-700 font-medium mb-2 text-sm">
-                                Check-in Time
-                              </label>
-                              <input
-                                type="time"
-                                value={record.check_in_time || ""}
-                                onChange={(e) =>
-                                  updateAttendanceField(
-                                    employee.id,
-                                    "check_in_time",
-                                    e.target.value
-                                  )
-                                }
-                                className="w-full px-4 py-2.5 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
-                              />
+                              {employee.initials ||
+                                getInitials(employee.full_name)}
                             </div>
                             <div>
-                              <label className="block text-neutral-700 font-medium mb-2 text-sm">
-                                Check-out Time
-                              </label>
-                              <input
-                                type="time"
-                                value={record.check_out_time || ""}
-                                onChange={(e) =>
-                                  updateAttendanceField(
-                                    employee.id,
-                                    "check_out_time",
-                                    e.target.value
-                                  )
-                                }
-                                className="w-full px-4 py-2.5 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
-                              />
+                              <h4
+                                className="font-semibold"
+                                style={{
+                                  fontSize: "0.9rem",
+                                  color: "var(--color-neutral-900)",
+                                }}
+                              >
+                                {employee.full_name}
+                              </h4>
+                              <p
+                                style={{
+                                  fontSize: "0.75rem",
+                                  color: "var(--color-neutral-500)",
+                                }}
+                              >
+                                {employee.role}
+                                {employee.department
+                                  ? ` · ${employee.department}`
+                                  : ""}
+                              </p>
                             </div>
                           </div>
-                        )}
 
-                        {/* Notes Field */}
-                        <div>
-                          <label className="block text-neutral-700 font-medium mb-2 text-sm">
-                            Notes (Optional)
-                          </label>
-                          <textarea
-                            value={record.notes || ""}
-                            onChange={(e) =>
-                              updateAttendanceField(
-                                employee.id,
-                                "notes",
-                                e.target.value
-                              )
-                            }
-                            placeholder="Add any additional notes or remarks..."
-                            rows={2}
-                            className="w-full px-4 py-2.5 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all resize-none text-sm"
-                          />
+                          {/* Status buttons */}
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+                            {(
+                              [
+                                "present",
+                                "absent",
+                                "half_day",
+                                "leave",
+                              ] as const
+                            ).map((s) => {
+                              const isActive = record.status === s;
+                              const cfg = STATUS_CONFIG[s];
+                              return (
+                                <button
+                                  key={s}
+                                  type="button"
+                                  onClick={() => updateStatus(employee.id, s)}
+                                  disabled={isSubmitting}
+                                  style={{
+                                    padding: "0.625rem",
+                                    borderRadius: "0.625rem",
+                                    fontWeight: 500,
+                                    fontSize: "0.8rem",
+                                    cursor: isSubmitting
+                                      ? "not-allowed"
+                                      : "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    gap: "0.4rem",
+                                    transition: "all 150ms",
+                                    ...(isActive ? cfg.active : cfg.idle),
+                                  }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={cfg.icon}
+                                    style={{ fontSize: "0.8rem" }}
+                                  />
+                                  {cfg.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Time fields */}
+                          {(record.status === "present" ||
+                            record.status === "half_day") && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                              {[
+                                {
+                                  label: "Check-in Time",
+                                  field: "check_in_time" as const,
+                                  val: record.check_in_time,
+                                },
+                                {
+                                  label: "Check-out Time",
+                                  field: "check_out_time" as const,
+                                  val: record.check_out_time,
+                                },
+                              ].map(({ label, field, val }) => (
+                                <Field key={field} label={label}>
+                                  <input
+                                    type="time"
+                                    value={val ?? ""}
+                                    onChange={(e) =>
+                                      updateField(
+                                        employee.id,
+                                        field,
+                                        e.target.value,
+                                      )
+                                    }
+                                    disabled={isSubmitting}
+                                    style={{
+                                      ...baseInput,
+                                      opacity: isSubmitting ? 0.6 : 1,
+                                    }}
+                                    onFocus={onFocusIn}
+                                    onBlur={onFocusOut}
+                                  />
+                                </Field>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Notes */}
+                          <Field label="Notes (Optional)">
+                            <textarea
+                              value={record.notes ?? ""}
+                              onChange={(e) =>
+                                updateField(
+                                  employee.id,
+                                  "notes",
+                                  e.target.value,
+                                )
+                              }
+                              placeholder="Add any remarks or notes…"
+                              rows={2}
+                              disabled={isSubmitting}
+                              style={{
+                                ...baseInput,
+                                resize: "none",
+                                opacity: isSubmitting ? 0.6 : 1,
+                              }}
+                              onFocus={onFocusIn}
+                              onBlur={onFocusOut}
+                            />
+                          </Field>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              selectedProject &&
+              )}
+
+            {/* Empty project state */}
+            {selectedProject &&
               !employeesLoading &&
               !employeesError &&
               employees.length === 0 && (
-                <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
-                  <FontAwesomeIcon
-                    icon={faUsers}
-                    className="text-5xl text-neutral-300 mb-4"
-                  />
-                  <p className="text-neutral-600 font-medium">
-                    No team members assigned to this project
-                  </p>
-                  <p className="text-neutral-500 text-sm mt-2">
-                    Please assign employees to this project first
+                <div
+                  className="rounded-2xl text-center"
+                  style={{
+                    backgroundColor: "var(--color-neutral-0)",
+                    border: "1px solid var(--color-neutral-200)",
+                    padding: "3.5rem",
+                  }}
+                >
+                  <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>
+                    👥
+                  </div>
+                  <h3
+                    className="font-semibold mb-1"
+                    style={{
+                      fontSize: "1rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    No team members assigned
+                  </h3>
+                  <p
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    Assign employees to this project first
                   </p>
                 </div>
-              )
+              )}
+
+            {/* No project selected guide */}
+            {!selectedProject && (
+              <div
+                className="rounded-2xl"
+                style={{
+                  backgroundColor: "var(--color-neutral-0)",
+                  border: "1px solid var(--color-neutral-200)",
+                  padding: "1.5rem",
+                }}
+              >
+                <div className="flex items-center gap-2.5 mb-4">
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                  >
+                    <FontAwesomeIcon
+                      icon={faClipboardCheck}
+                      style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                    />
+                  </div>
+                  <h2
+                    className="font-semibold"
+                    style={{
+                      fontSize: "1rem",
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    Quick Guide
+                  </h2>
+                </div>
+                <div className="space-y-2.5">
+                  {[
+                    "Select a project above to view its team members",
+                    "Mark attendance status for each member — Present, Absent, Half Day, or On Leave",
+                    "Set check-in and check-out times for present members",
+                    "Add optional notes for special circumstances or remarks",
+                  ].map((tip, i) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <div
+                        className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                        style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+                      >
+                        <span
+                          style={{
+                            fontSize: "0.6rem",
+                            fontWeight: 700,
+                            color: "#1ab189",
+                          }}
+                        >
+                          {i + 1}
+                        </span>
+                      </div>
+                      <p
+                        style={{
+                          fontSize: "0.875rem",
+                          color: "var(--color-neutral-700)",
+                        }}
+                      >
+                        {tip}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
-            {/* Submit Button */}
+            {/* Submit row */}
             {selectedProject && employees.length > 0 && (
-              <div className="flex items-center justify-end gap-4">
+              <div className="flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => {
-                    if (
-                      confirm(
-                        "Are you sure you want to discard attendance data?"
-                      )
-                    ) {
-                      setSelectedProject("");
-                      setAttendanceRecords([]);
-                    }
+                    setSelectedProject("");
+                    setAttendanceRecords([]);
                   }}
-                  className="px-6 py-3 border-2 border-neutral-200 text-neutral-700 rounded-lg font-semibold hover:bg-neutral-50 transition-colors"
+                  disabled={isSubmitting}
+                  className="btn btn-ghost btn-md"
+                  style={{ opacity: isSubmitting ? 0.6 : 1 }}
                 >
                   Discard
                 </button>
                 <button
                   type="submit"
-                  disabled={submitAttendanceMutation.isPending}
-                  className="btn-primary-lg flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed min-w-[200px] justify-center"
+                  disabled={isSubmitting}
+                  className="btn btn-primary btn-md flex items-center gap-2"
+                  style={{
+                    minWidth: "10rem",
+                    justifyContent: "center",
+                    opacity: isSubmitting ? 0.6 : 1,
+                  }}
                 >
-                  {submitAttendanceMutation.isPending ? (
+                  {isSubmitting ? (
                     <>
                       <FontAwesomeIcon
                         icon={faSpinner}
                         className="animate-spin"
-                      />
-                      Saving...
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
+                      Saving…
                     </>
                   ) : (
                     <>
-                      <FontAwesomeIcon icon={faSave} />
+                      <FontAwesomeIcon
+                        icon={faSave}
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
                       Save Attendance
                     </>
                   )}
                 </button>
               </div>
             )}
-
-            {/* Helper Tips */}
-            {!selectedProject && (
-              <div className="bg-gradient-to-br from-primary-50 to-secondary-50 rounded-xl border border-primary-200 p-6">
-                <h3 className="font-semibold text-neutral-900 mb-3 flex items-center gap-2">
-                  <FontAwesomeIcon
-                    icon={faClipboardCheck}
-                    className="text-primary-600"
-                  />
-                  Quick Guide
-                </h3>
-                <ul className="space-y-2 text-neutral-700 text-sm">
-                  <li className="flex items-start gap-2">
-                    <span className="text-primary-600 mt-1">•</span>
-                    <span>Select a project to view its team members</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-primary-600 mt-1">•</span>
-                    <span>
-                      Mark attendance status for each team member (Present,
-                      Absent, Half Day, or On Leave)
-                    </span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-primary-600 mt-1">•</span>
-                    <span>
-                      Add check-in and check-out times for present members
-                    </span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-primary-600 mt-1">•</span>
-                    <span>
-                      Add optional notes for special circumstances or remarks
-                    </span>
-                  </li>
-                </ul>
-              </div>
-            )}
           </form>
         ) : (
-          /* Attendance History View */
-          <div className="space-y-6">
-            {/* Search and Filter */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-4">
-              <div className="flex items-center gap-4">
-                <div className="relative flex-1">
-                  <FontAwesomeIcon
-                    icon={faSearch}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 text-sm"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Search by employee or project name..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
-                  />
-                </div>
-                <button
-                  onClick={exportAttendance}
-                  className="btn-primary flex items-center gap-2"
-                >
-                  <FontAwesomeIcon icon={faDownload} />
-                  Export
-                </button>
+          /* ── Attendance History ── */
+          <div className="space-y-5">
+            {/* Search + export */}
+            <div
+              className="rounded-2xl flex items-center gap-4"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                border: "1px solid var(--color-neutral-200)",
+                padding: "0.875rem 1.5rem",
+              }}
+            >
+              <div className="relative flex-1" style={{ maxWidth: "20rem" }}>
+                <FontAwesomeIcon
+                  icon={faSearch}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                  style={{
+                    color: "var(--color-neutral-400)",
+                    fontSize: "0.75rem",
+                  }}
+                />
+                <input
+                  type="text"
+                  placeholder="Search by employee or project…"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  style={{
+                    ...baseInput,
+                    paddingLeft: "2rem",
+                    padding: "0.5rem 1rem 0.5rem 2rem",
+                  }}
+                  onFocus={onFocusIn}
+                  onBlur={onFocusOut}
+                />
               </div>
+              <button
+                onClick={() => alert("Exporting attendance data to CSV…")}
+                className="btn btn-ghost btn-md flex items-center gap-2"
+                style={{ whiteSpace: "nowrap" }}
+              >
+                <FontAwesomeIcon
+                  icon={faDownload}
+                  style={{ fontSize: "0.8rem" }}
+                />
+                Export CSV
+              </button>
             </div>
 
-            {/* Loading History */}
+            {/* Loading */}
             {historyLoading && (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
-                <FontAwesomeIcon
-                  icon={faSpinner}
-                  className="text-primary-600 text-4xl mb-4 animate-spin"
-                />
-                <p className="text-neutral-600 font-medium">
-                  Loading attendance history...
-                </p>
+              <div
+                className="rounded-2xl flex items-center justify-center"
+                style={{
+                  backgroundColor: "var(--color-neutral-0)",
+                  border: "1px solid var(--color-neutral-200)",
+                  padding: "3rem",
+                }}
+              >
+                <div className="text-center">
+                  <FontAwesomeIcon
+                    icon={faSpinner}
+                    className="animate-spin mb-3"
+                    style={{ fontSize: "2rem", color: "#1ab189" }}
+                  />
+                  <p
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-500)",
+                    }}
+                  >
+                    Loading attendance history…
+                  </p>
+                </div>
               </div>
             )}
 
-            {/* History List */}
-            {!historyLoading && paginatedDates.length > 0 ? (
-              <div className="space-y-4">
-                {paginatedDates.map((date) => {
-                  const records = groupedHistory[date];
-                  const presentCount = records.filter(
-                    (r) => r.status === "present"
-                  ).length;
-                  const absentCount = records.filter(
-                    (r) => r.status === "absent"
-                  ).length;
+            {/* History cards */}
+            {!historyLoading && paginatedDates.length > 0 && (
+              <>
+                <div className="space-y-4">
+                  {paginatedDates.map((date) => {
+                    const records = groupedHistory[date];
+                    const presentCount = records.filter(
+                      (r) => r.status === "present",
+                    ).length;
+                    const absentCount = records.filter(
+                      (r) => r.status === "absent",
+                    ).length;
+                    const otherCount =
+                      records.length - presentCount - absentCount;
 
-                  return (
-                    <div
-                      key={date}
-                      className="bg-neutral-0 rounded-xl border border-neutral-200 hover:border-primary-500 transition-all overflow-hidden"
-                    >
-                      <div className="p-6">
-                        {/* Header */}
-                        <div className="flex items-start justify-between mb-4">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <div className="w-10 h-10 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-semibold text-sm">
-                                {selectedProjectData?.project_name.charAt(0)}
-                              </div>
-                              <div>
-                                <h3 className="font-semibold text-neutral-900">
-                                  {selectedProjectData?.project_name}
-                                </h3>
-                                <p className="text-neutral-500 text-sm">
-                                  {selectedProjectData?.client?.full_name ||
-                                    "No client"}
-                                </p>
-                              </div>
+                    return (
+                      <div
+                        key={date}
+                        className="rounded-2xl overflow-hidden"
+                        style={{
+                          backgroundColor: "var(--color-neutral-0)",
+                          border: "1px solid var(--color-neutral-200)",
+                        }}
+                      >
+                        {/* Card header */}
+                        <div
+                          className="flex items-center justify-between"
+                          style={{
+                            padding: "1rem 1.5rem",
+                            borderBottom: "1px solid var(--color-neutral-200)",
+                            backgroundColor: "var(--color-neutral-50)",
+                          }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="w-9 h-9 rounded-full flex items-center justify-center font-semibold flex-shrink-0"
+                              style={{
+                                backgroundColor: "#1ab189",
+                                color: "white",
+                                fontSize: "0.8rem",
+                              }}
+                            >
+                              {selectedProjectData?.project_name.charAt(0) ??
+                                "P"}
+                            </div>
+                            <div>
+                              <h3
+                                className="font-semibold"
+                                style={{
+                                  fontSize: "0.9rem",
+                                  color: "var(--color-neutral-900)",
+                                }}
+                              >
+                                {selectedProjectData?.project_name ?? "Project"}
+                              </h3>
+                              <p
+                                style={{
+                                  fontSize: "0.75rem",
+                                  color: "var(--color-neutral-500)",
+                                }}
+                              >
+                                {selectedProjectData?.client?.full_name ??
+                                  "No client"}
+                              </p>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <div className="flex items-center gap-2 text-neutral-600 text-sm mb-1">
-                              <FontAwesomeIcon
-                                icon={faCalendar}
-                                className="text-xs"
-                              />
-                              <span>
-                                {new Date(date).toLocaleDateString("en-US", {
+                          <div className="flex items-center gap-1.5">
+                            <FontAwesomeIcon
+                              icon={faCalendar}
+                              style={{ color: "#1ab189", fontSize: "0.75rem" }}
+                            />
+                            <span
+                              style={{
+                                fontSize: "0.8rem",
+                                color: "var(--color-neutral-600)",
+                              }}
+                            >
+                              {new Date(date + "T00:00:00").toLocaleDateString(
+                                "en-US",
+                                {
                                   month: "short",
                                   day: "numeric",
                                   year: "numeric",
-                                })}
-                              </span>
-                            </div>
+                                },
+                              )}
+                            </span>
                           </div>
                         </div>
 
-                        {/* Summary Stats */}
-                        <div className="grid grid-cols-4 gap-3 mb-4">
-                          <div className="bg-neutral-50 rounded-lg p-3 border border-neutral-200">
-                            <p className="text-neutral-600 text-xs mb-1">
-                              Total
-                            </p>
-                            <p className="text-lg font-bold text-neutral-900">
-                              {records.length}
-                            </p>
+                        <div style={{ padding: "1.25rem 1.5rem" }}>
+                          {/* Mini stats */}
+                          <div className="grid grid-cols-4 gap-3 mb-4">
+                            {[
+                              {
+                                label: "Total",
+                                val: records.length,
+                                bg: "var(--color-neutral-50)",
+                                border: "var(--color-neutral-200)",
+                                color: "var(--color-neutral-900)",
+                              },
+                              {
+                                label: "Present",
+                                val: presentCount,
+                                bg: "rgba(22,163,74,0.08)",
+                                border: "rgba(22,163,74,0.2)",
+                                color: "#16a34a",
+                              },
+                              {
+                                label: "Absent",
+                                val: absentCount,
+                                bg: "rgba(239,68,68,0.08)",
+                                border: "rgba(239,68,68,0.2)",
+                                color: "#dc2626",
+                              },
+                              {
+                                label: "Others",
+                                val: otherCount,
+                                bg: "rgba(59,130,246,0.08)",
+                                border: "rgba(59,130,246,0.2)",
+                                color: "#2563eb",
+                              },
+                            ].map(({ label, val, bg, border, color }) => (
+                              <div
+                                key={label}
+                                className="rounded-xl text-center"
+                                style={{
+                                  padding: "0.625rem 0.5rem",
+                                  backgroundColor: bg,
+                                  border: `1px solid ${border}`,
+                                }}
+                              >
+                                <p
+                                  className="font-bold"
+                                  style={{ fontSize: "1.125rem", color }}
+                                >
+                                  {val}
+                                </p>
+                                <p style={{ fontSize: "0.68rem", color }}>
+                                  {label}
+                                </p>
+                              </div>
+                            ))}
                           </div>
-                          <div className="bg-green-50 rounded-lg p-3 border border-green-200">
-                            <p className="text-green-700 text-xs mb-1">
-                              Present
-                            </p>
-                            <p className="text-lg font-bold text-green-700">
-                              {presentCount}
-                            </p>
-                          </div>
-                          <div className="bg-red-50 rounded-lg p-3 border border-red-200">
-                            <p className="text-red-700 text-xs mb-1">Absent</p>
-                            <p className="text-lg font-bold text-red-700">
-                              {absentCount}
-                            </p>
-                          </div>
-                          <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
-                            <p className="text-blue-700 text-xs mb-1">Others</p>
-                            <p className="text-lg font-bold text-blue-700">
-                              {records.length - presentCount - absentCount}
-                            </p>
-                          </div>
-                        </div>
 
-                        {/* Team Members Details */}
-                        <div className="space-y-2">
-                          <h4 className="text-sm font-semibold text-neutral-700 mb-2">
+                          {/* Member rows */}
+                          <p
+                            style={{
+                              fontSize: "0.7rem",
+                              fontWeight: 700,
+                              color: "var(--color-neutral-400)",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.06em",
+                              marginBottom: "0.5rem",
+                            }}
+                          >
                             Team Members
-                          </h4>
+                          </p>
                           <div className="space-y-2">
                             {records.map((record) => {
-                              const employee = employees.find(
-                                (e) => e.id === record.employee
-                              );
-
+                              const cfg = STATUS_CONFIG[record.status];
                               return (
                                 <div
                                   key={record.id}
-                                  className="flex items-center justify-between p-3 bg-neutral-50 rounded-lg border border-neutral-200"
+                                  className="flex items-center justify-between rounded-xl"
+                                  style={{
+                                    padding: "0.625rem 0.875rem",
+                                    backgroundColor: "var(--color-neutral-50)",
+                                    border:
+                                      "1px solid var(--color-neutral-100)",
+                                  }}
                                 >
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-8 h-8 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-semibold text-xs">
-                                      {employee?.initials ||
-                                        record.employee_name
-                                          .split(" ")
-                                          .map((n) => n[0])
-                                          .join("")}
+                                  <div className="flex items-center gap-2.5">
+                                    <div
+                                      className="w-8 h-8 rounded-full flex items-center justify-center font-semibold flex-shrink-0"
+                                      style={{
+                                        backgroundColor: avatarColor(
+                                          record.employee,
+                                        ),
+                                        color: "white",
+                                        fontSize: "0.7rem",
+                                      }}
+                                    >
+                                      {getInitials(record.employee_name)}
                                     </div>
                                     <div>
-                                      <p className="font-medium text-neutral-900 text-sm">
+                                      <p
+                                        className="font-semibold"
+                                        style={{
+                                          fontSize: "0.825rem",
+                                          color: "var(--color-neutral-900)",
+                                        }}
+                                      >
                                         {record.employee_name}
                                       </p>
-                                      <p className="text-neutral-500 text-xs">
+                                      <p
+                                        style={{
+                                          fontSize: "0.72rem",
+                                          color: "var(--color-neutral-500)",
+                                        }}
+                                      >
                                         {record.employee_role}
                                       </p>
                                     </div>
@@ -1217,21 +1577,33 @@ export default function AttendancePage() {
                                   <div className="flex items-center gap-3">
                                     {record.check_in_time &&
                                       record.check_out_time && (
-                                        <span className="text-neutral-600 text-xs">
-                                          {record.check_in_time} -{" "}
+                                        <span
+                                          style={{
+                                            fontSize: "0.75rem",
+                                            color: "var(--color-neutral-500)",
+                                          }}
+                                        >
+                                          {record.check_in_time} –{" "}
                                           {record.check_out_time}
                                         </span>
                                       )}
                                     <span
-                                      className={`px-3 py-1 rounded-lg text-xs font-semibold border ${getStatusBadgeColor(
-                                        record.status
-                                      )}`}
+                                      style={{
+                                        padding: "0.2rem 0.6rem",
+                                        borderRadius: "9999px",
+                                        fontSize: "0.7rem",
+                                        fontWeight: 600,
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "0.3rem",
+                                        ...cfg.badge,
+                                      }}
                                     >
                                       <FontAwesomeIcon
-                                        icon={getStatusIcon(record.status)}
-                                        className="mr-1"
+                                        icon={cfg.icon}
+                                        style={{ fontSize: "0.65rem" }}
                                       />
-                                      {getStatusLabel(record.status)}
+                                      {cfg.label}
                                     </span>
                                   </div>
                                 </div>
@@ -1240,17 +1612,32 @@ export default function AttendancePage() {
                           </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
 
                 {/* Pagination */}
                 {totalPages > 1 && (
-                  <div className="flex items-center justify-between bg-neutral-0 rounded-xl border border-neutral-200 px-6 py-4">
-                    <p className="text-neutral-600 text-sm">
-                      Showing {(currentPage - 1) * 5 + 1}-
-                      {Math.min(currentPage * 5, filteredDates.length)} of{" "}
-                      {filteredDates.length} records
+                  <div
+                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-2xl"
+                    style={{
+                      padding: "0.875rem 1.5rem",
+                      backgroundColor: "var(--color-neutral-0)",
+                      border: "1px solid var(--color-neutral-200)",
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: "0.78rem",
+                        color: "var(--color-neutral-500)",
+                      }}
+                    >
+                      Showing {(currentPage - 1) * PER_HISTORY_PAGE + 1}–
+                      {Math.min(
+                        currentPage * PER_HISTORY_PAGE,
+                        filteredDates.length,
+                      )}{" "}
+                      of {filteredDates.length} records
                     </p>
                     <div className="flex items-center gap-2">
                       <button
@@ -1258,82 +1645,112 @@ export default function AttendancePage() {
                           setCurrentPage((p) => Math.max(1, p - 1))
                         }
                         disabled={currentPage === 1}
-                        className="p-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        aria-label="Previous page"
+                        style={{
+                          padding: "0.5rem 0.625rem",
+                          borderRadius: "0.5rem",
+                          border: "1px solid var(--color-neutral-200)",
+                          background: "none",
+                          cursor: "pointer",
+                          color: "var(--color-neutral-600)",
+                          opacity: currentPage === 1 ? 0.4 : 1,
+                        }}
                       >
                         <FontAwesomeIcon
                           icon={faChevronLeft}
-                          className="text-neutral-600"
+                          style={{ fontSize: "0.75rem" }}
                         />
                       </button>
-                      {[...Array(totalPages)].map((_, i) => (
-                        <button
-                          key={i}
-                          onClick={() => setCurrentPage(i + 1)}
-                          className={`w-10 h-10 rounded-lg font-medium transition-colors ${
-                            currentPage === i + 1
-                              ? "bg-primary-600 text-neutral-0"
-                              : "bg-neutral-0 text-neutral-700 border border-neutral-200 hover:bg-neutral-50"
-                          }`}
-                        >
-                          {i + 1}
-                        </button>
-                      ))}
+                      {[...Array(totalPages)].map((_, i) => {
+                        const active = currentPage === i + 1;
+                        return (
+                          <button
+                            key={i}
+                            onClick={() => setCurrentPage(i + 1)}
+                            style={{
+                              width: "2.25rem",
+                              height: "2.25rem",
+                              borderRadius: "0.5rem",
+                              fontWeight: 600,
+                              fontSize: "0.8125rem",
+                              cursor: "pointer",
+                              border: active
+                                ? "none"
+                                : "1px solid var(--color-neutral-200)",
+                              backgroundColor: active
+                                ? "#1ab189"
+                                : "transparent",
+                              color: active
+                                ? "white"
+                                : "var(--color-neutral-700)",
+                            }}
+                          >
+                            {i + 1}
+                          </button>
+                        );
+                      })}
                       <button
                         onClick={() =>
                           setCurrentPage((p) => Math.min(totalPages, p + 1))
                         }
                         disabled={currentPage === totalPages}
-                        className="p-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        aria-label="Next page"
+                        style={{
+                          padding: "0.5rem 0.625rem",
+                          borderRadius: "0.5rem",
+                          border: "1px solid var(--color-neutral-200)",
+                          background: "none",
+                          cursor: "pointer",
+                          color: "var(--color-neutral-600)",
+                          opacity: currentPage === totalPages ? 0.4 : 1,
+                        }}
                       >
                         <FontAwesomeIcon
                           icon={faChevronRight}
-                          className="text-neutral-600"
+                          style={{ fontSize: "0.75rem" }}
                         />
                       </button>
                     </div>
                   </div>
                 )}
-              </div>
-            ) : (
-              !historyLoading && (
-                <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
-                  <FontAwesomeIcon
-                    icon={faClipboardCheck}
-                    className="text-5xl text-neutral-300 mb-4"
-                  />
-                  <p className="text-neutral-600 font-medium">
-                    No attendance records found
-                  </p>
-                  <p className="text-neutral-500 text-sm mt-2">
-                    {selectedProject
-                      ? "Start marking attendance to see records here"
-                      : "Select a project to view attendance history"}
-                  </p>
+              </>
+            )}
+
+            {/* Empty history */}
+            {!historyLoading && paginatedDates.length === 0 && (
+              <div
+                className="rounded-2xl text-center"
+                style={{
+                  backgroundColor: "var(--color-neutral-0)",
+                  border: "1px solid var(--color-neutral-200)",
+                  padding: "4rem 2rem",
+                }}
+              >
+                <div style={{ fontSize: "3.5rem", marginBottom: "1rem" }}>
+                  📋
                 </div>
-              )
+                <h3
+                  className="font-semibold mb-2"
+                  style={{
+                    fontSize: "1.125rem",
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
+                  No attendance records found
+                </h3>
+                <p
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--color-neutral-500)",
+                  }}
+                >
+                  {selectedProject
+                    ? "Start marking attendance to see records here"
+                    : "Select a project first to view attendance history"}
+                </p>
+              </div>
             )}
           </div>
         )}
       </div>
-
-      <style jsx>{`
-        @keyframes slide-in-right {
-          from {
-            transform: translateX(100%);
-            opacity: 0;
-          }
-          to {
-            transform: translateX(0);
-            opacity: 1;
-          }
-        }
-
-        .animate-slide-in-right {
-          animation: slide-in-right 0.3s ease-out;
-        }
-      `}</style>
     </div>
   );
 }

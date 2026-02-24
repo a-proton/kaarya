@@ -1,4 +1,4 @@
-// lib/auth.ts - Enhanced version with token expiration checking
+// lib/auth.ts - Fixed for ROTATE_REFRESH_TOKENS = True
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -58,6 +58,7 @@ export interface UserProfile {
   category_name?: string;
 }
 
+// Preserved from original
 export interface LogoutRequest {
   refresh_token: string;
 }
@@ -79,9 +80,7 @@ export async function login(
 ): Promise<LoginResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/auth/login/`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
 
@@ -90,47 +89,10 @@ export async function login(
     throw new Error(error.message || error.error || "Login failed");
   }
 
-  const data = await response.json();
-  console.log("Login response:", data);
-  return data;
-}
-
-// Logout API call
-export async function logout(refreshToken: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/auth/logout/`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.message || "Logout failed");
-  }
-}
-
-// Refresh token API call
-export async function refreshToken(
-  refresh: string,
-): Promise<{ access_token: string }> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/auth/token/refresh/`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ refresh }),
-  });
-
-  if (!response.ok) {
-    throw new Error("Token refresh failed");
-  }
-
   return response.json();
 }
 
-// Decode JWT token without verification (client-side only)
+// Decode JWT token (client-side, no verification)
 function decodeToken(token: string): TokenPayload | null {
   try {
     const base64Url = token.split(".")[1];
@@ -142,48 +104,33 @@ function decodeToken(token: string): TokenPayload | null {
         .join(""),
     );
     return JSON.parse(jsonPayload);
-  } catch (error) {
-    console.error("Error decoding token:", error);
+  } catch {
     return null;
   }
 }
 
-// Check if token is expired or will expire soon
+// Check if token is expired or expiring within bufferSeconds
 export function isTokenExpired(
   token: string,
   bufferSeconds: number = 60,
 ): boolean {
   const payload = decodeToken(token);
-
-  if (!payload || !payload.exp) {
-    return true;
-  }
-
+  if (!payload?.exp) return true;
   const currentTime = Math.floor(Date.now() / 1000);
-  const expirationTime = payload.exp;
-
-  // Return true if token is expired or will expire within buffer time
-  return currentTime >= expirationTime - bufferSeconds;
+  return currentTime >= payload.exp - bufferSeconds;
 }
 
-// Get token expiration time
+// Get token expiration as Date
 export function getTokenExpiration(token: string): Date | null {
   const payload = decodeToken(token);
-
-  if (!payload || !payload.exp) {
-    return null;
-  }
-
+  if (!payload?.exp) return null;
   return new Date(payload.exp * 1000);
 }
 
-// Extract access token from various response formats
+// Extract access token from login response
 export function extractAccessToken(response: LoginResponse): string | null {
-  if (response.data?.tokens?.access) {
-    return response.data.tokens.access;
-  }
-
   return (
+    response.data?.tokens?.access ||
     response.access_token ||
     response.access ||
     response.token ||
@@ -192,13 +139,10 @@ export function extractAccessToken(response: LoginResponse): string | null {
   );
 }
 
-// Extract refresh token from various response formats
+// Extract refresh token from login response
 export function extractRefreshToken(response: LoginResponse): string | null {
-  if (response.data?.tokens?.refresh) {
-    return response.data.tokens.refresh;
-  }
-
   return (
+    response.data?.tokens?.refresh ||
     response.refresh_token ||
     response.refresh ||
     response.tokens?.refresh ||
@@ -206,85 +150,61 @@ export function extractRefreshToken(response: LoginResponse): string | null {
   );
 }
 
-// Store tokens in localStorage with timestamp
+// Store BOTH tokens — critical when ROTATE_REFRESH_TOKENS = True
 export function storeTokens(accessToken: string, refreshToken?: string): void {
+  if (typeof window === "undefined") return;
+
   localStorage.setItem("accessToken", accessToken);
   localStorage.setItem("tokenStoredAt", Date.now().toString());
 
+  // IMPORTANT: always save the new refresh token after rotation
   if (refreshToken) {
     localStorage.setItem("refreshToken", refreshToken);
   }
 
-  // Log token expiration for debugging
   const expiration = getTokenExpiration(accessToken);
   if (expiration) {
-    console.log("🔑 Token will expire at:", expiration.toLocaleString());
+    console.log("🔑 Access token expires at:", expiration.toLocaleString());
   }
 }
 
-// Get access token from localStorage
 export function getAccessToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("accessToken");
 }
 
-// Get refresh token from localStorage
 export function getRefreshToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("refreshToken");
 }
 
-// Store user profile in localStorage
 export function storeUserProfile(profile: UserProfile): void {
-  if (typeof window === "undefined") {
-    console.error("❌ Window is undefined - cannot store profile (SSR)");
-    return;
-  }
-
+  if (typeof window === "undefined") return;
   try {
-    if (!profile.id || !profile.email) {
-      console.error("❌ Invalid profile - missing required fields:", profile);
-      return;
-    }
-
-    const profileString = JSON.stringify(profile);
-    localStorage.setItem("userProfile", profileString);
-    console.log("✅ User profile stored successfully");
+    if (!profile.id || !profile.email) return;
+    localStorage.setItem("userProfile", JSON.stringify(profile));
   } catch (error) {
-    console.error("❌ Error in storeUserProfile:", error);
+    console.error("❌ Error storing user profile:", error);
   }
 }
 
-// Get user profile from localStorage
 export function getUserProfile(): UserProfile | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
+  if (typeof window === "undefined") return null;
   try {
     const profile = localStorage.getItem("userProfile");
-
-    if (!profile) {
-      return null;
-    }
-
-    return JSON.parse(profile);
-  } catch (error) {
-    console.error("❌ Error in getUserProfile:", error);
+    return profile ? JSON.parse(profile) : null;
+  } catch {
     return null;
   }
 }
 
-// Clear user profile from localStorage
 export function clearUserProfile(): void {
   if (typeof window === "undefined") return;
   localStorage.removeItem("userProfile");
 }
 
-// Clear tokens from localStorage
 export function clearTokens(): void {
   if (typeof window === "undefined") return;
-
   localStorage.removeItem("accessToken");
   localStorage.removeItem("refreshToken");
   localStorage.removeItem("tokenStoredAt");
@@ -292,69 +212,131 @@ export function clearTokens(): void {
   clearUserProfile();
 }
 
-// Check if user is authenticated with valid token
-export function isAuthenticated(): boolean {
-  const token = getAccessToken();
-
-  if (!token) {
-    return false;
+/**
+ * Silently refresh the access token.
+ *
+ * ⚠️  ROTATE_REFRESH_TOKENS = True means Django blacklists the old refresh
+ * token and issues a NEW one on every refresh call. We MUST store the new
+ * refresh token or the next refresh will get a 401 (old token blacklisted).
+ *
+ * Your backend wraps the response:
+ *   { success: true, data: { access: "...", refresh: "..." } }
+ * SimpleJWT default format is also handled:
+ *   { access: "...", refresh: "..." }
+ */
+export async function silentTokenRefresh(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    console.log("No refresh token stored — cannot refresh");
+    return null;
   }
 
-  // Check if token is expired
-  if (isTokenExpired(token)) {
-    console.log("⚠️ Access token is expired");
-    return false;
-  }
+  try {
+    console.log("🔄 Refreshing tokens...");
 
-  return true;
+    const response = await fetch(`${API_BASE_URL}/api/v1/auth/token/refresh/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh: refreshToken }),
+    });
+
+    if (!response.ok) {
+      console.error("❌ Token refresh HTTP error:", response.status);
+      return null;
+    }
+
+    const data = await response.json();
+
+    // Handle your backend's wrapped format first, then SimpleJWT default
+    const newAccessToken =
+      data?.data?.access || data?.access || data?.access_token || null;
+
+    // CRITICAL: capture the rotated refresh token
+    const newRefreshToken =
+      data?.data?.refresh || data?.refresh || data?.refresh_token || null;
+
+    if (!newAccessToken) {
+      console.error("❌ No access token in refresh response:", data);
+      return null;
+    }
+
+    // Store new access token + new refresh token (rotation!)
+    storeTokens(newAccessToken, newRefreshToken || refreshToken);
+
+    if (newRefreshToken) {
+      console.log("✅ Tokens refreshed — new refresh token stored (rotation)");
+    } else {
+      console.log("✅ Access token refreshed");
+    }
+
+    return newAccessToken;
+  } catch (error) {
+    console.error("❌ Error during token refresh:", error);
+    return null;
+  }
 }
-// Replace the forgot password functions in your lib/auth.ts with these corrected versions
-// They now use API_BASE_URL to match your existing login/logout functions
 
 /**
- * Request password reset link
+ * Returns true if the user has an active session.
+ * Checks for refresh token + stored profile — NOT the access token expiry.
+ * This means the user stays "logged in" even when the access token has
+ * expired, as long as the refresh token is valid and stored.
  */
+export function hasSession(): boolean {
+  if (typeof window === "undefined") return false;
+  const refreshToken = getRefreshToken();
+  const profile = getUserProfile();
+  return !!(refreshToken && profile);
+}
+
+// Quick check — access token present and not expired (does NOT attempt refresh)
+export function isAuthenticated(): boolean {
+  const token = getAccessToken();
+  if (!token) return false;
+  return !isTokenExpired(token);
+}
+
+// Preserved from original — bare API call, does NOT update localStorage.
+// Use silentTokenRefresh() for the storage-aware version instead.
+export async function refreshToken(
+  refresh: string,
+): Promise<{ access_token: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/token/refresh/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Token refresh failed");
+  }
+
+  return response.json();
+}
+
+// Password reset helpers
 export async function forgotPassword(email: string) {
   const response = await fetch(`${API_BASE_URL}/api/v1/auth/password/forgot/`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
   });
-
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.message || "Failed to send reset email");
   }
-
   return response.json();
 }
 
-/**
- * Verify reset token validity
- */
 export async function verifyResetToken(token: string) {
   const response = await fetch(
     `${API_BASE_URL}/api/v1/auth/password/verify-token/?token=${token}`,
-    {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    },
+    { method: "GET", headers: { "Content-Type": "application/json" } },
   );
-
-  if (!response.ok) {
-    throw new Error("Invalid or expired token");
-  }
-
+  if (!response.ok) throw new Error("Invalid or expired token");
   return response.json();
 }
 
-/**
- * Reset password with token
- */
 export async function resetPassword(
   token: string,
   newPassword: string,
@@ -362,20 +344,16 @@ export async function resetPassword(
 ) {
   const response = await fetch(`${API_BASE_URL}/api/v1/auth/password/reset/`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       token,
       new_password: newPassword,
       new_password_confirm: newPasswordConfirm,
     }),
   });
-
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.message || "Failed to reset password");
   }
-
   return response.json();
 }

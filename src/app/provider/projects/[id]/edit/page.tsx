@@ -5,7 +5,6 @@ import {
   faArrowLeft,
   faCalendar,
   faMapMarkerAlt,
-  faUser,
   faFileAlt,
   faBriefcase,
   faCheckCircle,
@@ -20,6 +19,9 @@ import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
+/* ─────────────────────────────────────────── */
+/* Types                                        */
+/* ─────────────────────────────────────────── */
 interface Client {
   id: number;
   full_name: string;
@@ -75,11 +77,201 @@ interface UpdateProjectPayload {
 }
 
 interface PageProps {
-  params: Promise<{
-    id: string;
-  }>;
+  params: Promise<{ id: string }>;
 }
 
+/* ─────────────────────────────────────────── */
+/* Shared inline style base                    */
+/* ─────────────────────────────────────────── */
+const baseInput: React.CSSProperties = {
+  width: "100%",
+  padding: "0.625rem 1rem",
+  fontFamily: "var(--font-sans)",
+  fontSize: "0.875rem",
+  color: "var(--color-neutral-900)",
+  backgroundColor: "var(--color-neutral-0)",
+  border: "1px solid var(--color-neutral-200)",
+  borderRadius: "0.625rem",
+  outline: "none",
+  transition: "border-color 150ms, box-shadow 150ms",
+  appearance: "none" as const,
+};
+
+function onFocus(
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+  >,
+) {
+  e.currentTarget.style.borderColor = "#1ab189";
+  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(26,177,137,0.12)";
+}
+function onBlur(
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+  >,
+) {
+  e.currentTarget.style.borderColor = "var(--color-neutral-200)";
+  e.currentTarget.style.boxShadow = "none";
+}
+
+/* ─────────────────────────────────────────── */
+/* Status config                               */
+/* ─────────────────────────────────────────── */
+const STATUS_OPTIONS = [
+  { value: "pending", label: "Pending" },
+  { value: "not_started", label: "Not Started" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "on_hold", label: "On Hold" },
+  { value: "completed", label: "Completed" },
+  { value: "cancelled", label: "Cancelled" },
+];
+
+const STATUS_STYLES: Record<string, { bg: string; color: string }> = {
+  pending: { bg: "#fefce8", color: "#a16207" },
+  not_started: { bg: "#fefce8", color: "#a16207" },
+  in_progress: { bg: "#eff6ff", color: "#1d4ed8" },
+  completed: { bg: "rgba(26,177,137,0.1)", color: "#1ab189" },
+  on_hold: { bg: "#fff7ed", color: "#c2410c" },
+  cancelled: { bg: "#fef2f2", color: "#b91c1c" },
+};
+
+const getStatusStyle = (s: string) =>
+  STATUS_STYLES[s] ?? {
+    bg: "var(--color-neutral-100)",
+    color: "var(--color-neutral-600)",
+  };
+
+const statusLabel = (s: string) =>
+  STATUS_OPTIONS.find((o) => o.value === s)?.label ??
+  s.charAt(0).toUpperCase() + s.slice(1);
+
+/* ─────────────────────────────────────────── */
+/* Currency formatter                          */
+/* ─────────────────────────────────────────── */
+const formatCurrency = (amount: number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(amount);
+
+/* ─────────────────────────────────────────── */
+/* Small reusable pieces                       */
+/* ─────────────────────────────────────────── */
+function Field({
+  label,
+  required,
+  hint,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label
+        className="block font-semibold mb-1.5"
+        style={{ fontSize: "0.8rem", color: "var(--color-neutral-700)" }}
+      >
+        {label}
+        {required && <span style={{ color: "#ef4444" }}> *</span>}
+      </label>
+      {children}
+      {hint && (
+        <p
+          className="mt-1"
+          style={{ fontSize: "0.72rem", color: "var(--color-neutral-400)" }}
+        >
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SectionCard({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="rounded-2xl"
+      style={{
+        backgroundColor: "var(--color-neutral-0)",
+        border: "1px solid var(--color-neutral-200)",
+        padding: "1.5rem",
+      }}
+    >
+      <div className="flex items-center gap-3 mb-5">
+        <div
+          className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+        >
+          <span style={{ color: "#1ab189", fontSize: "0.875rem" }}>{icon}</span>
+        </div>
+        <h2
+          className="font-semibold"
+          style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+        >
+          {title}
+        </h2>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function SummaryRow({
+  icon,
+  label,
+  value,
+  border = true,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  border?: boolean;
+}) {
+  return (
+    <div
+      className="flex items-start gap-3"
+      style={{
+        paddingBottom: border ? "0.875rem" : 0,
+        marginBottom: border ? "0.875rem" : 0,
+        borderBottom: border ? "1px solid var(--color-neutral-100)" : "none",
+      }}
+    >
+      <span style={{ color: "#1ab189", marginTop: "2px", fontSize: "0.8rem" }}>
+        {icon}
+      </span>
+      <div className="flex-1 min-w-0">
+        <p
+          className="mb-0.5 font-semibold tracking-wider uppercase"
+          style={{ fontSize: "0.65rem", color: "var(--color-neutral-400)" }}
+        >
+          {label}
+        </p>
+        <div
+          className="font-semibold truncate"
+          style={{ fontSize: "0.85rem", color: "var(--color-neutral-900)" }}
+        >
+          {value}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────── */
+/* Page                                        */
+/* ─────────────────────────────────────────── */
 export default function EditProjectPage({ params }: PageProps) {
   const { id: projectId } = use(params);
   const router = useRouter();
@@ -94,10 +286,9 @@ export default function EditProjectPage({ params }: PageProps) {
   const [description, setDescription] = useState("");
   const [initialPaymentTaken, setInitialPaymentTaken] = useState(false);
   const [initialPaymentAmount, setInitialPaymentAmount] = useState("");
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
-  const [successMessage, setSuccessMessage] = useState("");
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
 
-  // Fetch project data
   const {
     data: project,
     isLoading,
@@ -107,182 +298,157 @@ export default function EditProjectPage({ params }: PageProps) {
     queryKey: ["project", projectId],
     queryFn: async () => {
       try {
-        const response = await api.get<Project>(
-          `/api/v1/projects/${projectId}/`
-        );
-        return response;
-      } catch (error: any) {
-        // Handle 401 Unauthorized - redirect to login
-        if (error.status === 401) {
+        return await api.get<Project>(`/api/v1/projects/${projectId}/`);
+      } catch (err: unknown) {
+        const e = err as { status?: number };
+        if (e.status === 401) {
           router.push("/login");
-          throw new Error("Session expired. Please login again.");
+          throw new Error("Session expired.");
         }
-        throw error;
+        throw err;
       }
     },
     enabled: !!projectId,
-    retry: (failureCount, error: any) => {
-      // Don't retry on 401
-      if (error.status === 401) return false;
-      return failureCount < 3;
+    retry: (count, err: unknown) => {
+      const e = err as { status?: number };
+      return e.status !== 401 && count < 3;
     },
   });
 
-  // Populate form when project data is loaded
   useEffect(() => {
-    if (project) {
-      setProjectName(project.project_name);
-      setLocation(project.site_address);
-      setProjectBudget(project.total_cost);
-      setStartDate(project.start_date);
-      setEndDate(project.expected_end_date);
-      setStatus(project.status);
-      setDescription(project.description);
-
-      const advancePayment = parseFloat(project.advance_payment);
-      if (advancePayment > 0) {
-        setInitialPaymentTaken(true);
-        setInitialPaymentAmount(advancePayment.toString());
-      }
+    if (!project) return;
+    setProjectName(project.project_name);
+    setLocation(project.site_address);
+    setProjectBudget(project.total_cost);
+    setStartDate(project.start_date);
+    setEndDate(project.expected_end_date);
+    setStatus(project.status);
+    setDescription(project.description);
+    const adv = parseFloat(project.advance_payment);
+    if (adv > 0) {
+      setInitialPaymentTaken(true);
+      setInitialPaymentAmount(adv.toString());
     }
   }, [project]);
 
-  // Update project mutation
-  const updateProjectMutation = useMutation({
-    mutationFn: async (payload: UpdateProjectPayload) => {
-      try {
-        // Using /update/ to match Django URL pattern
-        const response = await api.put(
-          `/api/v1/projects/${projectId}/update/`,
-          payload
-        );
-        return response;
-      } catch (error: any) {
-        console.error("API Error:", error);
-        console.error("Error data:", error.data);
-        throw error;
-      }
-    },
-    onSuccess: (data) => {
-      console.log("Project updated:", data);
-      showSuccessNotification("Project updated successfully!");
+  const updateMutation = useMutation({
+    mutationFn: (payload: UpdateProjectPayload) =>
+      api.put(`/api/v1/projects/${projectId}/update/`, payload),
+    onSuccess: () => {
+      notify("Project updated successfully!");
       queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
-      setTimeout(() => {
-        router.push(`/provider/projects/${projectId}`);
-      }, 1500);
+      setTimeout(() => router.push(`/provider/projects/${projectId}`), 1500);
     },
-    onError: (error: any) => {
-      console.error("Full error:", error);
-      const errorMessage =
-        error.data?.detail ||
-        error.data?.message ||
-        error.message ||
-        "Failed to update project. Check console for details.";
-      alert(`Error: ${errorMessage}`);
+    onError: (err: unknown) => {
+      const e = err as {
+        data?: { detail?: string; message?: string };
+        message?: string;
+      };
+      alert(
+        `Error: ${e.data?.detail ?? e.data?.message ?? e.message ?? "Failed to update project."}`,
+      );
     },
   });
 
-  const showSuccessNotification = (message: string) => {
-    setSuccessMessage(message);
-    setShowSuccessMessage(true);
-    setTimeout(() => {
-      setShowSuccessMessage(false);
-    }, 3000);
+  const notify = (msg: string) => {
+    setToastMessage(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(amount);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-
-    // Validation
     if (!projectName || !location || !startDate || !endDate || !projectBudget) {
       alert("Please fill in all required fields");
       return;
     }
-
-    // Parse project budget to number
-    const budgetValue = parseFloat(projectBudget.replace(/[^0-9.-]+/g, ""));
-    if (isNaN(budgetValue) || budgetValue <= 0) {
-      alert("Please enter a valid project budget");
+    const budget = parseFloat(projectBudget.replace(/[^0-9.-]+/g, ""));
+    if (isNaN(budget) || budget <= 0) {
+      alert("Please enter a valid budget");
       return;
     }
-
-    // Calculate balance payment
-    const advancePayment = initialPaymentTaken
+    const advance = initialPaymentTaken
       ? parseFloat(initialPaymentAmount) || 0
       : 0;
-    const balancePayment = budgetValue - advancePayment;
-
-    // Prepare payload matching the API structure
-    const payload: UpdateProjectPayload = {
+    updateMutation.mutate({
       project_name: projectName,
-      description: description,
+      description,
       site_address: location,
-      status: status,
+      status,
       start_date: startDate,
       expected_end_date: endDate,
-      total_cost: budgetValue.toFixed(2),
-      advance_payment: advancePayment.toFixed(2),
-      balance_payment: balancePayment.toFixed(2),
-    };
-
-    console.log("Submitting update payload:", payload);
-
-    // Submit to API
-    updateProjectMutation.mutate(payload);
+      total_cost: budget.toFixed(2),
+      advance_payment: advance.toFixed(2),
+      balance_payment: (budget - advance).toFixed(2),
+    });
   };
 
-  const handleCancel = () => {
-    if (
-      confirm(
-        "Are you sure you want to cancel? All unsaved changes will be lost."
-      )
-    ) {
-      router.push(`/provider/projects/${projectId}`);
-    }
-  };
+  const budget = parseFloat(projectBudget.replace(/[^0-9.-]+/g, "")) || 0;
+  const advance = parseFloat(initialPaymentAmount) || 0;
+  const balance = budget - advance;
 
-  const initialPayment = parseFloat(initialPaymentAmount) || 0;
-
-  // Loading state
+  /* Loading */
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading project...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading project…
+          </p>
         </div>
       </div>
     );
   }
 
-  // Error state
+  /* Error */
   if (isError || !project) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FontAwesomeIcon icon={faTimes} className="text-red-600 text-2xl" />
+      <div
+        className="min-h-screen flex items-center justify-center p-6"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
+        <div
+          className="rounded-2xl p-8 text-center max-w-md w-full"
+          style={{
+            backgroundColor: "var(--color-neutral-0)",
+            border: "1px solid #fecaca",
+          }}
+        >
+          <div
+            className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+            style={{ backgroundColor: "#fef2f2" }}
+          >
+            <FontAwesomeIcon
+              icon={faTimes}
+              style={{ color: "#ef4444", fontSize: "1rem" }}
+            />
           </div>
-          <h3 className="text-lg font-semibold text-red-900 mb-2">
+          <h3
+            className="font-semibold mb-2"
+            style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+          >
             Error Loading Project
           </h3>
-          <p className="text-red-700 mb-4">
+          <p
+            className="mb-5"
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
             {error instanceof Error ? error.message : "Failed to load project"}
           </p>
           <button
             onClick={() => router.push("/provider/projects")}
-            className="btn-primary"
+            className="btn btn-primary btn-md"
           >
             Back to Projects
           </button>
@@ -292,246 +458,302 @@ export default function EditProjectPage({ params }: PageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Success Toast */}
-      {showSuccessMessage && (
-        <div className="fixed top-8 right-8 z-[60] animate-slide-in-right">
-          <div className="bg-green-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 min-w-[300px]">
-            <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
-              <FontAwesomeIcon icon={faCheck} />
-            </div>
-            <div className="flex-1">
-              <p className="font-semibold">{successMessage}</p>
-            </div>
-            <button
-              onClick={() => setShowSuccessMessage(false)}
-              className="text-neutral-0 hover:text-neutral-200 transition-colors"
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* Toast */}
+      {showToast && (
+        <div
+          className="fixed top-5 right-5 z-[60]"
+          style={{ minWidth: "17rem" }}
+        >
+          <div
+            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+            style={{
+              backgroundColor: "var(--color-neutral-900)",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div
+              className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: "#1ab189" }}
             >
-              <FontAwesomeIcon icon={faTimes} />
+              <FontAwesomeIcon
+                icon={faCheck}
+                style={{ color: "white", fontSize: "0.6rem" }}
+              />
+            </div>
+            <p
+              className="flex-1 font-medium"
+              style={{ fontSize: "0.875rem", color: "white" }}
+            >
+              {toastMessage}
+            </p>
+            <button
+              onClick={() => setShowToast(false)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "rgba(255,255,255,0.5)",
+                padding: 0,
+                lineHeight: 1,
+              }}
+            >
+              <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
             </button>
           </div>
         </div>
       )}
 
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex items-center gap-4 mb-2">
+      {/* Page header */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.125rem 2rem",
+        }}
+      >
+        <div className="flex items-center gap-3">
           <button
             onClick={() => router.push(`/provider/projects/${projectId}`)}
-            className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
             aria-label="Go back"
+            style={{
+              width: "2.25rem",
+              height: "2.25rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "transparent",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "0.625rem",
+              cursor: "pointer",
+              color: "var(--color-neutral-500)",
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                "var(--color-neutral-100)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                "transparent";
+            }}
           >
             <FontAwesomeIcon
               icon={faArrowLeft}
-              className="text-neutral-600 text-lg"
+              style={{ fontSize: "0.85rem" }}
             />
           </button>
           <div>
-            <h1 className="heading-2 text-neutral-900">Edit Project</h1>
-            <p className="text-neutral-600 body-regular mt-1">
-              Update project details and information
+            <h1
+              className="font-bold"
+              style={{
+                fontSize: "1.375rem",
+                color: "var(--color-neutral-900)",
+                lineHeight: 1.2,
+              }}
+            >
+              Edit Project
+            </h1>
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--color-neutral-500)",
+                marginTop: "0.125rem",
+              }}
+            >
+              Updating{" "}
+              <span
+                style={{ color: "var(--color-neutral-700)", fontWeight: 600 }}
+              >
+                {project.project_name}
+              </span>
             </p>
           </div>
         </div>
       </div>
 
-      {/* Form */}
-      <form onSubmit={handleSubmit} className="p-8 max-w-6xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Form - Takes 2 columns */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Project Information Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                <FontAwesomeIcon
-                  icon={faBriefcase}
-                  className="text-primary-600"
-                />
-                Project Information
-              </h2>
-
-              <div className="space-y-5">
-                {/* Project Name */}
-                <div>
-                  <label
-                    htmlFor="projectName"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    Project Name <span className="text-red-500">*</span>
-                  </label>
+      {/* Body */}
+      <form
+        onSubmit={handleSubmit}
+        style={{ padding: "1.75rem 2rem", maxWidth: "72rem", margin: "0 auto" }}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* ── Left: fields ── */}
+          <div className="lg:col-span-2 space-y-5">
+            <SectionCard
+              title="Project Information"
+              icon={<FontAwesomeIcon icon={faBriefcase} />}
+            >
+              <div className="space-y-4">
+                <Field label="Project Name" required>
                   <input
                     type="text"
-                    id="projectName"
                     value={projectName}
                     onChange={(e) => setProjectName(e.target.value)}
                     placeholder="e.g., Kitchen Renovation"
                     required
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                    style={baseInput}
+                    onFocus={onFocus}
+                    onBlur={onBlur}
                   />
-                </div>
+                </Field>
 
-                {/* Status */}
-                <div>
-                  <label
-                    htmlFor="status"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    Project Status <span className="text-red-500">*</span>
-                  </label>
+                <Field
+                  label="Project Status"
+                  required
+                  hint="Select the current status of the project"
+                >
                   <select
-                    id="status"
                     value={status}
                     onChange={(e) => setStatus(e.target.value)}
                     required
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                    style={{
+                      ...baseInput,
+                      cursor: "pointer",
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a1a1aa' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                      backgroundRepeat: "no-repeat",
+                      backgroundPosition: "right 0.875rem center",
+                      paddingRight: "2.5rem",
+                    }}
+                    onFocus={onFocus}
+                    onBlur={onBlur}
                   >
-                    <option value="pending">Pending</option>
-                    <option value="not_started">Not Started</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="on_hold">On Hold</option>
-                    <option value="completed">Completed</option>
-                    <option value="cancelled">Cancelled</option>
+                    {STATUS_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
                   </select>
-                  <p className="text-neutral-500 text-xs mt-1">
-                    Select the current status of the project
-                  </p>
-                </div>
+                </Field>
 
-                {/* Location */}
-                <div>
-                  <label
-                    htmlFor="location"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
+                <Field label="Location" required>
+                  <div className="relative">
                     <FontAwesomeIcon
                       icon={faMapMarkerAlt}
-                      className="text-primary-600 mr-2"
+                      className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                      style={{ color: "#1ab189", fontSize: "0.8rem" }}
                     />
-                    Location <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    id="location"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    placeholder="e.g., 123 Main Street, New York, NY"
-                    required
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                  />
-                </div>
+                    <input
+                      type="text"
+                      value={location}
+                      onChange={(e) => setLocation(e.target.value)}
+                      placeholder="e.g., 123 Main Street, New York, NY"
+                      required
+                      style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                      onFocus={onFocus}
+                      onBlur={onBlur}
+                    />
+                  </div>
+                </Field>
 
-                {/* Project Budget */}
-                <div>
-                  <label
-                    htmlFor="projectBudget"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
-                    <FontAwesomeIcon
-                      icon={faMoneyBill}
-                      className="text-primary-600 mr-2"
-                    />
-                    Project Total Cost <span className="text-red-500">*</span>
-                  </label>
+                <Field label="Project Total Cost" required>
                   <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400">
+                    <span
+                      className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none font-semibold"
+                      style={{
+                        color: "var(--color-neutral-400)",
+                        fontSize: "0.875rem",
+                      }}
+                    >
                       $
                     </span>
                     <input
                       type="number"
-                      id="projectBudget"
                       value={projectBudget}
                       onChange={(e) => setProjectBudget(e.target.value)}
                       placeholder="50000"
                       min="0"
                       step="0.01"
                       required
-                      className="w-full pl-8 pr-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                      style={{ ...baseInput, paddingLeft: "1.875rem" }}
+                      onFocus={onFocus}
+                      onBlur={onBlur}
                     />
                   </div>
-                </div>
+                </Field>
 
-                {/* Date Range */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label
-                      htmlFor="startDate"
-                      className="block text-neutral-700 font-semibold mb-2 body-small"
-                    >
+                  <Field label="Start Date" required>
+                    <div className="relative">
                       <FontAwesomeIcon
                         icon={faCalendar}
-                        className="text-primary-600 mr-2"
+                        className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                        style={{ color: "#1ab189", fontSize: "0.8rem" }}
                       />
-                      Start Date <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      id="startDate"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      required
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="endDate"
-                      className="block text-neutral-700 font-semibold mb-2 body-small"
-                    >
+                      <input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        required
+                        style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                        onFocus={onFocus}
+                        onBlur={onBlur}
+                      />
+                    </div>
+                  </Field>
+                  <Field label="Expected End Date" required>
+                    <div className="relative">
                       <FontAwesomeIcon
                         icon={faCalendar}
-                        className="text-primary-600 mr-2"
+                        className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                        style={{ color: "#1ab189", fontSize: "0.8rem" }}
                       />
-                      Expected End Date <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      id="endDate"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      min={startDate}
-                      required
-                      className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
-                    />
-                  </div>
+                      <input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        min={startDate}
+                        required
+                        style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                        onFocus={onFocus}
+                        onBlur={onBlur}
+                      />
+                    </div>
+                  </Field>
                 </div>
 
-                {/* Description */}
-                <div>
-                  <label
-                    htmlFor="description"
-                    className="block text-neutral-700 font-semibold mb-2 body-small"
-                  >
+                <Field label="Project Description">
+                  <div className="relative">
                     <FontAwesomeIcon
                       icon={faFileAlt}
-                      className="text-primary-600 mr-2"
+                      className="absolute left-3.5 top-3.5 pointer-events-none"
+                      style={{ color: "#1ab189", fontSize: "0.8rem" }}
                     />
-                    Project Description
-                  </label>
-                  <textarea
-                    id="description"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Provide a detailed description of the project..."
-                    rows={4}
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
-                  />
-                </div>
+                    <textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder="Provide a detailed description of the project…"
+                      rows={4}
+                      style={{
+                        ...baseInput,
+                        paddingLeft: "2.25rem",
+                        resize: "none",
+                      }}
+                      onFocus={onFocus}
+                      onBlur={onBlur}
+                    />
+                  </div>
+                </Field>
               </div>
-            </div>
+            </SectionCard>
 
-            {/* Initial Payment Card */}
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-              <h2 className="heading-4 text-neutral-900 mb-6 flex items-center gap-3">
-                <FontAwesomeIcon
-                  icon={faDollarSign}
-                  className="text-primary-600"
-                />
-                Advance Payment
-              </h2>
-
-              <div className="space-y-5">
-                {/* Payment Checkbox */}
-                <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <SectionCard
+              title="Advance Payment"
+              icon={<FontAwesomeIcon icon={faDollarSign} />}
+            >
+              <div className="space-y-4">
+                {/* checkbox */}
+                <div
+                  className="flex items-start gap-3 rounded-xl"
+                  style={{
+                    padding: "1rem",
+                    backgroundColor: "var(--color-neutral-50)",
+                    border: "1px solid var(--color-neutral-200)",
+                  }}
+                >
                   <input
                     type="checkbox"
                     id="initialPayment"
@@ -540,40 +762,53 @@ export default function EditProjectPage({ params }: PageProps) {
                       setInitialPaymentTaken(e.target.checked);
                       if (!e.target.checked) setInitialPaymentAmount("");
                     }}
-                    className="w-5 h-5 text-primary-600 border-neutral-300 rounded focus:ring-2 focus:ring-primary-500 mt-0.5"
+                    style={{
+                      width: "1.125rem",
+                      height: "1.125rem",
+                      accentColor: "#1ab189",
+                      marginTop: "2px",
+                      flexShrink: 0,
+                      cursor: "pointer",
+                    }}
                   />
-                  <div className="flex-1">
+                  <div>
                     <label
                       htmlFor="initialPayment"
-                      className="text-neutral-900 font-semibold block cursor-pointer"
+                      className="font-semibold block"
+                      style={{
+                        fontSize: "0.875rem",
+                        color: "var(--color-neutral-900)",
+                        cursor: "pointer",
+                      }}
                     >
                       Advance payment received
                     </label>
-                    <p className="text-neutral-600 text-sm mt-1">
+                    <p
+                      className="mt-0.5"
+                      style={{
+                        fontSize: "0.78rem",
+                        color: "var(--color-neutral-500)",
+                      }}
+                    >
                       Check this if you've received an advance payment from the
                       client
                     </p>
                   </div>
                 </div>
 
-                {/* Amount Input */}
                 {initialPaymentTaken && (
-                  <div>
-                    <label
-                      htmlFor="initialPaymentAmount"
-                      className="block text-neutral-700 font-semibold mb-2 body-small"
-                    >
-                      Advance Payment Amount{" "}
-                      <span className="text-red-500">*</span>
-                    </label>
+                  <Field label="Advance Payment Amount" required>
                     <div className="relative">
                       <FontAwesomeIcon
                         icon={faDollarSign}
-                        className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
+                        className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                        style={{
+                          color: "var(--color-neutral-400)",
+                          fontSize: "0.8rem",
+                        }}
                       />
                       <input
                         type="number"
-                        id="initialPaymentAmount"
                         value={initialPaymentAmount}
                         onChange={(e) =>
                           setInitialPaymentAmount(e.target.value)
@@ -582,186 +817,188 @@ export default function EditProjectPage({ params }: PageProps) {
                         min="0"
                         step="0.01"
                         required={initialPaymentTaken}
-                        className="w-full pl-10 pr-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
+                        style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                        onFocus={onFocus}
+                        onBlur={onBlur}
                       />
                     </div>
-                    {initialPayment > 0 && (
-                      <div className="mt-3 space-y-2">
-                        <p className="text-green-600 text-sm font-medium flex items-center gap-2">
-                          <FontAwesomeIcon icon={faCheckCircle} />
-                          Advance payment: {formatCurrency(initialPayment)}
+                    {advance > 0 && (
+                      <div className="mt-3 space-y-1">
+                        <p
+                          className="flex items-center gap-2 font-medium"
+                          style={{ fontSize: "0.78rem", color: "#1ab189" }}
+                        >
+                          <FontAwesomeIcon
+                            icon={faCheckCircle}
+                            style={{ fontSize: "0.75rem" }}
+                          />
+                          Advance: {formatCurrency(advance)}
                         </p>
-                        {projectBudget && (
-                          <p className="text-blue-600 text-sm font-medium flex items-center gap-2">
-                            <FontAwesomeIcon icon={faMoneyBill} />
-                            Balance payment:{" "}
-                            {formatCurrency(
-                              parseFloat(
-                                projectBudget.replace(/[^0-9.-]+/g, "")
-                              ) - initialPayment
-                            )}
+                        {budget > 0 && (
+                          <p
+                            className="flex items-center gap-2 font-medium"
+                            style={{ fontSize: "0.78rem", color: "#3b82f6" }}
+                          >
+                            <FontAwesomeIcon
+                              icon={faMoneyBill}
+                              style={{ fontSize: "0.75rem" }}
+                            />
+                            Balance: {formatCurrency(balance)}
                           </p>
                         )}
                       </div>
                     )}
-                  </div>
+                  </Field>
                 )}
               </div>
-            </div>
+            </SectionCard>
           </div>
 
-          {/* Sidebar - Takes 1 column */}
+          {/* ── Right: summary + actions ── */}
           <div className="lg:col-span-1">
-            <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 sticky top-8">
-              <h3 className="heading-4 text-neutral-900 mb-4">
+            <div
+              className="rounded-2xl sticky top-6"
+              style={{
+                backgroundColor: "var(--color-neutral-0)",
+                border: "1px solid var(--color-neutral-200)",
+                padding: "1.5rem",
+              }}
+            >
+              <h3
+                className="font-semibold mb-4"
+                style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+              >
                 Project Summary
               </h3>
 
-              <div className="space-y-4 mb-6">
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
-                    icon={faBriefcase}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">
-                      Project Name
-                    </p>
-                    <p className="text-neutral-900 font-semibold truncate">
-                      {projectName || "Not specified"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
-                    icon={faMapMarkerAlt}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">Location</p>
-                    <p className="text-neutral-900 font-semibold truncate">
-                      {location || "Not specified"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
-                    icon={faCheckCircle}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">Status</p>
+              <div className="mb-5">
+                <SummaryRow
+                  icon={<FontAwesomeIcon icon={faBriefcase} />}
+                  label="Project Name"
+                  value={projectName || "Not specified"}
+                />
+                <SummaryRow
+                  icon={<FontAwesomeIcon icon={faMapMarkerAlt} />}
+                  label="Location"
+                  value={location || "Not specified"}
+                />
+                <SummaryRow
+                  icon={<FontAwesomeIcon icon={faCheckCircle} />}
+                  label="Status"
+                  value={
                     <span
-                      className={`inline-flex px-2 py-1 rounded-lg text-xs font-semibold border ${
-                        status === "pending"
-                          ? "bg-yellow-100 text-yellow-700 border-yellow-200"
-                          : status === "not_started"
-                          ? "bg-yellow-100 text-yellow-700 border-yellow-200"
-                          : status === "in_progress"
-                          ? "bg-blue-100 text-blue-700 border-blue-200"
-                          : status === "completed"
-                          ? "bg-green-100 text-green-700 border-green-200"
-                          : status === "on_hold"
-                          ? "bg-orange-100 text-orange-700 border-orange-200"
-                          : status === "cancelled"
-                          ? "bg-red-100 text-red-700 border-red-200"
-                          : "bg-neutral-100 text-neutral-600 border-neutral-200"
-                      }`}
+                      className="inline-flex rounded-full font-semibold"
+                      style={{
+                        fontSize: "0.65rem",
+                        padding: "0.2rem 0.65rem",
+                        backgroundColor: getStatusStyle(status).bg,
+                        color: getStatusStyle(status).color,
+                      }}
                     >
-                      {status === "not_started"
-                        ? "Not Started"
-                        : status === "in_progress"
-                        ? "In Progress"
-                        : status === "on_hold"
-                        ? "On Hold"
-                        : status.charAt(0).toUpperCase() + status.slice(1)}
+                      {statusLabel(status)}
                     </span>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 pb-4 border-b border-neutral-100">
-                  <FontAwesomeIcon
-                    icon={faMoneyBill}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-neutral-600 body-small mb-1">
-                      Total Cost
-                    </p>
-                    <p className="text-neutral-900 font-semibold truncate">
-                      {projectBudget
-                        ? formatCurrency(
-                            parseFloat(projectBudget.replace(/[^0-9.-]+/g, ""))
-                          )
-                        : "Not specified"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <FontAwesomeIcon
-                    icon={faCalendar}
-                    className="text-primary-600 mt-1"
-                  />
-                  <div className="flex-1">
-                    <p className="text-neutral-600 body-small mb-1">Duration</p>
-                    <p className="text-neutral-900 font-semibold">
-                      {startDate && endDate
-                        ? `${new Date(startDate).toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                          })} - ${new Date(endDate).toLocaleDateString(
-                            "en-US",
-                            { month: "short", day: "numeric", year: "numeric" }
-                          )}`
-                        : "Not specified"}
-                    </p>
-                  </div>
-                </div>
+                  }
+                />
+                <SummaryRow
+                  icon={<FontAwesomeIcon icon={faMoneyBill} />}
+                  label="Total Cost"
+                  value={budget > 0 ? formatCurrency(budget) : "Not specified"}
+                />
+                <SummaryRow
+                  icon={<FontAwesomeIcon icon={faCalendar} />}
+                  label="Duration"
+                  value={
+                    startDate && endDate
+                      ? `${new Date(startDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                      : "Not specified"
+                  }
+                  border={false}
+                />
               </div>
 
-              {/* Payment Summary */}
-              {projectBudget && (
-                <div className="mb-6 p-4 bg-gradient-to-br from-primary-50 to-secondary-50 rounded-lg border border-primary-200">
-                  <h4 className="font-semibold text-neutral-900 mb-3 flex items-center gap-2">
+              {/* Payment breakdown */}
+              {budget > 0 && (
+                <div
+                  className="rounded-xl mb-5"
+                  style={{
+                    backgroundColor: "var(--color-neutral-50)",
+                    border: "1px solid var(--color-neutral-200)",
+                    padding: "1rem",
+                  }}
+                >
+                  <p
+                    className="font-semibold mb-3 flex items-center gap-2"
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "var(--color-neutral-700)",
+                    }}
+                  >
                     <FontAwesomeIcon
                       icon={faDollarSign}
-                      className="text-primary-600"
+                      style={{ color: "#1ab189", fontSize: "0.75rem" }}
                     />
                     Payment Breakdown
-                  </h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-neutral-600">Total Cost:</span>
-                      <span className="font-semibold text-neutral-900">
-                        {formatCurrency(
-                          parseFloat(projectBudget.replace(/[^0-9.-]+/g, ""))
-                        )}
+                  </p>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span
+                        style={{
+                          fontSize: "0.78rem",
+                          color: "var(--color-neutral-500)",
+                        }}
+                      >
+                        Total Cost
+                      </span>
+                      <span
+                        className="font-semibold"
+                        style={{
+                          fontSize: "0.78rem",
+                          color: "var(--color-neutral-900)",
+                        }}
+                      >
+                        {formatCurrency(budget)}
                       </span>
                     </div>
-                    {initialPaymentTaken && initialPayment > 0 && (
+                    {initialPaymentTaken && advance > 0 && (
                       <>
-                        <div className="flex items-center justify-between">
-                          <span className="text-neutral-600">
-                            Advance Payment:
+                        <div className="flex justify-between">
+                          <span
+                            style={{
+                              fontSize: "0.78rem",
+                              color: "var(--color-neutral-500)",
+                            }}
+                          >
+                            Advance
                           </span>
-                          <span className="font-semibold text-green-600">
-                            {formatCurrency(initialPayment)}
+                          <span
+                            className="font-semibold"
+                            style={{ fontSize: "0.78rem", color: "#1ab189" }}
+                          >
+                            {formatCurrency(advance)}
                           </span>
                         </div>
-                        <div className="border-t border-primary-200 my-2"></div>
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-neutral-700">
-                            Balance Payment:
+                        <div
+                          style={{
+                            borderTop: "1px solid var(--color-neutral-200)",
+                            paddingTop: "0.5rem",
+                            marginTop: "0.25rem",
+                          }}
+                        />
+                        <div className="flex justify-between">
+                          <span
+                            className="font-semibold"
+                            style={{
+                              fontSize: "0.78rem",
+                              color: "var(--color-neutral-700)",
+                            }}
+                          >
+                            Balance
                           </span>
-                          <span className="text-lg font-bold text-primary-600">
-                            {formatCurrency(
-                              parseFloat(
-                                projectBudget.replace(/[^0-9.-]+/g, "")
-                              ) - initialPayment
-                            )}
+                          <span
+                            className="font-bold"
+                            style={{ fontSize: "0.9rem", color: "#1ab189" }}
+                          >
+                            {formatCurrency(balance)}
                           </span>
                         </div>
                       </>
@@ -770,65 +1007,78 @@ export default function EditProjectPage({ params }: PageProps) {
                 </div>
               )}
 
-              <div className="space-y-3">
+              {/* Actions */}
+              <div className="space-y-2.5">
                 <button
                   type="submit"
-                  disabled={updateProjectMutation.isPending}
-                  className="w-full btn-primary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={updateMutation.isPending}
+                  className="btn btn-primary btn-md w-full justify-center"
+                  style={{ opacity: updateMutation.isPending ? 0.6 : 1 }}
                 >
-                  {updateProjectMutation.isPending ? (
+                  {updateMutation.isPending ? (
                     <>
                       <FontAwesomeIcon
                         icon={faSpinner}
                         className="animate-spin"
-                      />
-                      Updating Project...
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
+                      Updating…
                     </>
                   ) : (
                     <>
-                      <FontAwesomeIcon icon={faCheckCircle} />
+                      <FontAwesomeIcon
+                        icon={faCheckCircle}
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
                       Update Project
                     </>
                   )}
                 </button>
                 <button
                   type="button"
-                  onClick={handleCancel}
-                  disabled={updateProjectMutation.isPending}
-                  className="w-full btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => {
+                    if (confirm("Discard unsaved changes?"))
+                      router.push(`/provider/projects/${projectId}`);
+                  }}
+                  disabled={updateMutation.isPending}
+                  className="btn btn-ghost btn-md w-full justify-center"
                 >
                   Cancel
                 </button>
               </div>
 
-              <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                <p className="text-blue-700 body-small">
-                  <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                  <strong>Note:</strong> Changes will be saved immediately and
-                  reflected across the system.
+              <div
+                className="rounded-xl mt-4"
+                style={{
+                  backgroundColor: "rgba(26,177,137,0.06)",
+                  border: "1px solid rgba(26,177,137,0.2)",
+                  padding: "0.875rem",
+                }}
+              >
+                <p
+                  className="flex items-start gap-2"
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "var(--color-neutral-600)",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faCheckCircle}
+                    style={{
+                      color: "#1ab189",
+                      fontSize: "0.75rem",
+                      marginTop: "2px",
+                      flexShrink: 0,
+                    }}
+                  />
+                  Changes will be saved immediately and reflected across the
+                  system.
                 </p>
               </div>
             </div>
           </div>
         </div>
       </form>
-
-      <style jsx>{`
-        @keyframes slide-in-right {
-          from {
-            transform: translateX(100%);
-            opacity: 0;
-          }
-          to {
-            transform: translateX(0);
-            opacity: 1;
-          }
-        }
-
-        .animate-slide-in-right {
-          animation: slide-in-right 0.3s ease-out;
-        }
-      `}</style>
     </div>
   );
 }

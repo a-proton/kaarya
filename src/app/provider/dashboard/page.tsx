@@ -944,7 +944,7 @@ export default function ProviderDashboard() {
 
               {/* Secondary CTA */}
               <Link
-                href="/provider/availability"
+                href="/provider/calendar"
                 className="flex items-center justify-center gap-2 w-full rounded-xl font-semibold transition-colors"
                 style={{
                   padding: "0.7rem 1rem",
@@ -956,7 +956,7 @@ export default function ProviderDashboard() {
                 }}
                 onMouseEnter={(e) => {
                   (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
-                    "var(--color-primary-light)";
+                    "var(--color-neutral-200)";
                 }}
                 onMouseLeave={(e) => {
                   (e.currentTarget as HTMLAnchorElement).style.backgroundColor =

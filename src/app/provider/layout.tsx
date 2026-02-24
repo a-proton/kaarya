@@ -27,7 +27,7 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
   return (
     <QueryClientProvider client={queryClient}>
       <UserProvider>
-        <div className="min-h-screen bg-neutral-50">
+        <div className="portal-layout min-h-screen bg-neutral-50">
           {/* Left Sidebar */}
           <ProviderSidebar />
 

@@ -152,11 +152,9 @@ export default function ProviderSidebar() {
                     className="relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors"
                     style={{
                       backgroundColor: isActive
-                        ? "var(--color-primary-light)"
+                        ? "rgba(26, 177, 137, 0.1)"
                         : "transparent",
-                      color: isActive
-                        ? "var(--color-primary)"
-                        : "var(--color-neutral-600)",
+                      color: isActive ? "#1ab189" : "var(--color-neutral-600)",
                       fontWeight: isActive ? 600 : 400,
                       fontSize: "0.875rem",
                       textDecoration: "none",
@@ -168,7 +166,7 @@ export default function ProviderSidebar() {
                         style={{
                           width: "3px",
                           height: "1.375rem",
-                          backgroundColor: "var(--color-primary)",
+                          backgroundColor: "#1ab189",
                           transform: "translateY(-50%)",
                         }}
                       />
@@ -178,7 +176,7 @@ export default function ProviderSidebar() {
                       fixedWidth
                       style={{
                         color: isActive
-                          ? "var(--color-primary)"
+                          ? "#1ab189"
                           : "var(--color-neutral-400)",
                         fontSize: "0.9rem",
                       }}

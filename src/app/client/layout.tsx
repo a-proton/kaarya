@@ -10,7 +10,7 @@ interface ClientLayoutProps {
 }
 
 export default function ClientLayout({ children }: ClientLayoutProps) {
-  // Initialize QueryClient for TanStack Query
+
   const [queryClient] = useState(
     () =>
       new QueryClient({

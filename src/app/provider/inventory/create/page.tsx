@@ -12,24 +12,149 @@ import {
   faCalendar,
   faStore,
   faBriefcase,
-  faChevronDown,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 
+/* ─────────────────────────────────────────── */
+/* Types                                        */
+/* ─────────────────────────────────────────── */
 interface Project {
   id: number;
   project_name: string;
   client: { full_name: string } | null;
 }
 
+interface FormState {
+  project_id: string;
+  item_name: string;
+  description: string;
+  quantity: string;
+  unit: string;
+  unit_price: string;
+  supplier_name: string;
+  purchase_date: string;
+  receipt_url: string;
+}
+
+interface InventoryPayload {
+  item_name: string;
+  quantity: number;
+  description?: string;
+  unit?: string;
+  unit_price?: number;
+  supplier_name?: string;
+  purchase_date?: string;
+  receipt_url?: string;
+}
+
+/* ─────────────────────────────────────────── */
+/* Shared input style                           */
+/* ─────────────────────────────────────────── */
+const baseInput: React.CSSProperties = {
+  width: "100%",
+  padding: "0.625rem 1rem",
+  fontFamily: "var(--font-sans)",
+  fontSize: "0.875rem",
+  color: "var(--color-neutral-900)",
+  backgroundColor: "var(--color-neutral-0)",
+  border: "1px solid var(--color-neutral-200)",
+  borderRadius: "0.625rem",
+  outline: "none",
+  transition: "border-color 150ms, box-shadow 150ms",
+  appearance: "none" as const,
+};
+
+function onFocusIn(
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+  >,
+) {
+  e.currentTarget.style.borderColor = "#1ab189";
+  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(26,177,137,0.12)";
+}
+function onFocusOut(
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+  >,
+) {
+  e.currentTarget.style.borderColor = "var(--color-neutral-200)";
+  e.currentTarget.style.boxShadow = "none";
+}
+
+/* ─────────────────────────────────────────── */
+/* Small reusable pieces                       */
+/* ─────────────────────────────────────────── */
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label
+        className="block font-semibold mb-1.5"
+        style={{ fontSize: "0.8rem", color: "var(--color-neutral-700)" }}
+      >
+        {label}
+        {required && <span style={{ color: "#ef4444" }}> *</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function SectionCard({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="rounded-2xl"
+      style={{
+        backgroundColor: "var(--color-neutral-0)",
+        border: "1px solid var(--color-neutral-200)",
+        padding: "1.5rem",
+      }}
+    >
+      <div className="flex items-center gap-3 mb-5">
+        <div
+          className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: "rgba(26,177,137,0.1)" }}
+        >
+          <span style={{ color: "#1ab189", fontSize: "0.875rem" }}>{icon}</span>
+        </div>
+        <h2
+          className="font-semibold"
+          style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+        >
+          {title}
+        </h2>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────── */
+/* Component                                   */
+/* ─────────────────────────────────────────── */
 export default function CreateInventoryPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FormState>({
     project_id: "",
     item_name: "",
     description: "",
@@ -40,10 +165,12 @@ export default function CreateInventoryPage() {
     purchase_date: "",
     receipt_url: "",
   });
+  const [showToast, setShowToast] = useState(false);
 
-  const [showSuccess, setShowSuccess] = useState(false);
+  const set = (key: keyof FormState, value: string) =>
+    setFormData((prev) => ({ ...prev, [key]: value }));
 
-  // Fetch projects
+  /* ── Projects query ── */
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
     queryKey: ["projects"],
     queryFn: async () => {
@@ -52,18 +179,25 @@ export default function CreateInventoryPage() {
     },
   });
 
+  const projects = Array.isArray(projectsData) ? projectsData : [];
+
+  /* ── Create mutation ── */
   const createMutation = useMutation({
-    mutationFn: async (payload: any) => {
-      const projectId = formData.project_id;
-      await api.post(`/api/v1/projects/${projectId}/inventory/add/`, payload);
-    },
+    mutationFn: (payload: InventoryPayload) =>
+      api.post(
+        `/api/v1/projects/${formData.project_id}/inventory/add/`,
+        payload,
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["all-inventory"] });
-      setShowSuccess(true);
+      setShowToast(true);
       setTimeout(() => router.push("/provider/inventory"), 1500);
     },
-    onError: (err: any) => {
-      alert(`Failed to add inventory: ${err.data?.error || err.message}`);
+    onError: (err: unknown) => {
+      const e = err as { data?: { error?: string }; message?: string };
+      alert(
+        `Failed to add inventory: ${e.data?.error ?? e.message ?? "Unknown error"}`,
+      );
     },
   });
 
@@ -78,294 +212,367 @@ export default function CreateInventoryPage() {
       return;
     }
 
-    const payload: any = {
+    const payload: InventoryPayload = {
       item_name: formData.item_name,
-      description: formData.description || undefined,
       quantity: parseFloat(formData.quantity),
-      unit: formData.unit || undefined,
-      unit_price: formData.unit_price
-        ? parseFloat(formData.unit_price)
-        : undefined,
-      supplier_name: formData.supplier_name || undefined,
-      purchase_date: formData.purchase_date || undefined,
-      receipt_url: formData.receipt_url || undefined,
+      ...(formData.description && { description: formData.description }),
+      ...(formData.unit && { unit: formData.unit }),
+      ...(formData.unit_price && {
+        unit_price: parseFloat(formData.unit_price),
+      }),
+      ...(formData.supplier_name && { supplier_name: formData.supplier_name }),
+      ...(formData.purchase_date && { purchase_date: formData.purchase_date }),
+      ...(formData.receipt_url && { receipt_url: formData.receipt_url }),
     };
 
     createMutation.mutate(payload);
   };
 
-  const projects = Array.isArray(projectsData) ? projectsData : [];
-
+  /* ── Loading ── */
   if (projectsLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading projects...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading projects…
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {showSuccess && (
-        <div className="fixed top-8 right-8 z-50 animate-slide-in-right">
-          <div className="bg-green-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3">
-            <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-              <FontAwesomeIcon icon={faCheck} />
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* Toast — dark pill, #1ab189 checkmark, matches all other pages */}
+      {showToast && (
+        <div className="fixed top-5 right-5 z-50" style={{ minWidth: "17rem" }}>
+          <div
+            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+            style={{
+              backgroundColor: "var(--color-neutral-900)",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div
+              className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: "#1ab189" }}
+            >
+              <FontAwesomeIcon
+                icon={faCheck}
+                style={{ color: "white", fontSize: "0.6rem" }}
+              />
             </div>
-            <div>
-              <p className="font-semibold">Inventory Added!</p>
-              <p className="text-green-100 text-sm">
-                Redirecting to inventory list...
+            <div className="flex-1">
+              <p
+                className="font-semibold"
+                style={{ fontSize: "0.875rem", color: "white" }}
+              >
+                Inventory Added!
+              </p>
+              <p
+                style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.6)" }}
+              >
+                Redirecting to inventory list…
               </p>
             </div>
           </div>
         </div>
       )}
 
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex items-center gap-4 mb-2">
+      {/* Page header */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.125rem 2rem",
+        }}
+      >
+        <div className="flex items-center gap-3">
           <button
             onClick={() => router.back()}
-            className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
             aria-label="Go back"
+            style={{
+              width: "2.25rem",
+              height: "2.25rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "transparent",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "0.625rem",
+              cursor: "pointer",
+              color: "var(--color-neutral-500)",
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                "var(--color-neutral-100)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                "transparent";
+            }}
           >
             <FontAwesomeIcon
               icon={faArrowLeft}
-              className="text-neutral-600 text-lg"
+              style={{ fontSize: "0.85rem" }}
             />
           </button>
           <div>
-            <h1 className="heading-2 text-neutral-900 flex items-center gap-3">
-              <FontAwesomeIcon icon={faBoxOpen} className="text-primary-600" />
+            <h1
+              className="font-bold flex items-center gap-2.5"
+              style={{
+                fontSize: "1.375rem",
+                color: "var(--color-neutral-900)",
+                lineHeight: 1.2,
+              }}
+            >
+              <FontAwesomeIcon
+                icon={faBoxOpen}
+                style={{ color: "#1ab189", fontSize: "1.125rem" }}
+              />
               Add Inventory Item
             </h1>
-            <p className="text-neutral-600 body-regular mt-1">
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--color-neutral-500)",
+                marginTop: "0.125rem",
+              }}
+            >
               Record materials used in your projects
             </p>
           </div>
         </div>
       </div>
 
-      <div className="p-8 max-w-4xl mx-auto">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Project Selection */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <label className="block text-neutral-700 font-semibold mb-3 body-small flex items-center gap-2">
-              <FontAwesomeIcon
-                icon={faBriefcase}
-                className="text-primary-600"
-              />
-              Select Project <span className="text-red-500">*</span>
-            </label>
-            <div className="relative">
-              <select
-                value={formData.project_id}
-                onChange={(e) =>
-                  setFormData({ ...formData, project_id: e.target.value })
-                }
-                required
-                className="w-full appearance-none px-4 py-3.5 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
-              >
-                <option value="">Choose a project...</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.project_name} – {p.client?.full_name || "No client"}
-                  </option>
-                ))}
-              </select>
-              <FontAwesomeIcon
-                icon={faChevronDown}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"
-              />
-            </div>
-          </div>
+      {/* Form */}
+      <form
+        onSubmit={handleSubmit}
+        style={{ padding: "1.75rem 2rem", maxWidth: "52rem", margin: "0 auto" }}
+        className="space-y-5"
+      >
+        {/* Project selection */}
+        <SectionCard
+          title="Select Project"
+          icon={<FontAwesomeIcon icon={faBriefcase} />}
+        >
+          <Field label="Project" required>
+            <select
+              value={formData.project_id}
+              onChange={(e) => set("project_id", e.target.value)}
+              required
+              style={{
+                ...baseInput,
+                cursor: "pointer",
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a1a1aa' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                backgroundRepeat: "no-repeat",
+                backgroundPosition: "right 0.875rem center",
+                paddingRight: "2.5rem",
+              }}
+              onFocus={onFocusIn}
+              onBlur={onFocusOut}
+            >
+              <option value="">Choose a project…</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.project_name}
+                  {p.client ? ` – ${p.client.full_name}` : ""}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </SectionCard>
 
-          {/* Item Details */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 space-y-5">
-            <div>
-              <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                Item Name <span className="text-red-500">*</span>
-              </label>
+        {/* Item details */}
+        <SectionCard
+          title="Item Details"
+          icon={<FontAwesomeIcon icon={faBoxOpen} />}
+        >
+          <div className="space-y-4">
+            <Field label="Item Name" required>
               <input
                 type="text"
                 value={formData.item_name}
-                onChange={(e) =>
-                  setFormData({ ...formData, item_name: e.target.value })
-                }
+                onChange={(e) => set("item_name", e.target.value)}
                 placeholder="e.g., Cement bags, PVC pipes"
                 required
-                className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                style={baseInput}
+                onFocus={onFocusIn}
+                onBlur={onFocusOut}
               />
-            </div>
+            </Field>
 
-            <div>
-              <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                Description
-              </label>
+            <Field label="Description">
               <textarea
                 value={formData.description}
-                onChange={(e) =>
-                  setFormData({ ...formData, description: e.target.value })
-                }
+                onChange={(e) => set("description", e.target.value)}
                 placeholder="Optional details about the item"
                 rows={3}
-                className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 resize-none"
+                style={{ ...baseInput, resize: "none" }}
+                onFocus={onFocusIn}
+                onBlur={onFocusOut}
               />
-            </div>
+            </Field>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Quantity <span className="text-red-500">*</span>
-                </label>
+              <Field label="Quantity" required>
                 <input
                   type="number"
                   step="0.01"
                   value={formData.quantity}
-                  onChange={(e) =>
-                    setFormData({ ...formData, quantity: e.target.value })
-                  }
+                  onChange={(e) => set("quantity", e.target.value)}
                   required
-                  className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                  style={baseInput}
+                  onFocus={onFocusIn}
+                  onBlur={onFocusOut}
                 />
-              </div>
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Unit (e.g., kg, pcs, liters)
-                </label>
+              </Field>
+              <Field label="Unit (e.g., kg, pcs, liters)">
                 <input
                   type="text"
                   value={formData.unit}
-                  onChange={(e) =>
-                    setFormData({ ...formData, unit: e.target.value })
-                  }
-                  placeholder="kg, bags, meters..."
-                  className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                  onChange={(e) => set("unit", e.target.value)}
+                  placeholder="kg, bags, meters…"
+                  style={baseInput}
+                  onFocus={onFocusIn}
+                  onBlur={onFocusOut}
                 />
-              </div>
+              </Field>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Unit Price ($)
-                </label>
+              <Field label="Unit Price ($)">
                 <div className="relative">
                   <FontAwesomeIcon
                     icon={faDollarSign}
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
+                    className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                    style={{
+                      color: "var(--color-neutral-400)",
+                      fontSize: "0.8rem",
+                    }}
                   />
                   <input
                     type="number"
                     step="0.01"
                     value={formData.unit_price}
-                    onChange={(e) =>
-                      setFormData({ ...formData, unit_price: e.target.value })
-                    }
+                    onChange={(e) => set("unit_price", e.target.value)}
                     placeholder="0.00"
-                    className="w-full pl-10 pr-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                    style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                    onFocus={onFocusIn}
+                    onBlur={onFocusOut}
                   />
                 </div>
-              </div>
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Supplier Name
-                </label>
+              </Field>
+              <Field label="Supplier Name">
                 <div className="relative">
                   <FontAwesomeIcon
                     icon={faStore}
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
+                    className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                    style={{
+                      color: "var(--color-neutral-400)",
+                      fontSize: "0.8rem",
+                    }}
                   />
                   <input
                     type="text"
                     value={formData.supplier_name}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        supplier_name: e.target.value,
-                      })
-                    }
+                    onChange={(e) => set("supplier_name", e.target.value)}
                     placeholder="e.g., ABC Hardware"
-                    className="w-full pl-10 pr-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                    style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                    onFocus={onFocusIn}
+                    onBlur={onFocusOut}
                   />
                 </div>
-              </div>
+              </Field>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Purchase Date
-                </label>
+              <Field label="Purchase Date">
                 <div className="relative">
                   <FontAwesomeIcon
                     icon={faCalendar}
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
+                    className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                    style={{ color: "#1ab189", fontSize: "0.8rem" }}
                   />
                   <input
                     type="date"
                     value={formData.purchase_date}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        purchase_date: e.target.value,
-                      })
-                    }
-                    className="w-full pl-10 pr-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                    onChange={(e) => set("purchase_date", e.target.value)}
+                    style={{ ...baseInput, paddingLeft: "2.25rem" }}
+                    onFocus={onFocusIn}
+                    onBlur={onFocusOut}
                   />
                 </div>
-              </div>
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Receipt URL (optional)
-                </label>
+              </Field>
+              <Field label="Receipt URL (optional)">
                 <input
                   type="url"
                   value={formData.receipt_url}
-                  onChange={(e) =>
-                    setFormData({ ...formData, receipt_url: e.target.value })
-                  }
+                  onChange={(e) => set("receipt_url", e.target.value)}
                   placeholder="https://example.com/receipt.pdf"
-                  className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+                  style={baseInput}
+                  onFocus={onFocusIn}
+                  onBlur={onFocusOut}
                 />
-              </div>
+              </Field>
             </div>
           </div>
+        </SectionCard>
 
-          <div className="flex items-center justify-end gap-4">
-            <button
-              type="button"
-              onClick={() => router.push("/provider/inventory")}
-              className="px-6 py-3 border-2 border-neutral-200 text-neutral-700 rounded-lg font-semibold hover:bg-neutral-50 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={createMutation.isPending}
-              className="btn-primary flex items-center gap-2 min-w-[160px]"
-            >
-              {createMutation.isPending ? (
-                <>
-                  <FontAwesomeIcon icon={faSpinner} className="animate-spin" />
-                  Adding...
-                </>
-              ) : (
-                <>
-                  <FontAwesomeIcon icon={faPlus} />
-                  Add Item
-                </>
-              )}
-            </button>
-          </div>
-        </form>
-      </div>
+        {/* Actions */}
+        <div className="flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={() => router.push("/provider/inventory")}
+            className="btn btn-ghost btn-md flex items-center gap-2"
+          >
+            <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.8rem" }} />
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={createMutation.isPending}
+            className="btn btn-primary btn-md flex items-center gap-2"
+            style={{
+              opacity: createMutation.isPending ? 0.6 : 1,
+              minWidth: "9rem",
+            }}
+          >
+            {createMutation.isPending ? (
+              <>
+                <FontAwesomeIcon
+                  icon={faSpinner}
+                  className="animate-spin"
+                  style={{ fontSize: "0.875rem" }}
+                />{" "}
+                Adding…
+              </>
+            ) : (
+              <>
+                <FontAwesomeIcon
+                  icon={faPlus}
+                  style={{ fontSize: "0.875rem" }}
+                />{" "}
+                Add Item
+              </>
+            )}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

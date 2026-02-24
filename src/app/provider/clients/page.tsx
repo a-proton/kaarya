@@ -4,11 +4,8 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faSearch,
   faPlus,
-  faChevronDown,
   faStar as faSolidStar,
   faFolder,
-  faMessage,
-  faPhone,
   faLocationDot,
   faEllipsisVertical,
   faEye,
@@ -17,126 +14,170 @@ import {
   faChevronLeft,
   faChevronRight,
   faSpinner,
+  faTimes,
+  faCheck,
+  faExclamationTriangle,
 } from "@fortawesome/free-solid-svg-icons";
 import { faStar as faRegularStar } from "@fortawesome/free-regular-svg-icons";
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { clientService } from "@/lib/clientService";
 
+/* ─────────────────────────────────────────── */
+/* Types                                        */
+/* ─────────────────────────────────────────── */
 type TabFilter = "all" | "active" | "past" | "favorites";
 
+/* ─────────────────────────────────────────── */
+/* Helpers                                      */
+/* ─────────────────────────────────────────── */
+const getInitials = (name: string) =>
+  name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+
+const AVATAR_COLORS = [
+  "#1ab189",
+  "#3b82f6",
+  "#f59e0b",
+  "#8b5cf6",
+  "#10b981",
+  "#06b6d4",
+  "#f97316",
+  "#ec4899",
+  "#6366f1",
+  "#14b8a6",
+];
+const avatarColor = (id: number) => AVATAR_COLORS[id % AVATAR_COLORS.length];
+
+const PER_PAGE = 6;
+
+/* ─────────────────────────────────────────── */
+/* Component                                   */
+/* ─────────────────────────────────────────── */
 export default function ClientsPage() {
-  const router = useRouter();
   const queryClient = useQueryClient();
+
   const [activeTab, setActiveTab] = useState<TabFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<Set<number>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
+  const [showToast, setShowToast] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
+
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Fetch clients
+  /* ── Query ── */
   const { data, isLoading, error } = useQuery({
     queryKey: ["clients", searchQuery],
     queryFn: () => clientService.getClients(searchQuery, true),
-    staleTime: 30000, // 30 seconds
+    staleTime: 30000,
   });
 
-  // Delete mutation
+  /* ── Delete mutation ── */
   const deleteMutation = useMutation({
     mutationFn: (clientId: number) => clientService.deleteClient(clientId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["clients"] });
+      notify("Client deleted successfully");
+      setDeleteTarget(null);
+      setOpenDropdown(null);
+    },
+    onError: (err: unknown) => {
+      const e = err as { data?: { detail?: string }; message?: string };
+      alert(
+        `Failed to delete client: ${e.data?.detail ?? e.message ?? "Unknown error"}`,
+      );
+      setDeleteTarget(null);
     },
   });
 
+  const notify = (msg: string) => {
+    setToastMsg(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
+
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handler = (e: MouseEvent) => {
       if (
         dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
+        !dropdownRef.current.contains(e.target as Node)
+      )
         setOpenDropdown(null);
-      }
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const toggleFavorite = (clientId: number) => {
+  const toggleFavorite = (id: number) => {
     setFavorites((prev) => {
-      const newFavorites = new Set(prev);
-      if (newFavorites.has(clientId)) {
-        newFavorites.delete(clientId);
-      } else {
-        newFavorites.add(clientId);
-      }
-      return newFavorites;
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
     });
   };
 
-  const handleDelete = async (clientId: number, clientName: string) => {
-    if (
-      confirm(
-        `Are you sure you want to delete "${clientName}"? This action cannot be undone.`
-      )
-    ) {
-      try {
-        await deleteMutation.mutateAsync(clientId);
-        alert(`Client "${clientName}" deleted successfully`);
-        setOpenDropdown(null);
-      } catch (error) {
-        alert("Failed to delete client. Please try again.");
-      }
-    }
-  };
-
-  const getInitials = (name: string) => {
-    return name
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
-  };
-
-  const clients = data?.results || [];
-
-  const filteredClients = clients.filter((client) => {
-    if (activeTab === "favorites" && !favorites.has(client.id)) {
-      return false;
-    }
-    // Note: Backend doesn't provide active/past status, using project_count as proxy
-    if (activeTab === "active" && client.project_count === 0) {
-      return false;
-    }
-    if (activeTab === "past" && client.project_count > 0) {
-      return false;
-    }
+  const clients = data?.results ?? [];
+  const filtered = clients.filter((client) => {
+    if (activeTab === "favorites" && !favorites.has(client.id)) return false;
+    if (activeTab === "active" && client.project_count === 0) return false;
+    if (activeTab === "past" && client.project_count > 0) return false;
     return true;
   });
-
-  const favoriteCount = Array.from(favorites).filter((id) =>
-    clients.some((c) => c.id === id)
+  const favoriteCount = [...favorites].filter((id) =>
+    clients.some((c) => c.id === id),
   ).length;
-
-  const totalPages = Math.ceil(filteredClients.length / 6);
-  const paginatedClients = filteredClients.slice(
-    (currentPage - 1) * 6,
-    currentPage * 6
+  const totalPages = Math.ceil(filtered.length / PER_PAGE);
+  const paginated = filtered.slice(
+    (currentPage - 1) * PER_PAGE,
+    currentPage * PER_PAGE,
   );
 
+  const tabStyle = (tab: TabFilter): React.CSSProperties => ({
+    padding: "0.875rem 0",
+    fontWeight: 500,
+    fontSize: "0.875rem",
+    background: "none",
+    border: "none",
+    borderBottom:
+      activeTab === tab ? "2px solid #1ab189" : "2px solid transparent",
+    color: activeTab === tab ? "#1ab189" : "var(--color-neutral-600)",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    transition: "color 150ms",
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+  });
+
+  /* ── Loading / error ── */
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            className="animate-spin mb-3"
+            style={{ fontSize: "2rem", color: "#1ab189" }}
           />
-          <p className="text-neutral-600">Loading clients...</p>
+          <p
+            style={{ fontSize: "0.875rem", color: "var(--color-neutral-500)" }}
+          >
+            Loading clients…
+          </p>
         </div>
       </div>
     );
@@ -144,12 +185,17 @@ export default function ClientsPage() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: "var(--color-neutral-50)" }}
+      >
         <div className="text-center">
-          <p className="text-red-600 mb-4">Error loading clients</p>
+          <p className="mb-4" style={{ color: "#ef4444" }}>
+            Error loading clients
+          </p>
           <button
             onClick={() => window.location.reload()}
-            className="btn-primary"
+            className="btn btn-primary btn-md"
           >
             Retry
           </button>
@@ -159,141 +205,333 @@ export default function ClientsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-4 md:px-8 py-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div
+      className="min-h-screen"
+      style={{ backgroundColor: "var(--color-neutral-50)" }}
+    >
+      {/* Toast */}
+      {showToast && (
+        <div
+          className="fixed top-5 right-5 z-[60]"
+          style={{ minWidth: "17rem" }}
+        >
+          <div
+            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+            style={{
+              backgroundColor: "var(--color-neutral-900)",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div
+              className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: "#1ab189" }}
+            >
+              <FontAwesomeIcon
+                icon={faCheck}
+                style={{ color: "white", fontSize: "0.6rem" }}
+              />
+            </div>
+            <p
+              className="flex-1 font-medium"
+              style={{ fontSize: "0.875rem", color: "white" }}
+            >
+              {toastMsg}
+            </p>
+            <button
+              onClick={() => setShowToast(false)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "rgba(255,255,255,0.5)",
+                padding: 0,
+              }}
+            >
+              <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Page header */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.125rem 2rem",
+        }}
+      >
+        <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h1 className="heading-2 text-neutral-900 mb-1">Clients</h1>
-            <p className="text-neutral-600 body-regular">
-              Build lasting relationships with your clients ({data?.count || 0}{" "}
+            <h1
+              className="font-bold"
+              style={{
+                fontSize: "1.375rem",
+                color: "var(--color-neutral-900)",
+                lineHeight: 1.2,
+              }}
+            >
+              Clients
+            </h1>
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--color-neutral-500)",
+                marginTop: "0.125rem",
+              }}
+            >
+              Build lasting relationships with your clients ({data?.count ?? 0}{" "}
               total)
             </p>
           </div>
           <Link
-            href={"/provider/clients/create"}
-            className="btn-primary flex items-center justify-center gap-2 shadow-lg"
+            href="/provider/clients/create"
+            className="btn btn-primary btn-md flex items-center gap-2"
           >
-            <FontAwesomeIcon icon={faPlus} />
+            <FontAwesomeIcon icon={faPlus} style={{ fontSize: "0.8rem" }} />
             Add New Client
           </Link>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-4 md:px-8 overflow-x-auto">
-        <div className="flex items-center gap-6 min-w-max">
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "0 2rem",
+          overflowX: "auto",
+        }}
+      >
+        <div
+          className="flex items-center gap-6"
+          style={{ minWidth: "max-content" }}
+        >
+          {(["all", "active", "past"] as TabFilter[]).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => {
+                setActiveTab(tab);
+                setCurrentPage(1);
+              }}
+              style={tabStyle(tab)}
+            >
+              {tab === "all"
+                ? "All Clients"
+                : tab === "active"
+                  ? "Active"
+                  : "Past"}
+            </button>
+          ))}
           <button
-            onClick={() => setActiveTab("all")}
-            className={`py-4 border-b-2 font-medium transition-colors whitespace-nowrap ${
-              activeTab === "all"
-                ? "border-primary-600 text-primary-600"
-                : "border-transparent text-neutral-600 hover:text-neutral-900"
-            }`}
+            onClick={() => {
+              setActiveTab("favorites");
+              setCurrentPage(1);
+            }}
+            style={tabStyle("favorites")}
           >
-            All Clients
-          </button>
-          <button
-            onClick={() => setActiveTab("active")}
-            className={`py-4 border-b-2 font-medium transition-colors whitespace-nowrap ${
-              activeTab === "active"
-                ? "border-primary-600 text-primary-600"
-                : "border-transparent text-neutral-600 hover:text-neutral-900"
-            }`}
-          >
-            Active
-          </button>
-          <button
-            onClick={() => setActiveTab("past")}
-            className={`py-4 border-b-2 font-medium transition-colors whitespace-nowrap ${
-              activeTab === "past"
-                ? "border-primary-600 text-primary-600"
-                : "border-transparent text-neutral-600 hover:text-neutral-900"
-            }`}
-          >
-            Past
-          </button>
-          <button
-            onClick={() => setActiveTab("favorites")}
-            className={`py-4 border-b-2 font-medium transition-colors flex items-center gap-2 whitespace-nowrap ${
-              activeTab === "favorites"
-                ? "border-primary-600 text-primary-600"
-                : "border-transparent text-neutral-600 hover:text-neutral-900"
-            }`}
-          >
-            <FontAwesomeIcon icon={faSolidStar} className="text-sm" />
+            <FontAwesomeIcon
+              icon={faSolidStar}
+              style={{ fontSize: "0.75rem" }}
+            />
             Favorites
-            <span className="px-2 py-0.5 bg-yellow-500 text-neutral-0 rounded-full text-xs font-semibold">
+            <span
+              className="rounded-full font-bold"
+              style={{
+                fontSize: "0.6rem",
+                padding: "0.15rem 0.45rem",
+                backgroundColor: "#f59e0b",
+                color: "white",
+              }}
+            >
               {favoriteCount}
             </span>
           </button>
         </div>
       </div>
 
-      {/* Filters and Controls */}
-      <div className="bg-neutral-0 px-4 md:px-8 py-4 border-b border-neutral-200">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
-            <div className="relative min-w-[250px]">
-              <FontAwesomeIcon
-                icon={faSearch}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 text-sm"
-              />
-              <input
-                type="text"
-                placeholder="Search clients..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 pr-4 py-2 bg-neutral-0 border border-neutral-200 rounded-lg w-full focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-small"
-              />
-            </div>
-          </div>
+      {/* Search */}
+      <div
+        style={{
+          backgroundColor: "var(--color-neutral-0)",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "0.875rem 2rem",
+        }}
+      >
+        <div className="relative" style={{ width: "17rem" }}>
+          <FontAwesomeIcon
+            icon={faSearch}
+            className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+            style={{ color: "var(--color-neutral-400)", fontSize: "0.75rem" }}
+          />
+          <input
+            type="text"
+            placeholder="Search clients…"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setCurrentPage(1);
+            }}
+            style={{
+              width: "100%",
+              padding: "0.5rem 1rem 0.5rem 2rem",
+              fontFamily: "var(--font-sans)",
+              fontSize: "0.8125rem",
+              color: "var(--color-neutral-900)",
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "0.625rem",
+              outline: "none",
+              transition: "border-color 150ms, box-shadow 150ms",
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = "#1ab189";
+              e.currentTarget.style.boxShadow =
+                "0 0 0 3px rgba(26,177,137,0.12)";
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = "var(--color-neutral-200)";
+              e.currentTarget.style.boxShadow = "none";
+            }}
+          />
         </div>
       </div>
 
-      {/* Main Content - List View */}
-      <div className="p-4 md:p-8">
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px]">
-              <thead className="bg-neutral-50 border-b border-neutral-200">
-                <tr>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-600 whitespace-nowrap">
-                    CLIENT
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-600 whitespace-nowrap">
-                    CONTACT
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-600 whitespace-nowrap">
-                    LOCATION
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-600 whitespace-nowrap">
-                    PROJECTS
-                  </th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-neutral-600 whitespace-nowrap">
-                    ACTIONS
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100">
-                {paginatedClients.map((client) => (
+      {/* Content */}
+      <div style={{ padding: "1.75rem 2rem" }}>
+        {filtered.length === 0 ? (
+          <div className="text-center" style={{ paddingTop: "4rem" }}>
+            <div style={{ fontSize: "3.5rem", marginBottom: "1rem" }}>👥</div>
+            <h3
+              className="font-semibold mb-2"
+              style={{
+                fontSize: "1.125rem",
+                color: "var(--color-neutral-900)",
+              }}
+            >
+              No clients found
+            </h3>
+            <p
+              className="mb-6"
+              style={{
+                fontSize: "0.875rem",
+                color: "var(--color-neutral-500)",
+              }}
+            >
+              {searchQuery
+                ? "Try adjusting your search query"
+                : "Get started by adding your first client"}
+            </p>
+            <Link
+              href="/provider/clients/create"
+              className="btn btn-primary btn-md inline-flex items-center gap-2"
+            >
+              <FontAwesomeIcon icon={faPlus} style={{ fontSize: "0.8rem" }} />
+              Add New Client
+            </Link>
+          </div>
+        ) : (
+          <div
+            className="rounded-2xl overflow-hidden"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              border: "1px solid var(--color-neutral-200)",
+            }}
+          >
+            <div style={{ overflowX: "auto" }}>
+              <table
+                style={{
+                  width: "100%",
+                  minWidth: "52rem",
+                  borderCollapse: "collapse",
+                }}
+              >
+                <thead>
                   <tr
-                    key={client.id}
-                    className="hover:bg-neutral-50 transition-colors group"
+                    style={{
+                      backgroundColor: "var(--color-neutral-50)",
+                      borderBottom: "1px solid var(--color-neutral-200)",
+                    }}
                   >
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-semibold text-sm flex-shrink-0">
-                          {getInitials(client.full_name)}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-semibold text-neutral-900 group-hover:text-primary-600 transition-colors whitespace-nowrap">
+                    {[
+                      "Client",
+                      "Contact",
+                      "Location",
+                      "Projects",
+                      "Actions",
+                    ].map((h, i) => (
+                      <th
+                        key={h}
+                        style={{
+                          padding: "0.75rem 1.5rem",
+                          textAlign: i === 4 ? "center" : "left",
+                          fontSize: "0.65rem",
+                          fontWeight: 700,
+                          color: "var(--color-neutral-400)",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.06em",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginated.map((client, idx) => (
+                    <tr
+                      key={client.id}
+                      style={{
+                        borderTop:
+                          idx === 0
+                            ? "none"
+                            : "1px solid var(--color-neutral-100)",
+                        transition: "background-color 120ms",
+                      }}
+                      onMouseEnter={(e) => {
+                        (
+                          e.currentTarget as HTMLTableRowElement
+                        ).style.backgroundColor = "var(--color-neutral-50)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (
+                          e.currentTarget as HTMLTableRowElement
+                        ).style.backgroundColor = "transparent";
+                      }}
+                    >
+                      {/* Client */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-semibold flex-shrink-0"
+                            style={{
+                              backgroundColor: avatarColor(client.id),
+                              color: "white",
+                              fontSize: "0.8rem",
+                            }}
+                          >
+                            {getInitials(client.full_name)}
+                          </div>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <h4
+                              className="font-semibold whitespace-nowrap"
+                              style={{
+                                fontSize: "0.9rem",
+                                color: "var(--color-neutral-900)",
+                              }}
+                            >
                               {client.full_name}
                             </h4>
                             <button
                               onClick={() => toggleFavorite(client.id)}
-                              className="hover:scale-110 transition-transform flex-shrink-0"
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                flexShrink: 0,
+                                padding: "0.125rem",
+                              }}
                             >
                               <FontAwesomeIcon
                                 icon={
@@ -301,190 +539,419 @@ export default function ClientsPage() {
                                     ? faSolidStar
                                     : faRegularStar
                                 }
-                                className={
-                                  favorites.has(client.id)
-                                    ? "text-yellow-500"
-                                    : "text-neutral-300"
-                                }
+                                style={{
+                                  color: favorites.has(client.id)
+                                    ? "#f59e0b"
+                                    : "var(--color-neutral-300)",
+                                  fontSize: "0.8rem",
+                                }}
                               />
                             </button>
                           </div>
                         </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col gap-1">
-                        <span className="text-neutral-700 text-sm whitespace-nowrap">
-                          {client.email}
-                        </span>
-                        <span className="text-neutral-600 text-sm whitespace-nowrap">
-                          {client.phone}
-                        </span>
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <FontAwesomeIcon
-                          icon={faLocationDot}
-                          className="text-neutral-400 text-sm flex-shrink-0"
-                        />
-                        <span className="text-neutral-700 whitespace-nowrap">
-                          {client.city}, {client.state}
-                        </span>
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <FontAwesomeIcon
-                          icon={faFolder}
-                          className="text-neutral-400 text-sm"
-                        />
-                        <span className="font-semibold text-neutral-900">
-                          {client.project_count}
-                        </span>
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-4">
-                      <div className="flex items-center justify-center">
-                        <div
-                          className="relative"
-                          ref={
-                            openDropdown === client.id.toString()
-                              ? dropdownRef
-                              : null
-                          }
+                      {/* Contact */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <p
+                          className="whitespace-nowrap"
+                          style={{
+                            fontSize: "0.8125rem",
+                            color: "var(--color-neutral-700)",
+                          }}
                         >
-                          <button
-                            onClick={() =>
-                              setOpenDropdown(
-                                openDropdown === client.id.toString()
-                                  ? null
-                                  : client.id.toString()
-                              )
-                            }
-                            className="p-2 rounded-lg hover:bg-neutral-100 transition-colors"
+                          {client.email}
+                        </p>
+                        <p
+                          className="whitespace-nowrap mt-0.5"
+                          style={{
+                            fontSize: "0.78rem",
+                            color: "var(--color-neutral-500)",
+                          }}
+                        >
+                          {client.phone}
+                        </p>
+                      </td>
+
+                      {/* Location */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <div className="flex items-center gap-2">
+                          <FontAwesomeIcon
+                            icon={faLocationDot}
+                            style={{
+                              color: "#1ab189",
+                              fontSize: "0.75rem",
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span
+                            className="whitespace-nowrap"
+                            style={{
+                              fontSize: "0.8125rem",
+                              color: "var(--color-neutral-700)",
+                            }}
                           >
-                            <FontAwesomeIcon
-                              icon={faEllipsisVertical}
-                              className="text-neutral-600"
-                            />
-                          </button>
-
-                          {openDropdown === client.id.toString() && (
-                            <div className="absolute right-0 mt-2 w-48 bg-neutral-0 rounded-lg shadow-lg border border-neutral-200 py-1 z-10">
-                              <Link
-                                href={`/provider/clients/${client.id}`}
-                                className="w-full px-4 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-3 transition-colors"
-                              >
-                                <FontAwesomeIcon
-                                  icon={faEye}
-                                  className="text-blue-600 w-4"
-                                />
-                                View Details
-                              </Link>
-                              <Link
-                                href={`/provider/clients/${client.id}/edit`}
-                                className="w-full px-4 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-3 transition-colors"
-                              >
-                                <FontAwesomeIcon
-                                  icon={faPenToSquare}
-                                  className="text-green-600 w-4"
-                                />
-                                Edit Client
-                              </Link>
-                              <button
-                                onClick={() =>
-                                  handleDelete(client.id, client.full_name)
-                                }
-                                className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors"
-                              >
-                                <FontAwesomeIcon
-                                  icon={faTrash}
-                                  className="w-4"
-                                />
-                                Delete
-                              </button>
-                            </div>
-                          )}
+                            {client.city}, {client.state}
+                          </span>
                         </div>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      </td>
 
-          {/* Pagination */}
-          <div className="px-6 py-4 border-t border-neutral-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <p className="text-neutral-600 text-sm">
-              Showing {(currentPage - 1) * 6 + 1}-
-              {Math.min(currentPage * 6, filteredClients.length)} of{" "}
-              {filteredClients.length} clients
-            </p>
-            <div className="flex items-center justify-center sm:justify-end gap-2">
-              <button
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="p-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <FontAwesomeIcon
-                  icon={faChevronLeft}
-                  className="text-neutral-600"
-                />
-              </button>
-              {[...Array(totalPages)].map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setCurrentPage(i + 1)}
-                  className={`w-10 h-10 rounded-lg font-medium transition-colors ${
-                    currentPage === i + 1
-                      ? "bg-primary-600 text-neutral-0"
-                      : "bg-neutral-0 text-neutral-700 border border-neutral-200 hover:bg-neutral-50"
-                  }`}
-                >
-                  {i + 1}
-                </button>
-              ))}
-              <button
-                onClick={() =>
-                  setCurrentPage((p) => Math.min(totalPages, p + 1))
-                }
-                disabled={currentPage === totalPages}
-                className="p-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <FontAwesomeIcon
-                  icon={faChevronRight}
-                  className="text-neutral-600"
-                />
-              </button>
+                      {/* Projects */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <div className="flex items-center gap-2">
+                          <FontAwesomeIcon
+                            icon={faFolder}
+                            style={{ color: "#1ab189", fontSize: "0.75rem" }}
+                          />
+                          <span
+                            className="font-semibold"
+                            style={{
+                              fontSize: "0.875rem",
+                              color: "var(--color-neutral-900)",
+                            }}
+                          >
+                            {client.project_count}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Actions */}
+                      <td style={{ padding: "1rem 1.5rem" }}>
+                        <div className="flex justify-center">
+                          <div
+                            className="relative"
+                            ref={
+                              openDropdown === client.id.toString()
+                                ? dropdownRef
+                                : null
+                            }
+                          >
+                            <button
+                              onClick={() =>
+                                setOpenDropdown(
+                                  openDropdown === client.id.toString()
+                                    ? null
+                                    : client.id.toString(),
+                                )
+                              }
+                              aria-label="Client actions"
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                padding: "0.5rem",
+                                borderRadius: "0.5rem",
+                                color: "var(--color-neutral-600)",
+                              }}
+                              onMouseEnter={(e) => {
+                                (
+                                  e.currentTarget as HTMLButtonElement
+                                ).style.backgroundColor =
+                                  "var(--color-neutral-100)";
+                              }}
+                              onMouseLeave={(e) => {
+                                (
+                                  e.currentTarget as HTMLButtonElement
+                                ).style.backgroundColor = "transparent";
+                              }}
+                            >
+                              <FontAwesomeIcon
+                                icon={faEllipsisVertical}
+                                style={{ fontSize: "0.9rem" }}
+                              />
+                            </button>
+
+                            {openDropdown === client.id.toString() && (
+                              <div
+                                className="absolute right-0 rounded-xl overflow-hidden z-10"
+                                style={{
+                                  marginTop: "0.5rem",
+                                  width: "11rem",
+                                  backgroundColor: "var(--color-neutral-0)",
+                                  border: "1px solid var(--color-neutral-200)",
+                                  boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                                }}
+                              >
+                                <Link
+                                  href={`/provider/clients/${client.id}`}
+                                  className="flex items-center gap-3 px-4 py-2.5"
+                                  style={{
+                                    fontSize: "0.8125rem",
+                                    color: "var(--color-neutral-700)",
+                                    textDecoration: "none",
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    (
+                                      e.currentTarget as HTMLAnchorElement
+                                    ).style.backgroundColor =
+                                      "var(--color-neutral-50)";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (
+                                      e.currentTarget as HTMLAnchorElement
+                                    ).style.backgroundColor = "transparent";
+                                  }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faEye}
+                                    style={{
+                                      color: "#3b82f6",
+                                      fontSize: "0.8rem",
+                                      width: "1rem",
+                                    }}
+                                  />
+                                  View Details
+                                </Link>
+                                <Link
+                                  href={`/provider/clients/${client.id}/edit`}
+                                  className="flex items-center gap-3 px-4 py-2.5"
+                                  style={{
+                                    fontSize: "0.8125rem",
+                                    color: "var(--color-neutral-700)",
+                                    textDecoration: "none",
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    (
+                                      e.currentTarget as HTMLAnchorElement
+                                    ).style.backgroundColor =
+                                      "var(--color-neutral-50)";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (
+                                      e.currentTarget as HTMLAnchorElement
+                                    ).style.backgroundColor = "transparent";
+                                  }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faPenToSquare}
+                                    style={{
+                                      color: "#1ab189",
+                                      fontSize: "0.8rem",
+                                      width: "1rem",
+                                    }}
+                                  />
+                                  Edit Client
+                                </Link>
+                                <button
+                                  onClick={() => {
+                                    setDeleteTarget({
+                                      id: client.id,
+                                      name: client.full_name,
+                                    });
+                                    setOpenDropdown(null);
+                                  }}
+                                  className="w-full flex items-center gap-3 px-4 py-2.5"
+                                  style={{
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    fontSize: "0.8125rem",
+                                    color: "#ef4444",
+                                    textAlign: "left",
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    (
+                                      e.currentTarget as HTMLButtonElement
+                                    ).style.backgroundColor = "#fef2f2";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (
+                                      e.currentTarget as HTMLButtonElement
+                                    ).style.backgroundColor = "transparent";
+                                  }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faTrash}
+                                    style={{
+                                      fontSize: "0.8rem",
+                                      width: "1rem",
+                                    }}
+                                  />
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
-        </div>
 
-        {/* Empty State */}
-        {filteredClients.length === 0 && (
-          <div className="text-center py-16">
-            <div className="text-6xl mb-4">👥</div>
-            <h3 className="heading-3 text-neutral-900 mb-2">
-              No clients found
-            </h3>
-            <p className="text-neutral-600 body-regular mb-6">
-              {searchQuery
-                ? "Try adjusting your search query"
-                : "Get started by adding your first client"}
-            </p>
-            <Link href="/provider/clients/create" className="btn-primary">
-              <FontAwesomeIcon icon={faPlus} className="mr-2" />
-              Add New Client
-            </Link>
+            {/* Pagination */}
+            <div
+              className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+              style={{
+                padding: "0.875rem 1.5rem",
+                borderTop: "1px solid var(--color-neutral-200)",
+              }}
+            >
+              <p
+                style={{
+                  fontSize: "0.78rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
+                Showing {(currentPage - 1) * PER_PAGE + 1}–
+                {Math.min(currentPage * PER_PAGE, filtered.length)} of{" "}
+                {filtered.length} clients
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  style={{
+                    padding: "0.5rem 0.625rem",
+                    borderRadius: "0.5rem",
+                    border: "1px solid var(--color-neutral-200)",
+                    background: "none",
+                    cursor: "pointer",
+                    color: "var(--color-neutral-600)",
+                    opacity: currentPage === 1 ? 0.4 : 1,
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faChevronLeft}
+                    style={{ fontSize: "0.75rem" }}
+                  />
+                </button>
+                {[...Array(totalPages)].map((_, i) => {
+                  const active = currentPage === i + 1;
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => setCurrentPage(i + 1)}
+                      style={{
+                        width: "2.25rem",
+                        height: "2.25rem",
+                        borderRadius: "0.5rem",
+                        fontWeight: 600,
+                        fontSize: "0.8125rem",
+                        cursor: "pointer",
+                        border: active
+                          ? "none"
+                          : "1px solid var(--color-neutral-200)",
+                        backgroundColor: active ? "#1ab189" : "transparent",
+                        color: active ? "white" : "var(--color-neutral-700)",
+                      }}
+                    >
+                      {i + 1}
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() =>
+                    setCurrentPage((p) => Math.min(totalPages, p + 1))
+                  }
+                  disabled={currentPage === totalPages}
+                  style={{
+                    padding: "0.5rem 0.625rem",
+                    borderRadius: "0.5rem",
+                    border: "1px solid var(--color-neutral-200)",
+                    background: "none",
+                    cursor: "pointer",
+                    color: "var(--color-neutral-600)",
+                    opacity: currentPage === totalPages ? 0.4 : 1,
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faChevronRight}
+                    style={{ fontSize: "0.75rem" }}
+                  />
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-2xl max-w-md w-full"
+            style={{
+              backgroundColor: "var(--color-neutral-0)",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div style={{ padding: "1.75rem" }}>
+              <div
+                className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+                style={{ backgroundColor: "#fef2f2" }}
+              >
+                <FontAwesomeIcon
+                  icon={faExclamationTriangle}
+                  style={{ color: "#ef4444", fontSize: "1.1rem" }}
+                />
+              </div>
+              <h3
+                className="font-semibold text-center mb-2"
+                style={{
+                  fontSize: "1.0625rem",
+                  color: "var(--color-neutral-900)",
+                }}
+              >
+                Delete Client?
+              </h3>
+              <p
+                className="text-center mb-6"
+                style={{
+                  fontSize: "0.875rem",
+                  color: "var(--color-neutral-500)",
+                }}
+              >
+                Are you sure you want to delete &quot;{deleteTarget.name}&quot;?
+                This action cannot be undone.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={deleteMutation.isPending}
+                  className="btn btn-ghost btn-md flex-1 justify-center"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => deleteMutation.mutate(deleteTarget.id)}
+                  disabled={deleteMutation.isPending}
+                  className="btn btn-md flex-1 justify-center flex items-center gap-2"
+                  style={{
+                    backgroundColor: "#ef4444",
+                    color: "white",
+                    border: "none",
+                    opacity: deleteMutation.isPending ? 0.6 : 1,
+                  }}
+                >
+                  {deleteMutation.isPending ? (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faSpinner}
+                        className="animate-spin"
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
+                      Deleting…
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon
+                        icon={faTrash}
+                        style={{ fontSize: "0.875rem" }}
+                      />{" "}
+                      Delete
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

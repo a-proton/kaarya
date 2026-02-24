@@ -16,20 +16,25 @@ import {
   faCheck,
   faSpinner,
   faEye,
-  faPenToSquare,
   faTrash,
   faFilter,
   faClock,
   faUser,
   faCloudUpload,
+  faExclamationTriangle,
 } from "@fortawesome/free-solid-svg-icons";
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { getAccessToken } from "@/lib/auth";
 import { uploadProjectUpdateMedia } from "@/lib/storageService";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Client {
   id: number;
@@ -62,8 +67,15 @@ interface ApiUpdate {
   work_hours: string;
   posted_by_name: string;
   milestone: number | null;
-  media: any[];
+  media: MediaItem[];
   created_at: string;
+}
+
+interface MediaItem {
+  media_file?: string;
+  media_url?: string;
+  file?: string;
+  url?: string;
 }
 
 interface DailyUpdate extends ApiUpdate {
@@ -82,157 +94,796 @@ interface UpdateFormData {
   work_hours: string;
 }
 
-// API function to create update with media URLs (not files)
-async function createUpdateWithMediaUrls(
-  projectId: string,
-  updateData: {
-    update_text: string;
-    work_hours: string;
-    media_urls: string[];
-  }
-): Promise<any> {
-  const token = getAccessToken();
-
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
-
-  const response = await fetch(
-    `${API_BASE_URL}/api/v1/projects/${projectId}/updates/create/`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(updateData),
-      credentials: "include",
-    }
-  );
-
-  if (!response.ok) {
-    let errorData;
-    try {
-      errorData = await response.json();
-    } catch {
-      errorData = { detail: `HTTP ${response.status} Error` };
-    }
-
-    let errorMessage = "Failed to create update";
-    if (errorData.detail) {
-      errorMessage = errorData.detail;
-    } else if (errorData.error) {
-      errorMessage = errorData.error;
-    } else if (typeof errorData === "object") {
-      const fieldErrors = Object.entries(errorData)
-        .map(([field, messages]) => {
-          const msgArray = Array.isArray(messages) ? messages : [messages];
-          return `${field}: ${msgArray.join(", ")}`;
-        })
-        .join("\n");
-      if (fieldErrors) errorMessage = fieldErrors;
-    }
-
-    throw new Error(errorMessage);
-  }
-
-  return response.json();
+interface ApiError {
+  data?: { detail?: string };
+  message?: string;
 }
 
-// Custom API function for DELETE requests
-async function deleteUpdate(
-  projectId: number,
-  updateId: number
-): Promise<void> {
+interface DeleteTarget {
+  id: number;
+  projectId: number;
+  title: string;
+}
+
+// ─── Status config ────────────────────────────────────────────────────────────
+
+const STATUS_STYLES: Record<
+  string,
+  { bg: string; color: string; border: string; label: string; symbol: string }
+> = {
+  completed: {
+    bg: "rgba(26,177,137,0.1)",
+    color: "#065f46",
+    border: "rgba(26,177,137,0.3)",
+    label: "Completed",
+    symbol: "✓",
+  },
+  "in-progress": {
+    bg: "rgba(59,130,246,0.1)",
+    color: "#1d4ed8",
+    border: "rgba(59,130,246,0.3)",
+    label: "In Progress",
+    symbol: "⏱",
+  },
+  blocked: {
+    bg: "rgba(239,68,68,0.1)",
+    color: "#991b1b",
+    border: "rgba(239,68,68,0.25)",
+    label: "Blocked",
+    symbol: "⚠",
+  },
+};
+
+// ─── Design tokens ────────────────────────────────────────────────────────────
+
+const baseInput: React.CSSProperties = {
+  width: "100%",
+  padding: "0.625rem 1rem",
+  fontFamily: "inherit",
+  fontSize: "0.875rem",
+  color: "var(--color-neutral-900)",
+  background: "#fff",
+  border: "1px solid var(--color-neutral-200)",
+  borderRadius: "0.625rem",
+  outline: "none",
+  transition: "border-color 150ms, box-shadow 150ms",
+  appearance: "none" as const,
+};
+
+const focusRing: React.CSSProperties = {
+  borderColor: "#1ab189",
+  boxShadow: "0 0 0 3px rgba(26,177,137,0.12)",
+};
+
+// ─── API helpers ──────────────────────────────────────────────────────────────
+
+async function authedFetch(url: string, options: RequestInit = {}) {
   const token = getAccessToken();
+  if (!token) throw new Error("No authentication token found");
+  return fetch(url, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    credentials: "include",
+  });
+}
 
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
+async function fetchProjects(): Promise<{ results: Project[] }> {
+  const res = await authedFetch(`${API_BASE_URL}/api/v1/projects/`);
+  if (!res.ok) throw new Error("Failed to fetch projects");
+  return res.json();
+}
 
-  const response = await fetch(
-    `${API_BASE_URL}/api/v1/projects/${projectId}/updates/${updateId}/delete/`,
-    {
-      method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-    }
+async function fetchProjectUpdates(
+  projectId: number,
+): Promise<{ results: ApiUpdate[] }> {
+  const res = await authedFetch(
+    `${API_BASE_URL}/api/v1/projects/${projectId}/updates/`,
   );
+  if (!res.ok)
+    throw new Error(`Failed to fetch updates for project ${projectId}`);
+  return res.json();
+}
 
-  if (!response.ok) {
-    let errorData;
+async function createUpdateWithMediaUrls(
+  projectId: string,
+  updateData: { update_text: string; work_hours: string; media_urls: string[] },
+): Promise<unknown> {
+  const res = await authedFetch(
+    `${API_BASE_URL}/api/v1/projects/${projectId}/updates/create/`,
+    { method: "POST", body: JSON.stringify(updateData) },
+  );
+  if (!res.ok) {
+    let errorData: Record<string, unknown>;
     try {
-      errorData = await response.json();
+      errorData = await res.json();
     } catch {
-      errorData = { detail: `HTTP ${response.status} Error` };
+      errorData = {};
+    }
+    const detail = (errorData.detail as string) || (errorData.error as string);
+    if (detail) throw new Error(detail);
+    const fieldErrors = Object.entries(errorData)
+      .map(
+        ([f, msgs]) => `${f}: ${Array.isArray(msgs) ? msgs.join(", ") : msgs}`,
+      )
+      .join("\n");
+    throw new Error(fieldErrors || "Failed to create update");
+  }
+  return res.json();
+}
+
+async function deleteUpdateApi(
+  projectId: number,
+  updateId: number,
+): Promise<void> {
+  const res = await authedFetch(
+    `${API_BASE_URL}/api/v1/projects/${projectId}/updates/${updateId}/delete/`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    let errorData: Record<string, unknown>;
+    try {
+      errorData = await res.json();
+    } catch {
+      errorData = {};
     }
     throw new Error(
-      errorData.detail || errorData.error || "Failed to delete update"
+      (errorData.detail as string) ||
+        (errorData.error as string) ||
+        "Failed to delete update",
     );
   }
 }
 
-// Custom API function for GET requests
-async function fetchProjects(): Promise<{ results: Project[] }> {
-  const token = getAccessToken();
-
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
-
-  const response = await fetch(`${API_BASE_URL}/api/v1/projects/`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    credentials: "include",
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to fetch projects");
-  }
-
-  return response.json();
+function getMediaUrl(media: MediaItem): string {
+  return media.media_file || media.media_url || media.file || media.url || "";
 }
 
-async function fetchProjectUpdates(
-  projectId: number
-): Promise<{ results: ApiUpdate[] }> {
-  const token = getAccessToken();
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
-  if (!token) {
-    throw new Error("No authentication token found");
-  }
-
-  const response = await fetch(
-    `${API_BASE_URL}/api/v1/projects/${projectId}/updates/`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-    }
+function FocusInput({
+  as: Tag = "input",
+  style,
+  ...props
+}: {
+  as?: "input" | "select" | "textarea";
+  style?: React.CSSProperties;
+} & Record<string, unknown>) {
+  const [focused, setFocused] = useState(false);
+  const El = Tag as "input";
+  return (
+    <El
+      {...props}
+      style={{ ...baseInput, ...(focused ? focusRing : {}), ...style }}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+    />
   );
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch updates for project ${projectId}`);
-  }
-
-  return response.json();
 }
+
+function FormLabel({
+  children,
+  required,
+}: {
+  children: React.ReactNode;
+  required?: boolean;
+}) {
+  return (
+    <label
+      style={{
+        display: "block",
+        fontSize: "0.75rem",
+        fontWeight: 600,
+        color: "var(--color-neutral-700)",
+        marginBottom: "0.375rem",
+        letterSpacing: "0.02em",
+      }}
+    >
+      {children}
+      {required && (
+        <span style={{ color: "#ef4444", marginLeft: "0.2rem" }}>*</span>
+      )}
+    </label>
+  );
+}
+
+function SectionCard({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: "1px solid var(--color-neutral-200)",
+        borderRadius: "1rem",
+        padding: "1.5rem",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SectionIcon({ icon }: { icon: typeof faCheck }) {
+  return (
+    <div
+      style={{
+        width: 32,
+        height: 32,
+        background: "rgba(26,177,137,0.1)",
+        borderRadius: "0.5rem",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      <FontAwesomeIcon
+        icon={icon}
+        style={{ color: "#1ab189", fontSize: "0.8125rem" }}
+      />
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUS_STYLES[status] || STATUS_STYLES["in-progress"];
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "0.3rem",
+        fontSize: "0.6875rem",
+        fontWeight: 600,
+        letterSpacing: "0.03em",
+        padding: "0.25rem 0.625rem",
+        borderRadius: 9999,
+        background: s.bg,
+        color: s.color,
+        border: `1px solid ${s.border}`,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {s.symbol} {s.label}
+    </span>
+  );
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+
+function Toast({ message, onClose }: { message: string; onClose: () => void }) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: "2rem",
+        right: "2rem",
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        gap: "0.75rem",
+        background: "var(--color-neutral-900)",
+        color: "#fff",
+        padding: "0.875rem 1.25rem",
+        borderRadius: 9999,
+        boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+        animation: "slideInRight 0.25s ease",
+        minWidth: 260,
+      }}
+    >
+      <span
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          background: "#1ab189",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        <FontAwesomeIcon
+          icon={faCheck}
+          style={{ fontSize: "0.75rem", color: "#fff" }}
+        />
+      </span>
+      <span style={{ fontSize: "0.875rem", fontWeight: 500, flex: 1 }}>
+        {message}
+      </span>
+      <button
+        onClick={onClose}
+        style={{
+          background: "none",
+          border: "none",
+          color: "rgba(255,255,255,0.6)",
+          cursor: "pointer",
+          padding: 0,
+        }}
+      >
+        <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
+      </button>
+    </div>
+  );
+}
+
+function UploadingToast() {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: "2rem",
+        right: "2rem",
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        gap: "0.75rem",
+        background: "var(--color-neutral-900)",
+        color: "#fff",
+        padding: "0.875rem 1.25rem",
+        borderRadius: 9999,
+        boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+        minWidth: 260,
+      }}
+    >
+      <FontAwesomeIcon
+        icon={faSpinner}
+        className="animate-spin"
+        style={{ color: "#1ab189", fontSize: "1rem" }}
+      />
+      <div>
+        <p style={{ fontSize: "0.875rem", fontWeight: 600, margin: 0 }}>
+          Uploading Media…
+        </p>
+        <p
+          style={{
+            fontSize: "0.75rem",
+            color: "rgba(255,255,255,0.6)",
+            margin: 0,
+          }}
+        >
+          Please wait
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal shell ──────────────────────────────────────────────────────────────
+
+function Modal({
+  children,
+  onClose,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 50,
+        padding: "1rem",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#fff",
+          borderRadius: "1.25rem",
+          boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+          maxWidth: 720,
+          width: "100%",
+          maxHeight: "90vh",
+          overflowY: "auto",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ModalHeader({
+  title,
+  subtitle,
+  onClose,
+}: {
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: "sticky",
+        top: 0,
+        background: "#fff",
+        borderBottom: "1px solid var(--color-neutral-200)",
+        padding: "1.25rem 1.5rem",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        zIndex: 10,
+        borderRadius: "1.25rem 1.25rem 0 0",
+      }}
+    >
+      <div>
+        <p
+          style={{
+            fontSize: "1rem",
+            fontWeight: 700,
+            color: "var(--color-neutral-900)",
+            margin: 0,
+          }}
+        >
+          {title}
+        </p>
+        {subtitle && (
+          <p
+            style={{
+              fontSize: "0.8125rem",
+              color: "var(--color-neutral-500)",
+              margin: "0.15rem 0 0",
+            }}
+          >
+            {subtitle}
+          </p>
+        )}
+      </div>
+      <button
+        onClick={onClose}
+        style={{
+          background: "var(--color-neutral-100)",
+          border: "none",
+          borderRadius: "0.5rem",
+          width: 32,
+          height: 32,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--color-neutral-600)",
+        }}
+      >
+        <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.875rem" }} />
+      </button>
+    </div>
+  );
+}
+
+function ModalFooter({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        position: "sticky",
+        bottom: 0,
+        background: "var(--color-neutral-50)",
+        borderTop: "1px solid var(--color-neutral-200)",
+        padding: "1rem 1.5rem",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: "0.75rem",
+        borderRadius: "0 0 1.25rem 1.25rem",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ─── Delete Modal ─────────────────────────────────────────────────────────────
+
+function DeleteModal({
+  target,
+  isDeleting,
+  onConfirm,
+  onCancel,
+}: {
+  target: DeleteTarget;
+  isDeleting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 60,
+        padding: "1rem",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#fff",
+          borderRadius: "1.25rem",
+          boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+          maxWidth: 420,
+          width: "100%",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div style={{ padding: "1.5rem 1.5rem 0" }}>
+          <div
+            style={{
+              width: 52,
+              height: 52,
+              background: "rgba(239,68,68,0.1)",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginBottom: "1rem",
+            }}
+          >
+            <FontAwesomeIcon
+              icon={faTrash}
+              style={{ color: "#ef4444", fontSize: "1.125rem" }}
+            />
+          </div>
+          <p
+            style={{
+              fontSize: "1rem",
+              fontWeight: 700,
+              color: "var(--color-neutral-900)",
+              margin: "0 0 0.375rem",
+            }}
+          >
+            Delete Update
+          </p>
+          <p
+            style={{
+              fontSize: "0.875rem",
+              color: "var(--color-neutral-500)",
+              margin: 0,
+              lineHeight: 1.5,
+            }}
+          >
+            Are you sure you want to delete{" "}
+            <strong style={{ color: "var(--color-neutral-800)" }}>
+              "{target.title}"
+            </strong>
+            ? This action cannot be undone.
+          </p>
+        </div>
+        {/* Warning */}
+        <div
+          style={{
+            margin: "1.25rem 1.5rem",
+            background: "rgba(239,68,68,0.05)",
+            border: "1px solid rgba(239,68,68,0.2)",
+            borderRadius: "0.625rem",
+            padding: "0.75rem 1rem",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "0.625rem",
+          }}
+        >
+          <FontAwesomeIcon
+            icon={faExclamationTriangle}
+            style={{
+              color: "#ef4444",
+              fontSize: "0.8125rem",
+              marginTop: 2,
+              flexShrink: 0,
+            }}
+          />
+          <p
+            style={{
+              fontSize: "0.8125rem",
+              color: "#991b1b",
+              margin: 0,
+              lineHeight: 1.5,
+            }}
+          >
+            Any media files and client-visible progress associated with this
+            update will also be removed.
+          </p>
+        </div>
+        {/* Footer */}
+        <div
+          style={{
+            background: "var(--color-neutral-50)",
+            borderTop: "1px solid var(--color-neutral-200)",
+            padding: "1rem 1.5rem",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: "0.75rem",
+          }}
+        >
+          <button
+            className="btn btn-ghost"
+            onClick={onCancel}
+            disabled={isDeleting}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={isDeleting}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              padding: "0.625rem 1.25rem",
+              background: "#ef4444",
+              color: "#fff",
+              border: "none",
+              borderRadius: "0.625rem",
+              fontSize: "0.875rem",
+              fontWeight: 600,
+              cursor: isDeleting ? "not-allowed" : "pointer",
+              opacity: isDeleting ? 0.6 : 1,
+              transition: "opacity 150ms, box-shadow 150ms",
+            }}
+          >
+            {isDeleting ? (
+              <>
+                <FontAwesomeIcon
+                  icon={faSpinner}
+                  className="animate-spin"
+                  style={{ fontSize: "0.75rem" }}
+                />
+                Deleting…
+              </>
+            ) : (
+              <>
+                <FontAwesomeIcon
+                  icon={faTrash}
+                  style={{ fontSize: "0.75rem" }}
+                />
+                Yes, Delete
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Discard Modal ────────────────────────────────────────────────────────────
+
+function DiscardModal({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 60,
+        padding: "1rem",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#fff",
+          borderRadius: "1.25rem",
+          boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+          maxWidth: 420,
+          width: "100%",
+          overflow: "hidden",
+        }}
+      >
+        <div style={{ padding: "1.5rem 1.5rem 0" }}>
+          <div
+            style={{
+              width: 52,
+              height: 52,
+              background: "rgba(245,158,11,0.1)",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginBottom: "1rem",
+            }}
+          >
+            <FontAwesomeIcon
+              icon={faExclamationTriangle}
+              style={{ color: "#f59e0b", fontSize: "1.125rem" }}
+            />
+          </div>
+          <p
+            style={{
+              fontSize: "1rem",
+              fontWeight: 700,
+              color: "var(--color-neutral-900)",
+              margin: "0 0 0.375rem",
+            }}
+          >
+            Discard Update?
+          </p>
+          <p
+            style={{
+              fontSize: "0.875rem",
+              color: "var(--color-neutral-500)",
+              margin: 0,
+              lineHeight: 1.5,
+            }}
+          >
+            All content you've entered — title, description, and attached media
+            — will be permanently lost.
+          </p>
+        </div>
+        <div
+          style={{
+            background: "var(--color-neutral-50)",
+            borderTop: "1px solid var(--color-neutral-200)",
+            padding: "1rem 1.5rem",
+            marginTop: "1.5rem",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: "0.75rem",
+          }}
+        >
+          <button className="btn btn-ghost" onClick={onCancel}>
+            Keep Editing
+          </button>
+          <button
+            onClick={onConfirm}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              padding: "0.625rem 1.25rem",
+              background: "#f59e0b",
+              color: "#fff",
+              border: "none",
+              borderRadius: "0.625rem",
+              fontSize: "0.875rem",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            <FontAwesomeIcon icon={faTrash} style={{ fontSize: "0.75rem" }} />
+            Discard
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function DailyUpdatesPage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
+
+  // Form state
   const [selectedProject, setSelectedProject] = useState<string>("");
-  const [updateDate, setUpdateDate] = useState<string>(
-    new Date().toISOString().split("T")[0]
-  );
   const [updateTitle, setUpdateTitle] = useState<string>("");
   const [updateContent, setUpdateContent] = useState<string>("");
   const [workHours, setWorkHours] = useState<string>("");
@@ -242,19 +893,30 @@ export default function DailyUpdatesPage() {
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
+
+  // UI state
+  const [toast, setToast] = useState<string | null>(null);
   const [viewingUpdate, setViewingUpdate] = useState<DailyUpdate | null>(null);
-  const [editingUpdate, setEditingUpdate] = useState<DailyUpdate | null>(null);
+  const [deletingUpdate, setDeletingUpdate] = useState<DeleteTarget | null>(
+    null,
+  );
+  const [showDiscardModal, setShowDiscardModal] = useState(false);
   const [filterProject, setFilterProject] = useState<string>("all");
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch projects
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  // ── Queries ────────────────────────────────────────────────────────────────
+
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
     queryKey: ["projects"],
     queryFn: fetchProjects,
   });
 
-  // Fetch all updates from all projects
   const {
     data: allUpdatesData,
     isLoading: updatesLoading,
@@ -262,80 +924,58 @@ export default function DailyUpdatesPage() {
   } = useQuery({
     queryKey: ["all-daily-updates"],
     queryFn: async () => {
-      let projects: Project[] = [];
-      if (projectsData && Array.isArray(projectsData.results)) {
-        projects = projectsData.results;
-      } else {
-        const projRes = await fetchProjects();
-        projects = projRes.results || [];
+      let projects: Project[] = projectsData?.results || [];
+      if (!projects.length) {
+        const res = await fetchProjects();
+        projects = res.results || [];
       }
+      if (!projects.length) return [];
 
-      if (projects.length === 0) return [];
-
-      const updatesPromises = projects.map(async (project) => {
-        try {
-          const res = await fetchProjectUpdates(project.id);
-          const results = res.results || [];
-          return results.map((update) => ({
-            ...update,
-            project_id: project.id,
-            project_name: project.project_name,
-            client_name: project.client?.full_name || "Unassigned",
-            title: update.update_text.split("\n")[0].substring(0, 100),
-            status:
-              parseFloat(update.work_hours) > 0 ? "completed" : "in-progress",
-          }));
-        } catch (err) {
-          console.error(
-            `Error fetching updates for project ${project.id}:`,
-            err
-          );
-          return [];
-        }
-      });
-
-      const updatesArrays = await Promise.all(updatesPromises);
-      return updatesArrays.flat();
+      const arrays = await Promise.all(
+        projects.map(async (project) => {
+          try {
+            const res = await fetchProjectUpdates(project.id);
+            return (res.results || []).map((update) => ({
+              ...update,
+              project_id: project.id,
+              project_name: project.project_name,
+              client_name: project.client?.full_name || "Unassigned",
+              title: update.update_text.split("\n")[0].substring(0, 100),
+              status:
+                parseFloat(update.work_hours) > 0 ? "completed" : "in-progress",
+            })) as DailyUpdate[];
+          } catch {
+            return [] as DailyUpdate[];
+          }
+        }),
+      );
+      return arrays.flat();
     },
     enabled: true,
   });
 
+  // ── Mutations ──────────────────────────────────────────────────────────────
+
   const createUpdateMutation = useMutation({
     mutationFn: async (data: UpdateFormData & { media: MediaFile[] }) => {
-      // Step 1: Upload all media files to Supabase
-      console.log("📤 Starting media upload to Supabase...");
       const uploadedUrls: string[] = [];
 
       if (data.media.length > 0) {
         setIsUploadingMedia(true);
-
-        for (let i = 0; i < data.media.length; i++) {
-          const media = data.media[i];
-
-          // Update status to uploading
+        for (const media of data.media) {
           setMediaFiles((prev) =>
             prev.map((m) =>
               m.id === media.id
                 ? { ...m, uploadStatus: "uploading", uploadProgress: 0 }
-                : m
-            )
+                : m,
+            ),
           );
-
           try {
-            console.log(
-              `📤 Uploading file ${i + 1}/${data.media.length}: ${
-                media.file.name
-              }`
-            );
-
-            const uploadResult = await uploadProjectUpdateMedia(media.file, {
+            const result = await uploadProjectUpdateMedia(media.file, {
               folder: `project_updates/${data.project}`,
             });
-
-            if (uploadResult.success && uploadResult.publicUrl) {
-              uploadedUrls.push(uploadResult.publicUrl);
-
-              // Update status to uploaded
+            if (result.success && result.publicUrl) {
+              uploadedUrls.push(result.publicUrl);
               setMediaFiles((prev) =>
                 prev.map((m) =>
                   m.id === media.id
@@ -343,20 +983,13 @@ export default function DailyUpdatesPage() {
                         ...m,
                         uploadStatus: "uploaded",
                         uploadProgress: 100,
-                        uploadedUrl: uploadResult.publicUrl,
+                        uploadedUrl: result.publicUrl,
                       }
-                    : m
-                )
+                    : m,
+                ),
               );
-
-              console.log(`✅ Upload successful: ${uploadResult.publicUrl}`);
-            } else {
-              throw new Error(uploadResult.error || "Upload failed");
-            }
-          } catch (error) {
-            console.error(`❌ Upload failed for ${media.file.name}:`, error);
-
-            // Update status to failed
+            } else throw new Error(result.error || "Upload failed");
+          } catch (err) {
             setMediaFiles((prev) =>
               prev.map((m) =>
                 m.id === media.id
@@ -364,50 +997,37 @@ export default function DailyUpdatesPage() {
                       ...m,
                       uploadStatus: "failed",
                       error:
-                        error instanceof Error
-                          ? error.message
-                          : "Upload failed",
+                        err instanceof Error ? err.message : "Upload failed",
                     }
-                  : m
-              )
+                  : m,
+              ),
             );
-
             throw new Error(
-              `Failed to upload ${media.file.name}: ${
-                error instanceof Error ? error.message : "Unknown error"
-              }`
+              `Failed to upload ${media.file.name}: ${err instanceof Error ? err.message : "Unknown error"}`,
             );
           }
         }
-
         setIsUploadingMedia(false);
       }
 
-      // Step 2: Create update with media URLs
-      console.log("📝 Creating update with media URLs...");
-      const updatePayload = {
+      return createUpdateWithMediaUrls(data.project, {
         update_text: `${data.title}\n\n${data.content}`,
         work_hours: data.work_hours.trim() || "0",
         media_urls: uploadedUrls,
-      };
-
-      console.log("📤 Sending update payload:", updatePayload);
-
-      return createUpdateWithMediaUrls(data.project, updatePayload);
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["all-daily-updates"] });
-      showSuccessNotification("Update posted successfully!");
+      showToast("Update posted successfully!");
       resetForm();
     },
-    onError: (error: Error) => {
-      console.error("❌ Create update error:", error);
-      alert(error.message || "Failed to post update");
+    onError: (err: unknown) => {
+      const e = err as ApiError;
+      alert(e.message || "Failed to post update");
       setIsUploadingMedia(false);
     },
   });
 
-  // Delete update mutation
   const deleteUpdateMutation = useMutation({
     mutationFn: async ({
       projectId,
@@ -416,98 +1036,91 @@ export default function DailyUpdatesPage() {
       projectId: number;
       updateId: number;
     }) => {
-      await deleteUpdate(projectId, updateId);
+      await deleteUpdateApi(projectId, updateId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["all-daily-updates"] });
-      showSuccessNotification("Update deleted successfully!");
+      showToast("Update deleted successfully!");
+      setDeletingUpdate(null);
       setViewingUpdate(null);
     },
-    onError: (error: Error) => {
-      alert(error.message || "Failed to delete update");
+    onError: (err: unknown) => {
+      const e = err as ApiError;
+      alert(e.message || "Failed to delete update");
+      setDeletingUpdate(null);
     },
   });
 
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
   const projects = projectsData?.results || [];
-  const dailyUpdates = Array.isArray(allUpdatesData) ? allUpdatesData : [];
+  const dailyUpdates: DailyUpdate[] = Array.isArray(allUpdatesData)
+    ? allUpdatesData
+    : [];
+
+  const resetForm = () => {
+    setUpdateTitle("");
+    setUpdateContent("");
+    setUpdateStatus("completed");
+    setWorkHours("");
+    mediaFiles.forEach((m) => URL.revokeObjectURL(m.preview));
+    setMediaFiles([]);
+    setSelectedProject("");
+    setIsUploadingMedia(false);
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-
     const newFiles: MediaFile[] = [];
-
     Array.from(files).forEach((file) => {
-      // Validate file type
       const isImage = file.type.startsWith("image/");
       const isVideo = file.type.startsWith("video/");
-
       if (!isImage && !isVideo) {
-        alert(`File ${file.name} is not a valid image or video`);
+        alert(`${file.name} is not a valid image or video`);
         return;
       }
-
-      // Validate file size (100MB limit for videos, 5MB for images)
       const maxSize = isVideo ? 100 * 1024 * 1024 : 5 * 1024 * 1024;
       if (file.size > maxSize) {
-        const maxSizeMB = isVideo ? 100 : 5;
-        alert(`File ${file.name} is too large. Maximum size is ${maxSizeMB}MB`);
+        alert(`${file.name} exceeds the ${isVideo ? "100MB" : "5MB"} limit`);
         return;
       }
-
-      const fileType = isImage ? "image" : "video";
-      const preview = URL.createObjectURL(file);
-
-      const newMedia: MediaFile = {
+      newFiles.push({
         id: Date.now().toString() + Math.random(),
         file,
-        type: fileType,
-        preview,
+        type: isImage ? "image" : "video",
+        preview: URL.createObjectURL(file),
         uploadStatus: "pending",
         uploadProgress: 0,
-      };
-
-      newFiles.push(newMedia);
+      });
     });
-
     setMediaFiles((prev) => [...prev, ...newFiles]);
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const removeMedia = (id: string) => {
     setMediaFiles((prev) => {
-      const file = prev.find((f) => f.id === id);
-      if (file) {
-        URL.revokeObjectURL(file.preview);
-      }
-      return prev.filter((f) => f.id !== id);
+      const f = prev.find((m) => m.id === id);
+      if (f) URL.revokeObjectURL(f.preview);
+      return prev.filter((m) => m.id !== id);
     });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // Validation
     if (!selectedProject) {
       alert("Please select a project");
       return;
     }
-
     if (!updateTitle.trim()) {
       alert("Please add a title");
       return;
     }
-
     if (!updateContent.trim()) {
       alert("Please add update content");
       return;
     }
-
     setIsSubmitting(true);
-
     try {
       await createUpdateMutation.mutateAsync({
         project: selectedProject,
@@ -517,70 +1130,51 @@ export default function DailyUpdatesPage() {
         work_hours: workHours,
         media: mediaFiles,
       });
-    } catch (error) {
-      console.error("Submission error:", error);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const resetForm = () => {
-    setUpdateTitle("");
-    setUpdateContent("");
-    setUpdateStatus("completed");
-    setWorkHours("");
-    mediaFiles.forEach((media) => URL.revokeObjectURL(media.preview));
-    setMediaFiles([]);
-    setSelectedProject("");
-    setUpdateDate(new Date().toISOString().split("T")[0]);
-    setEditingUpdate(null);
-    setIsUploadingMedia(false);
-  };
-
-  const showSuccessNotification = (message: string) => {
-    setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 3000);
-  };
-
-  const handleViewUpdate = (update: DailyUpdate) => {
-    setViewingUpdate(update);
-  };
-
-  const handleDeleteUpdate = (update: DailyUpdate) => {
-    if (confirm("Are you sure you want to delete this update?")) {
-      deleteUpdateMutation.mutate({
-        projectId: update.project_id,
-        updateId: update.id,
-      });
-    }
-  };
-
-  const handleCancelEdit = () => {
-    resetForm();
-  };
-
-  const selectedProjectData = projects.find(
-    (p) => p.id.toString() === selectedProject
-  );
-
   const filteredUpdates =
     filterProject === "all"
       ? dailyUpdates
-      : dailyUpdates.filter(
-          (update) => update.project_id.toString() === filterProject
-        );
+      : dailyUpdates.filter((u) => u.project_id.toString() === filterProject);
 
+  const selectedProjectData = projects.find(
+    (p) => p.id.toString() === selectedProject,
+  );
   const isLoading = projectsLoading || updatesLoading;
+  const isBusy =
+    isSubmitting || createUpdateMutation.isPending || isUploadingMedia;
+
+  // ── Loading / Error ────────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center">
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "var(--color-neutral-50)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            className="animate-spin"
+            style={{
+              fontSize: "2.5rem",
+              color: "#1ab189",
+              marginBottom: "1rem",
+            }}
           />
-          <p className="text-neutral-600">Loading updates...</p>
+          <p
+            style={{ color: "var(--color-neutral-600)", fontSize: "0.9375rem" }}
+          >
+            Loading updates…
+          </p>
         </div>
       </div>
     );
@@ -588,18 +1182,64 @@ export default function DailyUpdatesPage() {
 
   if (isError) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FontAwesomeIcon icon={faTimes} className="text-red-600 text-2xl" />
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "var(--color-neutral-50)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            background: "#fff",
+            border: "1px solid var(--color-neutral-200)",
+            borderRadius: "1.25rem",
+            padding: "3rem",
+            maxWidth: 420,
+            textAlign: "center",
+          }}
+        >
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              background: "rgba(239,68,68,0.1)",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 1.25rem",
+            }}
+          >
+            <FontAwesomeIcon
+              icon={faTimes}
+              style={{ color: "#ef4444", fontSize: "1.25rem" }}
+            />
           </div>
-          <h3 className="text-lg font-semibold text-red-900 mb-2">
+          <h3
+            style={{
+              fontSize: "1.0625rem",
+              fontWeight: 700,
+              color: "var(--color-neutral-900)",
+              marginBottom: "0.5rem",
+            }}
+          >
             Error Loading Updates
           </h3>
-          <p className="text-red-700 mb-4">Failed to load daily updates</p>
+          <p
+            style={{
+              color: "var(--color-neutral-500)",
+              fontSize: "0.875rem",
+              marginBottom: "1.5rem",
+            }}
+          >
+            Something went wrong. Please try again.
+          </p>
           <button
             onClick={() => window.location.reload()}
-            className="btn-primary"
+            className="btn btn-primary"
           >
             Try Again
           </button>
@@ -608,278 +1248,358 @@ export default function DailyUpdatesPage() {
     );
   }
 
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex items-center gap-4 mb-2">
-          <button
-            onClick={() => window.history.back()}
-            className="p-2 rounded-lg hover:bg-neutral-50 transition-colors"
-            aria-label="Go back"
+    <div style={{ minHeight: "100vh", background: "var(--color-neutral-50)" }}>
+      <style>{`
+        @keyframes slideInRight { from { transform: translateX(60px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .animate-spin { animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .animate-pulse { animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .update-card:hover { border-color: #1ab189 !important; }
+        .media-thumb:hover { border-color: #1ab189 !important; }
+        .upload-zone:hover { border-color: #1ab189 !important; background: rgba(26,177,137,0.03) !important; }
+        .action-btn { background: none; border: none; cursor: pointer; border-radius: 0.5rem; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; transition: background 150ms; }
+        .action-btn:hover { background: var(--color-neutral-100); }
+        .remove-btn { opacity: 0; transition: opacity 150ms; }
+        .media-wrap:hover .remove-btn { opacity: 1; }
+      `}</style>
+
+      {/* Toast */}
+      {toast && <Toast message={toast} onClose={() => setToast(null)} />}
+      {isUploadingMedia && <UploadingToast />}
+
+      {/* Page header */}
+      <div
+        style={{
+          background: "#fff",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.25rem 2rem",
+          display: "flex",
+          alignItems: "center",
+          gap: "1rem",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <div
+            style={{
+              width: 36,
+              height: 36,
+              background: "rgba(26,177,137,0.1)",
+              borderRadius: "0.625rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
           >
             <FontAwesomeIcon
-              icon={faArrowLeft}
-              className="text-neutral-600 text-lg"
+              icon={faClipboardList}
+              style={{ color: "#1ab189", fontSize: "0.9375rem" }}
             />
-          </button>
+          </div>
           <div>
-            <h1 className="heading-2 text-neutral-900 flex items-center gap-3">
-              <FontAwesomeIcon
-                icon={faClipboardList}
-                className="text-primary-600"
-              />
+            <h1
+              style={{
+                fontSize: "1.125rem",
+                fontWeight: 700,
+                color: "var(--color-neutral-900)",
+                margin: 0,
+              }}
+            >
               Daily Updates
             </h1>
-            <p className="text-neutral-600 body-regular mt-1">
+            <p
+              style={{
+                fontSize: "0.8125rem",
+                color: "var(--color-neutral-500)",
+                margin: 0,
+              }}
+            >
               Post progress updates with photos and videos
             </p>
           </div>
         </div>
       </div>
 
-      {/* Success Toast */}
-      {showSuccess && (
-        <div className="fixed top-8 right-8 z-50 animate-slide-in-right">
-          <div className="bg-green-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3">
-            <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-              <FontAwesomeIcon icon={faCheck} />
-            </div>
-            <div>
-              <p className="font-semibold">Update Posted Successfully!</p>
-              <p className="text-green-100 text-sm">
-                Your daily update has been saved
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Upload Progress Toast */}
-      {isUploadingMedia && (
-        <div className="fixed top-8 right-8 z-50 animate-slide-in-right">
-          <div className="bg-blue-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3">
-            <FontAwesomeIcon
-              icon={faSpinner}
-              className="animate-spin text-xl"
-            />
-            <div>
-              <p className="font-semibold">Uploading Media...</p>
-              <p className="text-blue-100 text-sm">
-                Please wait while files are being uploaded
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="p-8 max-w-5xl mx-auto">
-        {/* Editing Banner */}
-        {editingUpdate && (
-          <div className="mb-6 bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <FontAwesomeIcon
-                icon={faPenToSquare}
-                className="text-yellow-600 text-xl"
-              />
-              <div>
-                <p className="font-semibold text-yellow-900">Editing Update</p>
-                <p className="text-yellow-700 text-sm">
-                  Make your changes and click "Update" to save
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleCancelEdit}
-              className="px-4 py-2 bg-yellow-600 text-neutral-0 rounded-lg hover:bg-yellow-700 transition-colors font-medium text-sm"
+      <div style={{ padding: "2rem", maxWidth: 860, margin: "0 auto" }}>
+        <form
+          onSubmit={handleSubmit}
+          style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
+        >
+          {/* Project & Work Hours */}
+          <SectionCard>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.625rem",
+                marginBottom: "1.25rem",
+              }}
             >
-              Cancel Edit
-            </button>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Project Selection & Work Hours Card */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Project Selection */}
+              <SectionIcon icon={faBriefcase} />
+              <p
+                style={{
+                  fontSize: "0.9375rem",
+                  fontWeight: 700,
+                  color: "var(--color-neutral-900)",
+                  margin: 0,
+                }}
+              >
+                Project Details
+              </p>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "1rem",
+              }}
+            >
               <div>
-                <label
-                  htmlFor="project"
-                  className="block text-neutral-700 font-semibold mb-3 body-small flex items-center gap-2"
-                >
-                  <FontAwesomeIcon
-                    icon={faBriefcase}
-                    className="text-primary-600"
-                  />
-                  Select Project <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <select
-                    id="project"
+                <FormLabel required>Select Project</FormLabel>
+                <div style={{ position: "relative" }}>
+                  <FocusInput
+                    as="select"
                     value={selectedProject}
-                    onChange={(e) => setSelectedProject(e.target.value)}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                      setSelectedProject(e.target.value)
+                    }
                     required
-                    className="w-full appearance-none px-4 py-3.5 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                    style={{ cursor: "pointer", paddingRight: "2.5rem" }}
                   >
-                    <option value="">Choose a project...</option>
-                    {projects.map((project) => (
-                      <option key={project.id} value={project.id}>
-                        {project.project_name} -{" "}
-                        {project.client?.full_name || "No client"}
+                    <option value="">Choose a project…</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.project_name} — {p.client?.full_name || "No client"}
                       </option>
                     ))}
-                  </select>
+                  </FocusInput>
                   <FontAwesomeIcon
                     icon={faChevronDown}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"
+                    style={{
+                      position: "absolute",
+                      right: "0.875rem",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      color: "var(--color-neutral-400)",
+                      fontSize: "0.75rem",
+                      pointerEvents: "none",
+                    }}
                   />
                 </div>
                 {selectedProjectData && (
-                  <div className="mt-3 p-3 bg-primary-50 rounded-lg border border-primary-200">
-                    <p className="text-primary-700 text-sm">
-                      <span className="font-semibold">Client:</span>{" "}
-                      {selectedProjectData.client?.full_name || "Unassigned"}
+                  <div
+                    style={{
+                      marginTop: "0.5rem",
+                      padding: "0.5rem 0.75rem",
+                      background: "rgba(26,177,137,0.06)",
+                      border: "1px solid rgba(26,177,137,0.2)",
+                      borderRadius: "0.5rem",
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: "0.75rem",
+                        color: "#065f46",
+                        margin: 0,
+                      }}
+                    >
+                      Client:{" "}
+                      <strong>
+                        {selectedProjectData.client?.full_name || "Unassigned"}
+                      </strong>
                     </p>
                   </div>
                 )}
               </div>
-
-              {/* Work Hours */}
               <div>
-                <label
-                  htmlFor="work_hours"
-                  className="block text-neutral-700 font-semibold mb-3 body-small flex items-center gap-2"
-                >
-                  <FontAwesomeIcon
-                    icon={faClock}
-                    className="text-primary-600"
-                  />
-                  Work Hours
-                </label>
-                <input
+                <FormLabel>Work Hours</FormLabel>
+                <FocusInput
                   type="number"
-                  id="work_hours"
                   value={workHours}
-                  onChange={(e) => setWorkHours(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setWorkHours(e.target.value)
+                  }
                   min="0"
                   step="0.5"
                   placeholder="e.g., 8.5"
-                  className="w-full px-4 py-3.5 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                 />
-                <p className="mt-2 text-neutral-500 text-sm">
+                <p
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "var(--color-neutral-400)",
+                    marginTop: "0.375rem",
+                  }}
+                >
                   Total hours worked on this update
                 </p>
               </div>
             </div>
-          </div>
+          </SectionCard>
 
-          {/* Title & Status Card */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Title */}
+          {/* Title & Status */}
+          <SectionCard>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.625rem",
+                marginBottom: "1.25rem",
+              }}
+            >
+              <SectionIcon icon={faFileAlt} />
+              <p
+                style={{
+                  fontSize: "0.9375rem",
+                  fontWeight: 700,
+                  color: "var(--color-neutral-900)",
+                  margin: 0,
+                }}
+              >
+                Update Info
+              </p>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "1rem",
+              }}
+            >
               <div>
-                <label
-                  htmlFor="title"
-                  className="block text-neutral-700 font-semibold mb-3 body-small flex items-center gap-2"
-                >
-                  <FontAwesomeIcon
-                    icon={faFileAlt}
-                    className="text-primary-600"
-                  />
-                  Update Title <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  id="title"
+                <FormLabel required>Title</FormLabel>
+                <FocusInput
                   value={updateTitle}
-                  onChange={(e) => setUpdateTitle(e.target.value)}
-                  placeholder="e.g., Electrical Wiring Installation Completed"
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setUpdateTitle(e.target.value)
+                  }
+                  placeholder="e.g., Electrical Wiring Completed"
                   required
-                  className="w-full px-4 py-3.5 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular"
                 />
               </div>
-
-              {/* Status */}
               <div>
-                <label
-                  htmlFor="status"
-                  className="block text-neutral-700 font-semibold mb-3 body-small flex items-center gap-2"
-                >
-                  <FontAwesomeIcon
-                    icon={faCheck}
-                    className="text-primary-600"
-                  />
-                  Work Status <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <select
-                    id="status"
+                <FormLabel required>Work Status</FormLabel>
+                <div style={{ position: "relative" }}>
+                  <FocusInput
+                    as="select"
                     value={updateStatus}
-                    onChange={(e) =>
-                      setUpdateStatus(
-                        e.target.value as
-                          | "completed"
-                          | "in-progress"
-                          | "blocked"
-                      )
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                      setUpdateStatus(e.target.value as typeof updateStatus)
                     }
                     required
-                    className="w-full appearance-none px-4 py-3.5 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular cursor-pointer"
+                    style={{ cursor: "pointer", paddingRight: "2.5rem" }}
                   >
                     <option value="completed">✓ Completed</option>
                     <option value="in-progress">⏱ In Progress</option>
                     <option value="blocked">⚠ Blocked</option>
-                  </select>
+                  </FocusInput>
                   <FontAwesomeIcon
                     icon={faChevronDown}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"
+                    style={{
+                      position: "absolute",
+                      right: "0.875rem",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      color: "var(--color-neutral-400)",
+                      fontSize: "0.75rem",
+                      pointerEvents: "none",
+                    }}
                   />
                 </div>
               </div>
             </div>
-          </div>
+          </SectionCard>
 
-          {/* Update Content Card */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <label
-              htmlFor="content"
-              className="block text-neutral-700 font-semibold mb-3 body-small flex items-center gap-2"
+          {/* Content */}
+          <SectionCard>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.625rem",
+                marginBottom: "1.25rem",
+              }}
             >
-              <FontAwesomeIcon icon={faFileAlt} className="text-primary-600" />
-              Update Content <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              id="content"
-              value={updateContent}
-              onChange={(e) => setUpdateContent(e.target.value)}
-              placeholder="Share today's progress, challenges, or accomplishments...&#10;&#10;Example:&#10;- Completed foundation work&#10;- Installed electrical wiring in main room&#10;- Team meeting scheduled for tomorrow"
-              required
-              rows={8}
-              className="w-full px-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-regular resize-none"
-            />
-            <div className="mt-2 flex items-center justify-between">
-              <p className="text-neutral-500 text-sm">
-                {updateContent.length} characters
+              <SectionIcon icon={faClipboardList} />
+              <p
+                style={{
+                  fontSize: "0.9375rem",
+                  fontWeight: 700,
+                  color: "var(--color-neutral-900)",
+                  margin: 0,
+                }}
+              >
+                Update Content
               </p>
             </div>
-          </div>
+            <FormLabel required>Description</FormLabel>
+            <FocusInput
+              as="textarea"
+              value={updateContent}
+              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                setUpdateContent(e.target.value)
+              }
+              placeholder={
+                "Share today's progress, challenges, or accomplishments…\n\nExample:\n- Completed foundation work\n- Installed electrical wiring\n- Team meeting scheduled for tomorrow"
+              }
+              required
+              rows={8}
+              style={{ resize: "none", minHeight: 160 }}
+            />
+            <p
+              style={{
+                fontSize: "0.75rem",
+                color: "var(--color-neutral-400)",
+                marginTop: "0.375rem",
+                textAlign: "right",
+              }}
+            >
+              {updateContent.length} characters
+            </p>
+          </SectionCard>
 
-          {/* Media Upload Card */}
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <label className="text-neutral-700 font-semibold body-small flex items-center gap-2">
-                <FontAwesomeIcon icon={faImage} className="text-primary-600" />
-                Attach Media (Photos & Videos)
-              </label>
+          {/* Media */}
+          <SectionCard>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: "1.25rem",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.625rem",
+                }}
+              >
+                <SectionIcon icon={faImage} />
+                <p
+                  style={{
+                    fontSize: "0.9375rem",
+                    fontWeight: 700,
+                    color: "var(--color-neutral-900)",
+                    margin: 0,
+                  }}
+                >
+                  Attach Media
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-neutral-0 rounded-lg hover:bg-primary-700 transition-colors font-medium text-sm"
                 disabled={isUploadingMedia}
+                className="btn btn-primary"
+                style={{ fontSize: "0.8125rem", padding: "0.5rem 0.875rem" }}
               >
-                <FontAwesomeIcon icon={faPlus} />
+                <FontAwesomeIcon
+                  icon={faPlus}
+                  style={{ fontSize: "0.75rem" }}
+                />
                 Add Files
               </button>
               <input
@@ -888,638 +1608,1197 @@ export default function DailyUpdatesPage() {
                 accept="image/*,video/*"
                 multiple
                 onChange={handleFileSelect}
-                className="hidden"
+                style={{ display: "none" }}
                 disabled={isUploadingMedia}
               />
             </div>
 
-            {/* Media Preview Grid */}
             {mediaFiles.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {mediaFiles.map((media) => (
-                  <div
-                    key={media.id}
-                    className="relative group rounded-lg overflow-hidden border-2 border-neutral-200 hover:border-primary-500 transition-colors"
-                  >
-                    <div className="aspect-square bg-neutral-100">
-                      {media.type === "image" ? (
-                        <img
-                          src={media.preview}
-                          alt="Upload preview"
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-full relative">
-                          <video
-                            src={media.preview}
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute inset-0 flex items-center justify-center bg-neutral-900/50">
-                            <FontAwesomeIcon
-                              icon={faVideo}
-                              className="text-neutral-0 text-3xl"
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Upload Status Overlay */}
-                    {media.uploadStatus && media.uploadStatus !== "pending" && (
-                      <div className="absolute inset-0 bg-neutral-900/70 flex items-center justify-center">
-                        {media.uploadStatus === "uploading" && (
-                          <div className="text-center text-neutral-0">
-                            <FontAwesomeIcon
-                              icon={faSpinner}
-                              className="text-2xl mb-2 animate-spin"
-                            />
-                            <p className="text-xs">Uploading...</p>
-                          </div>
-                        )}
-                        {media.uploadStatus === "uploaded" && (
-                          <div className="text-center text-green-400">
-                            <FontAwesomeIcon
-                              icon={faCheck}
-                              className="text-2xl mb-2"
-                            />
-                            <p className="text-xs">Uploaded!</p>
-                          </div>
-                        )}
-                        {media.uploadStatus === "failed" && (
-                          <div className="text-center text-red-400">
-                            <FontAwesomeIcon
-                              icon={faTimes}
-                              className="text-2xl mb-2"
-                            />
-                            <p className="text-xs">Failed</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => removeMedia(media.id)}
-                      disabled={isUploadingMedia}
-                      className="absolute top-2 right-2 w-7 h-7 bg-red-600 text-neutral-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-700 disabled:opacity-50"
-                      aria-label="Remove file"
+              <>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                      "repeat(auto-fill, minmax(120px, 1fr))",
+                    gap: "0.75rem",
+                  }}
+                >
+                  {mediaFiles.map((media) => (
+                    <div
+                      key={media.id}
+                      className="media-wrap"
+                      style={{ position: "relative" }}
                     >
-                      <FontAwesomeIcon icon={faTimes} className="text-sm" />
-                    </button>
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-neutral-900/80 to-transparent p-2">
-                      <p className="text-neutral-0 text-xs truncate">
+                      <div
+                        className="media-thumb"
+                        style={{
+                          aspectRatio: "1",
+                          background: "var(--color-neutral-100)",
+                          border: "1px solid var(--color-neutral-200)",
+                          borderRadius: "0.625rem",
+                          overflow: "hidden",
+                          position: "relative",
+                          transition: "border-color 150ms",
+                        }}
+                      >
+                        {media.type === "image" ? (
+                          <img
+                            src={media.preview}
+                            alt="preview"
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                            }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              position: "relative",
+                            }}
+                          >
+                            <video
+                              src={media.preview}
+                              style={{
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
+                              }}
+                            />
+                            <div
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                background: "rgba(0,0,0,0.4)",
+                              }}
+                            >
+                              <FontAwesomeIcon
+                                icon={faVideo}
+                                style={{ color: "#fff", fontSize: "1.5rem" }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                        {/* Upload overlay */}
+                        {media.uploadStatus &&
+                          media.uploadStatus !== "pending" && (
+                            <div
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                background: "rgba(0,0,0,0.6)",
+                                display: "flex",
+                                flexDirection: "column",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: "0.25rem",
+                              }}
+                            >
+                              {media.uploadStatus === "uploading" && (
+                                <FontAwesomeIcon
+                                  icon={faSpinner}
+                                  className="animate-spin"
+                                  style={{ color: "#fff", fontSize: "1.25rem" }}
+                                />
+                              )}
+                              {media.uploadStatus === "uploaded" && (
+                                <FontAwesomeIcon
+                                  icon={faCheck}
+                                  style={{
+                                    color: "#1ab189",
+                                    fontSize: "1.25rem",
+                                  }}
+                                />
+                              )}
+                              {media.uploadStatus === "failed" && (
+                                <FontAwesomeIcon
+                                  icon={faTimes}
+                                  style={{
+                                    color: "#ef4444",
+                                    fontSize: "1.25rem",
+                                  }}
+                                />
+                              )}
+                              <p
+                                style={{
+                                  color: "#fff",
+                                  fontSize: "0.625rem",
+                                  margin: 0,
+                                }}
+                              >
+                                {media.uploadStatus === "uploading"
+                                  ? "Uploading…"
+                                  : media.uploadStatus === "uploaded"
+                                    ? "Done"
+                                    : "Failed"}
+                              </p>
+                            </div>
+                          )}
+                      </div>
+                      {/* File name */}
+                      <p
+                        style={{
+                          fontSize: "0.625rem",
+                          color: "var(--color-neutral-500)",
+                          marginTop: "0.25rem",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
                         {media.file.name}
                       </p>
-                      {media.error && (
-                        <p className="text-red-400 text-xs truncate">
-                          {media.error}
-                        </p>
-                      )}
+                      {/* Remove */}
+                      <button
+                        type="button"
+                        className="remove-btn"
+                        onClick={() => removeMedia(media.id)}
+                        disabled={isUploadingMedia}
+                        style={{
+                          position: "absolute",
+                          top: 4,
+                          right: 4,
+                          width: 22,
+                          height: 22,
+                          background: "#ef4444",
+                          border: "none",
+                          borderRadius: "50%",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "#fff",
+                        }}
+                      >
+                        <FontAwesomeIcon
+                          icon={faTimes}
+                          style={{ fontSize: "0.5rem" }}
+                        />
+                      </button>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+                <div
+                  style={{
+                    marginTop: "1rem",
+                    padding: "0.75rem 1rem",
+                    background: "rgba(26,177,137,0.06)",
+                    border: "1px solid rgba(26,177,137,0.2)",
+                    borderRadius: "0.625rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.625rem",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faCloudUpload}
+                    style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                  />
+                  <p
+                    style={{
+                      fontSize: "0.8125rem",
+                      color: "#065f46",
+                      margin: 0,
+                    }}
+                  >
+                    {mediaFiles.length} file{mediaFiles.length > 1 ? "s" : ""}{" "}
+                    ready — will be uploaded to cloud storage when you post
+                  </p>
+                </div>
+              </>
             ) : (
               <div
+                className="upload-zone"
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-neutral-300 rounded-xl p-12 text-center hover:border-primary-500 hover:bg-primary-50/50 transition-all cursor-pointer"
+                style={{
+                  border: "2px dashed var(--color-neutral-300)",
+                  borderRadius: "0.875rem",
+                  padding: "3rem 2rem",
+                  textAlign: "center",
+                  cursor: "pointer",
+                  transition: "border-color 150ms, background 150ms",
+                }}
               >
-                <div className="flex flex-col items-center gap-3">
-                  <div className="w-16 h-16 bg-neutral-100 rounded-full flex items-center justify-center">
-                    <FontAwesomeIcon
-                      icon={faCloudUpload}
-                      className="text-neutral-400 text-2xl"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-neutral-700 font-medium mb-1">
-                      Click to upload or drag and drop
-                    </p>
-                    <p className="text-neutral-500 text-sm">
-                      Images (up to 5MB) or Videos (up to 100MB)
-                    </p>
-                    <p className="text-neutral-400 text-xs mt-1">
-                      Supported: JPG, PNG, GIF, MP4, MOV, WEBM
-                    </p>
-                  </div>
+                <div
+                  style={{
+                    width: 52,
+                    height: 52,
+                    background: "var(--color-neutral-100)",
+                    borderRadius: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    margin: "0 auto 1rem",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faCloudUpload}
+                    style={{
+                      color: "var(--color-neutral-400)",
+                      fontSize: "1.25rem",
+                    }}
+                  />
                 </div>
+                <p
+                  style={{
+                    fontSize: "0.9375rem",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-700)",
+                    margin: "0 0 0.375rem",
+                  }}
+                >
+                  Click to upload or drag and drop
+                </p>
+                <p
+                  style={{
+                    fontSize: "0.8125rem",
+                    color: "var(--color-neutral-500)",
+                    margin: "0 0 0.25rem",
+                  }}
+                >
+                  Images up to 5MB · Videos up to 100MB
+                </p>
+                <p
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "var(--color-neutral-400)",
+                    margin: 0,
+                  }}
+                >
+                  JPG, PNG, GIF, MP4, MOV, WEBM
+                </p>
               </div>
             )}
+          </SectionCard>
 
-            {mediaFiles.length > 0 && (
-              <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200 flex items-start gap-3">
-                <FontAwesomeIcon
-                  icon={faCloudUpload}
-                  className="text-blue-600 mt-0.5"
-                />
-                <div className="flex-1">
-                  <p className="text-blue-700 text-sm font-medium">
-                    {mediaFiles.length} file{mediaFiles.length > 1 ? "s" : ""}{" "}
-                    ready to upload
-                  </p>
-                  <p className="text-blue-600 text-xs mt-1">
-                    Files will be uploaded to Supabase when you post the update
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Submit Button */}
-          <div className="flex items-center justify-end gap-4">
+          {/* Actions */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              gap: "0.75rem",
+            }}
+          >
             <button
               type="button"
-              onClick={() => {
-                if (
-                  confirm(
-                    "Are you sure you want to discard this update? All content will be lost."
-                  )
-                ) {
-                  resetForm();
-                }
-              }}
-              disabled={isSubmitting || isUploadingMedia}
-              className="px-6 py-3 border-2 border-neutral-200 text-neutral-700 rounded-lg font-semibold hover:bg-neutral-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => setShowDiscardModal(true)}
+              disabled={isBusy}
+              className="btn btn-ghost"
             >
               Discard
             </button>
             <button
               type="submit"
-              disabled={
-                isSubmitting ||
-                createUpdateMutation.isPending ||
-                isUploadingMedia
-              }
-              className="btn-primary-lg flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed min-w-[200px] justify-center"
+              disabled={isBusy}
+              className="btn btn-primary"
+              style={{
+                minWidth: 160,
+                fontSize: "0.9375rem",
+                padding: "0.75rem 1.75rem",
+                opacity: isBusy ? 0.7 : 1,
+                cursor: isBusy ? "not-allowed" : "pointer",
+              }}
             >
               {isUploadingMedia ? (
                 <>
                   <FontAwesomeIcon
                     icon={faCloudUpload}
                     className="animate-pulse"
+                    style={{ fontSize: "0.875rem" }}
                   />
-                  Uploading Media...
+                  Uploading…
                 </>
-              ) : isSubmitting || createUpdateMutation.isPending ? (
+              ) : isBusy ? (
                 <>
-                  <FontAwesomeIcon icon={faSpinner} className="animate-spin" />
-                  Posting...
+                  <FontAwesomeIcon
+                    icon={faSpinner}
+                    className="animate-spin"
+                    style={{ fontSize: "0.875rem" }}
+                  />
+                  Posting…
                 </>
               ) : (
                 <>
-                  <FontAwesomeIcon icon={faPaperPlane} />
+                  <FontAwesomeIcon
+                    icon={faPaperPlane}
+                    style={{ fontSize: "0.875rem" }}
+                  />
                   Post Update
                 </>
               )}
             </button>
           </div>
 
-          {/* Helper Tips */}
-          <div className="bg-gradient-to-br from-primary-50 to-secondary-50 rounded-xl border border-primary-200 p-6">
-            <h3 className="font-semibold text-neutral-900 mb-3 flex items-center gap-2">
-              <FontAwesomeIcon
-                icon={faClipboardList}
-                className="text-primary-600"
-              />
-              Tips for Great Updates
-            </h3>
-            <ul className="space-y-2 text-neutral-700 text-sm">
-              <li className="flex items-start gap-2">
-                <span className="text-primary-600 mt-1">•</span>
-                <span>
-                  Include specific accomplishments and progress made today
-                </span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-primary-600 mt-1">•</span>
-                <span>Add photos showing before/after or work in progress</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-primary-600 mt-1">•</span>
-                <span>
-                  Mention any challenges faced and how they were resolved
-                </span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-primary-600 mt-1">•</span>
-                <span>Note next steps or what's planned for tomorrow</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-primary-600 mt-1">•</span>
-                <span className="font-medium text-blue-700">
-                  📤 Media files are uploaded to Supabase cloud storage
-                </span>
-              </li>
+          {/* Tips */}
+          <div
+            style={{
+              background: "rgba(26,177,137,0.05)",
+              border: "1px solid rgba(26,177,137,0.15)",
+              borderRadius: "1rem",
+              padding: "1.25rem 1.5rem",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.625rem",
+                marginBottom: "0.875rem",
+              }}
+            >
+              <SectionIcon icon={faClipboardList} />
+              <p
+                style={{
+                  fontSize: "0.9375rem",
+                  fontWeight: 700,
+                  color: "var(--color-neutral-900)",
+                  margin: 0,
+                }}
+              >
+                Tips for Great Updates
+              </p>
+            </div>
+            <ul
+              style={{
+                margin: 0,
+                padding: 0,
+                listStyle: "none",
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.5rem",
+              }}
+            >
+              {[
+                "Include specific accomplishments and progress made today",
+                "Add photos showing before/after or work in progress",
+                "Mention any challenges faced and how they were resolved",
+                "Note next steps or what's planned for tomorrow",
+              ].map((tip, i) => (
+                <li
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: "0.5rem",
+                  }}
+                >
+                  <span
+                    style={{
+                      color: "#1ab189",
+                      marginTop: 2,
+                      fontSize: "0.625rem",
+                    }}
+                  >
+                    ●
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-700)",
+                    }}
+                  >
+                    {tip}
+                  </span>
+                </li>
+              ))}
             </ul>
           </div>
         </form>
 
-        {/* Daily Updates List */}
+        {/* Updates list */}
         {dailyUpdates.length > 0 && (
-          <div className="mt-12">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="heading-3 text-neutral-900 flex items-center gap-3">
-                <FontAwesomeIcon
-                  icon={faClipboardList}
-                  className="text-primary-600"
-                />
-                Recent Updates
-                <span className="text-sm font-normal text-neutral-500">
-                  ({dailyUpdates.length})
+          <div style={{ marginTop: "3rem" }}>
+            {/* List header */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: "1.25rem",
+                flexWrap: "wrap",
+                gap: "0.75rem",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.625rem",
+                }}
+              >
+                <h2
+                  style={{
+                    fontSize: "1.125rem",
+                    fontWeight: 700,
+                    color: "var(--color-neutral-900)",
+                    margin: 0,
+                  }}
+                >
+                  Recent Updates
+                </h2>
+                <span
+                  style={{
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-500)",
+                    background: "var(--color-neutral-100)",
+                    padding: "0.2rem 0.625rem",
+                    borderRadius: 9999,
+                  }}
+                >
+                  {dailyUpdates.length}
                 </span>
-              </h2>
-
-              {/* Filter */}
-              <div className="flex items-center gap-3">
-                <label className="text-neutral-600 font-medium text-sm flex items-center gap-2">
-                  <FontAwesomeIcon icon={faFilter} />
-                  Filter:
-                </label>
-                <div className="relative">
-                  <select
+              </div>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+              >
+                <FontAwesomeIcon
+                  icon={faFilter}
+                  style={{
+                    color: "var(--color-neutral-400)",
+                    fontSize: "0.75rem",
+                  }}
+                />
+                <div style={{ position: "relative" }}>
+                  <FocusInput
+                    as="select"
                     value={filterProject}
-                    onChange={(e) => setFilterProject(e.target.value)}
-                    className="appearance-none px-4 py-2 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all body-small cursor-pointer pr-10"
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                      setFilterProject(e.target.value)
+                    }
+                    style={{
+                      cursor: "pointer",
+                      paddingRight: "2rem",
+                      fontSize: "0.8125rem",
+                      padding: "0.5rem 2rem 0.5rem 0.875rem",
+                    }}
                   >
                     <option value="all">All Projects</option>
-                    {projects.map((project) => (
-                      <option key={project.id} value={project.id}>
-                        {project.project_name}
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.project_name}
                       </option>
                     ))}
-                  </select>
+                  </FocusInput>
                   <FontAwesomeIcon
                     icon={faChevronDown}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 text-xs pointer-events-none"
+                    style={{
+                      position: "absolute",
+                      right: "0.625rem",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      color: "var(--color-neutral-400)",
+                      fontSize: "0.625rem",
+                      pointerEvents: "none",
+                    }}
                   />
                 </div>
               </div>
             </div>
 
-            <div className="space-y-4">
-              {filteredUpdates.map((update) => {
-                const project = projects.find(
-                  (p) => p.id === update.project_id
-                );
-                return (
-                  <div
-                    key={update.id}
-                    className="bg-neutral-0 rounded-xl border border-neutral-200 hover:border-primary-500 transition-all overflow-hidden"
-                  >
-                    <div className="p-6">
-                      {/* Header */}
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <div className="w-10 h-10 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-semibold text-sm">
-                              {project?.project_name.charAt(0)}
+            {filteredUpdates.length === 0 ? (
+              <div
+                style={{
+                  background: "#fff",
+                  border: "1px solid var(--color-neutral-200)",
+                  borderRadius: "1rem",
+                  padding: "3rem 2rem",
+                  textAlign: "center",
+                }}
+              >
+                <FontAwesomeIcon
+                  icon={faClipboardList}
+                  style={{
+                    fontSize: "2.5rem",
+                    color: "var(--color-neutral-300)",
+                    marginBottom: "1rem",
+                  }}
+                />
+                <p
+                  style={{
+                    fontSize: "0.9375rem",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-700)",
+                    margin: "0 0 0.375rem",
+                  }}
+                >
+                  No updates for this filter
+                </p>
+                <p
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--color-neutral-400)",
+                    margin: 0,
+                  }}
+                >
+                  Try selecting a different project
+                </p>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "1rem",
+                }}
+              >
+                {filteredUpdates.map((update) => {
+                  const project = projects.find(
+                    (p) => p.id === update.project_id,
+                  );
+                  const initial = project?.project_name.charAt(0) || "?";
+                  return (
+                    <div
+                      key={update.id}
+                      className="update-card"
+                      style={{
+                        background: "#fff",
+                        border: "1px solid var(--color-neutral-200)",
+                        borderRadius: "1rem",
+                        overflow: "hidden",
+                        transition: "border-color 150ms",
+                      }}
+                    >
+                      <div style={{ padding: "1.25rem 1.5rem" }}>
+                        {/* Card header */}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            justifyContent: "space-between",
+                            marginBottom: "0.875rem",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.75rem",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: 38,
+                                height: 38,
+                                borderRadius: "50%",
+                                background: "#1ab189",
+                                color: "#fff",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontWeight: 700,
+                                fontSize: "0.875rem",
+                                flexShrink: 0,
+                              }}
+                            >
+                              {initial}
                             </div>
                             <div>
-                              <h3 className="font-semibold text-neutral-900">
+                              <p
+                                style={{
+                                  fontSize: "0.875rem",
+                                  fontWeight: 700,
+                                  color: "var(--color-neutral-900)",
+                                  margin: 0,
+                                }}
+                              >
                                 {project?.project_name}
-                              </h3>
-                              <p className="text-neutral-500 text-sm">
+                              </p>
+                              <p
+                                style={{
+                                  fontSize: "0.75rem",
+                                  color: "var(--color-neutral-500)",
+                                  margin: 0,
+                                }}
+                              >
                                 {project?.client?.full_name || "Unassigned"}
                               </p>
                             </div>
                           </div>
-                          <h4 className="font-semibold text-neutral-900 text-lg mb-2">
-                            {update.title}
-                          </h4>
-                          <div className="flex items-center gap-2 mb-3">
-                            <span
-                              className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 border rounded ${
-                                update.status === "completed"
-                                  ? "bg-green-50 text-green-700 border-green-200"
-                                  : update.status === "in-progress"
-                                  ? "bg-blue-50 text-blue-700 border-blue-200"
-                                  : "bg-red-50 text-red-700 border-red-200"
-                              }`}
+                          <div style={{ display: "flex", gap: "0.25rem" }}>
+                            <button
+                              className="action-btn"
+                              onClick={() => setViewingUpdate(update)}
+                              title="View"
+                              style={{ color: "var(--color-neutral-500)" }}
                             >
-                              {update.status === "completed" && "✓ COMPLETED"}
-                              {update.status === "in-progress" &&
-                                "⏱ IN PROGRESS"}
-                              {update.status === "blocked" && "⚠ BLOCKED"}
-                            </span>
-                            {update.work_hours &&
-                              parseFloat(update.work_hours) > 0 && (
-                                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 bg-neutral-100 text-neutral-700 border border-neutral-200 rounded">
-                                  <FontAwesomeIcon icon={faClock} />
-                                  {update.work_hours} hrs
-                                </span>
-                              )}
+                              <FontAwesomeIcon
+                                icon={faEye}
+                                style={{ fontSize: "0.875rem" }}
+                              />
+                            </button>
+                            <button
+                              className="action-btn"
+                              onClick={() =>
+                                setDeletingUpdate({
+                                  id: update.id,
+                                  projectId: update.project_id,
+                                  title: update.title || "this update",
+                                })
+                              }
+                              title="Delete"
+                              disabled={deleteUpdateMutation.isPending}
+                              style={{ color: "#ef4444" }}
+                            >
+                              <FontAwesomeIcon
+                                icon={faTrash}
+                                style={{ fontSize: "0.875rem" }}
+                              />
+                            </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleViewUpdate(update)}
-                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            aria-label="View update"
-                          >
-                            <FontAwesomeIcon icon={faEye} />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteUpdate(update)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            aria-label="Delete update"
-                            disabled={deleteUpdateMutation.isPending}
-                          >
-                            <FontAwesomeIcon icon={faTrash} />
-                          </button>
-                        </div>
-                      </div>
 
-                      {/* Date */}
-                      <div className="flex items-center gap-2 text-neutral-600 text-sm mb-3">
-                        <FontAwesomeIcon
-                          icon={faCalendar}
-                          className="text-xs"
-                        />
-                        <span>
+                        {/* Title */}
+                        <p
+                          style={{
+                            fontSize: "0.9375rem",
+                            fontWeight: 600,
+                            color: "var(--color-neutral-900)",
+                            margin: "0 0 0.5rem",
+                          }}
+                        >
+                          {update.title}
+                        </p>
+
+                        {/* Badges */}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.5rem",
+                            flexWrap: "wrap",
+                            marginBottom: "0.75rem",
+                          }}
+                        >
+                          <StatusBadge
+                            status={update.status || "in-progress"}
+                          />
+                          {update.work_hours &&
+                            parseFloat(update.work_hours) > 0 && (
+                              <span
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "0.3rem",
+                                  fontSize: "0.6875rem",
+                                  fontWeight: 600,
+                                  padding: "0.25rem 0.625rem",
+                                  borderRadius: 9999,
+                                  background: "var(--color-neutral-100)",
+                                  color: "var(--color-neutral-600)",
+                                  border: "1px solid var(--color-neutral-200)",
+                                }}
+                              >
+                                <FontAwesomeIcon
+                                  icon={faClock}
+                                  style={{ fontSize: "0.6rem" }}
+                                />
+                                {update.work_hours} hrs
+                              </span>
+                            )}
+                        </div>
+
+                        {/* Date + Author */}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.5rem",
+                            fontSize: "0.8125rem",
+                            color: "var(--color-neutral-500)",
+                            marginBottom: "0.75rem",
+                          }}
+                        >
+                          <FontAwesomeIcon
+                            icon={faCalendar}
+                            style={{ fontSize: "0.625rem" }}
+                          />
                           {new Date(update.created_at).toLocaleDateString(
                             "en-US",
                             {
-                              weekday: "long",
-                              month: "long",
+                              weekday: "short",
+                              month: "short",
                               day: "numeric",
                               year: "numeric",
-                            }
+                            },
                           )}
-                        </span>
-                        <span className="text-neutral-400">•</span>
-                        <span className="text-neutral-500">
-                          Posted by {update.posted_by_name}
-                        </span>
-                      </div>
+                          <span style={{ color: "var(--color-neutral-300)" }}>
+                            ·
+                          </span>
+                          <FontAwesomeIcon
+                            icon={faUser}
+                            style={{ fontSize: "0.625rem" }}
+                          />
+                          {update.posted_by_name}
+                        </div>
 
-                      {/* Content Preview */}
-                      <p className="text-neutral-700 body-regular line-clamp-3 mb-4">
-                        {update.update_text}
-                      </p>
+                        {/* Content preview */}
+                        <p
+                          style={{
+                            fontSize: "0.875rem",
+                            color: "var(--color-neutral-600)",
+                            lineHeight: 1.6,
+                            margin: "0 0 0.875rem",
+                            overflow: "hidden",
+                            display: "-webkit-box",
+                            WebkitLineClamp: 3,
+                            WebkitBoxOrient: "vertical",
+                          }}
+                        >
+                          {update.update_text}
+                        </p>
 
-                      {/* Media Thumbnails */}
-                      {update.media && update.media.length > 0 && (
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {update.media
-                            .slice(0, 4)
-                            .map((media: any, index: number) => (
+                        {/* Media thumbnails */}
+                        {update.media && update.media.length > 0 && (
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: "0.5rem",
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            {update.media.slice(0, 4).map((media, idx) => (
                               <div
-                                key={index}
-                                className="w-20 h-20 rounded-lg overflow-hidden border border-neutral-200 relative"
+                                key={idx}
+                                style={{
+                                  width: 64,
+                                  height: 64,
+                                  borderRadius: "0.5rem",
+                                  overflow: "hidden",
+                                  border: "1px solid var(--color-neutral-200)",
+                                  flexShrink: 0,
+                                }}
                               >
                                 <img
-                                  src={
-                                    media.media_file ||
-                                    media.media_url ||
-                                    media.file ||
-                                    media.url
-                                  }
-                                  alt="Update media"
-                                  className="w-full h-full object-cover"
+                                  src={getMediaUrl(media)}
+                                  alt="media"
+                                  style={{
+                                    width: "100%",
+                                    height: "100%",
+                                    objectFit: "cover",
+                                  }}
                                 />
                               </div>
                             ))}
-                          {update.media.length > 4 && (
-                            <div className="w-20 h-20 rounded-lg bg-neutral-100 border border-neutral-200 flex items-center justify-center text-neutral-600 font-semibold text-sm">
-                              +{update.media.length - 4}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                            {update.media.length > 4 && (
+                              <div
+                                style={{
+                                  width: 64,
+                                  height: 64,
+                                  borderRadius: "0.5rem",
+                                  background: "var(--color-neutral-100)",
+                                  border: "1px solid var(--color-neutral-200)",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontSize: "0.8125rem",
+                                  fontWeight: 600,
+                                  color: "var(--color-neutral-600)",
+                                }}
+                              >
+                                +{update.media.length - 4}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {filteredUpdates.length === 0 && (
-              <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
-                <FontAwesomeIcon
-                  icon={faClipboardList}
-                  className="text-5xl text-neutral-300 mb-4"
-                />
-                <p className="text-neutral-600 font-medium">
-                  No updates found for this filter
-                </p>
-                <p className="text-neutral-500 text-sm mt-2">
-                  Try selecting a different project or clear the filter
-                </p>
+                  );
+                })}
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* View Update Modal */}
+      {/* ── View Update Modal ─────────────────────────────────────────────────── */}
       {viewingUpdate && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-neutral-0 border-b border-neutral-200 px-6 py-4 flex items-center justify-between z-10">
-              <h3 className="heading-4 text-neutral-900">Update Details</h3>
-              <button
-                onClick={() => setViewingUpdate(null)}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
-                aria-label="Close modal"
+        <Modal onClose={() => setViewingUpdate(null)}>
+          <ModalHeader
+            title="Update Details"
+            subtitle={`${viewingUpdate.project_name} — ${viewingUpdate.client_name}`}
+            onClose={() => setViewingUpdate(null)}
+          />
+          <div
+            style={{
+              padding: "1.5rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "1.25rem",
+            }}
+          >
+            {/* Project info */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.875rem",
+                padding: "0.875rem 1rem",
+                background: "rgba(26,177,137,0.06)",
+                border: "1px solid rgba(26,177,137,0.2)",
+                borderRadius: "0.75rem",
+              }}
+            >
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: "50%",
+                  background: "#1ab189",
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 700,
+                  fontSize: "1rem",
+                  flexShrink: 0,
+                }}
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-6">
-              {/* Project Info */}
-              <div className="flex items-center gap-4 p-4 bg-primary-50 rounded-lg border border-primary-200">
-                <div className="w-12 h-12 rounded-full bg-primary-600 text-neutral-0 flex items-center justify-center font-bold text-lg">
-                  {viewingUpdate.project_name?.charAt(0)}
-                </div>
-                <div>
-                  <h4 className="font-semibold text-neutral-900">
-                    {viewingUpdate.project_name}
-                  </h4>
-                  <p className="text-neutral-600 text-sm">
-                    {viewingUpdate.client_name}
-                  </p>
-                </div>
+                {viewingUpdate.project_name?.charAt(0)}
               </div>
-
-              {/* Title */}
               <div>
-                <label className="block text-neutral-600 font-medium mb-2 body-small">
-                  Update Title
-                </label>
-                <h2 className="heading-4 text-neutral-900">
-                  {viewingUpdate.title}
-                </h2>
-              </div>
-
-              {/* Status & Work Hours */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-neutral-600 font-medium mb-2 body-small">
-                    Status
-                  </label>
-                  <span
-                    className={`inline-flex items-center gap-1 text-sm font-semibold px-3 py-1.5 border rounded-lg ${
-                      viewingUpdate.status === "completed"
-                        ? "bg-green-50 text-green-700 border-green-200"
-                        : viewingUpdate.status === "in-progress"
-                        ? "bg-blue-50 text-blue-700 border-blue-200"
-                        : "bg-red-50 text-red-700 border-red-200"
-                    }`}
-                  >
-                    {viewingUpdate.status === "completed" && "✓ COMPLETED"}
-                    {viewingUpdate.status === "in-progress" && "⏱ IN PROGRESS"}
-                    {viewingUpdate.status === "blocked" && "⚠ BLOCKED"}
-                  </span>
-                </div>
-                {viewingUpdate.work_hours &&
-                  parseFloat(viewingUpdate.work_hours) > 0 && (
-                    <div>
-                      <label className="block text-neutral-600 font-medium mb-2 body-small">
-                        Work Hours
-                      </label>
-                      <div className="flex items-center gap-2 text-neutral-900 font-medium">
-                        <FontAwesomeIcon
-                          icon={faClock}
-                          className="text-primary-600"
-                        />
-                        {viewingUpdate.work_hours} hours
-                      </div>
-                    </div>
-                  )}
-              </div>
-
-              {/* Date */}
-              <div>
-                <label className="block text-neutral-600 font-medium mb-2 body-small">
-                  Posted On
-                </label>
-                <div className="flex items-center gap-2 text-neutral-900">
-                  <FontAwesomeIcon
-                    icon={faCalendar}
-                    className="text-primary-600"
-                  />
-                  <span className="font-medium">
-                    {new Date(viewingUpdate.created_at).toLocaleDateString(
-                      "en-US",
-                      {
-                        weekday: "long",
-                        month: "long",
-                        day: "numeric",
-                        year: "numeric",
-                      }
-                    )}
-                  </span>
-                </div>
-              </div>
-
-              {/* Content */}
-              <div>
-                <label className="block text-neutral-600 font-medium mb-3 body-small">
-                  Update Content
-                </label>
-                <div className="bg-neutral-50 rounded-lg p-4 border border-neutral-200">
-                  <p className="text-neutral-900 body-regular whitespace-pre-wrap leading-relaxed">
-                    {viewingUpdate.update_text}
-                  </p>
-                </div>
-              </div>
-
-              {/* Media */}
-              {viewingUpdate.media && viewingUpdate.media.length > 0 && (
-                <div>
-                  <label className="block text-neutral-600 font-medium mb-3 body-small">
-                    Media ({viewingUpdate.media.length})
-                  </label>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {viewingUpdate.media.map((media: any, index: number) => (
-                      <div
-                        key={index}
-                        className="aspect-square rounded-lg overflow-hidden border border-neutral-200"
-                      >
-                        <img
-                          src={
-                            media.media_file ||
-                            media.media_url ||
-                            media.file ||
-                            media.url
-                          }
-                          alt="Update media"
-                          className="w-full h-full object-cover hover:scale-105 transition-transform cursor-pointer"
-                          onClick={() =>
-                            window.open(
-                              media.media_file ||
-                                media.media_url ||
-                                media.file ||
-                                media.url,
-                              "_blank"
-                            )
-                          }
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Posted By */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-blue-700 text-sm">
-                  <FontAwesomeIcon icon={faUser} className="mr-2" />
-                  Posted by{" "}
-                  <span className="font-semibold">
-                    {viewingUpdate.posted_by_name}
-                  </span>
+                <p
+                  style={{
+                    fontSize: "0.9375rem",
+                    fontWeight: 700,
+                    color: "var(--color-neutral-900)",
+                    margin: 0,
+                  }}
+                >
+                  {viewingUpdate.project_name}
+                </p>
+                <p
+                  style={{ fontSize: "0.8125rem", color: "#065f46", margin: 0 }}
+                >
+                  {viewingUpdate.client_name}
                 </p>
               </div>
             </div>
 
-            <div className="sticky bottom-0 bg-neutral-50 border-t border-neutral-200 px-6 py-4 flex items-center justify-end gap-3">
-              <button
-                onClick={() => setViewingUpdate(null)}
-                className="px-5 py-2.5 border border-neutral-200 rounded-lg text-neutral-700 font-medium hover:bg-neutral-100 transition-colors"
-              >
-                Close
-              </button>
-              <button
-                onClick={() => {
-                  if (confirm("Are you sure you want to delete this update?")) {
-                    handleDeleteUpdate(viewingUpdate);
-                  }
+            {/* Title */}
+            <div>
+              <p
+                style={{
+                  fontSize: "0.6875rem",
+                  fontWeight: 600,
+                  color: "var(--color-neutral-400)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  marginBottom: "0.375rem",
                 }}
-                className="px-5 py-2.5 bg-red-600 text-neutral-0 rounded-lg font-medium hover:bg-red-700 transition-colors flex items-center gap-2"
-                disabled={deleteUpdateMutation.isPending}
               >
-                <FontAwesomeIcon icon={faTrash} />
-                Delete
-              </button>
+                Title
+              </p>
+              <p
+                style={{
+                  fontSize: "1rem",
+                  fontWeight: 700,
+                  color: "var(--color-neutral-900)",
+                  margin: 0,
+                }}
+              >
+                {viewingUpdate.title}
+              </p>
+            </div>
+
+            {/* Status + Hours */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "1rem",
+              }}
+            >
+              <div>
+                <p
+                  style={{
+                    fontSize: "0.6875rem",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-400)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  Status
+                </p>
+                <StatusBadge status={viewingUpdate.status || "in-progress"} />
+              </div>
+              {viewingUpdate.work_hours &&
+                parseFloat(viewingUpdate.work_hours) > 0 && (
+                  <div>
+                    <p
+                      style={{
+                        fontSize: "0.6875rem",
+                        fontWeight: 600,
+                        color: "var(--color-neutral-400)",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                        marginBottom: "0.5rem",
+                      }}
+                    >
+                      Work Hours
+                    </p>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                      }}
+                    >
+                      <FontAwesomeIcon
+                        icon={faClock}
+                        style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                      />
+                      <span
+                        style={{
+                          fontSize: "0.9375rem",
+                          fontWeight: 600,
+                          color: "var(--color-neutral-900)",
+                        }}
+                      >
+                        {viewingUpdate.work_hours} hours
+                      </span>
+                    </div>
+                  </div>
+                )}
+            </div>
+
+            {/* Date */}
+            <div>
+              <p
+                style={{
+                  fontSize: "0.6875rem",
+                  fontWeight: 600,
+                  color: "var(--color-neutral-400)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  marginBottom: "0.375rem",
+                }}
+              >
+                Posted On
+              </p>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+              >
+                <FontAwesomeIcon
+                  icon={faCalendar}
+                  style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                />
+                <span
+                  style={{
+                    fontSize: "0.875rem",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-900)",
+                  }}
+                >
+                  {new Date(viewingUpdate.created_at).toLocaleDateString(
+                    "en-US",
+                    {
+                      weekday: "long",
+                      month: "long",
+                      day: "numeric",
+                      year: "numeric",
+                    },
+                  )}
+                </span>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div>
+              <p
+                style={{
+                  fontSize: "0.6875rem",
+                  fontWeight: 600,
+                  color: "var(--color-neutral-400)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  marginBottom: "0.5rem",
+                }}
+              >
+                Content
+              </p>
+              <div
+                style={{
+                  background: "var(--color-neutral-50)",
+                  border: "1px solid var(--color-neutral-200)",
+                  borderRadius: "0.625rem",
+                  padding: "1rem",
+                }}
+              >
+                <p
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--color-neutral-800)",
+                    lineHeight: 1.7,
+                    margin: 0,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {viewingUpdate.update_text}
+                </p>
+              </div>
+            </div>
+
+            {/* Media */}
+            {viewingUpdate.media && viewingUpdate.media.length > 0 && (
+              <div>
+                <p
+                  style={{
+                    fontSize: "0.6875rem",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-400)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  Media ({viewingUpdate.media.length})
+                </p>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, 1fr)",
+                    gap: "0.625rem",
+                  }}
+                >
+                  {viewingUpdate.media.map((media, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        aspectRatio: "1",
+                        borderRadius: "0.625rem",
+                        overflow: "hidden",
+                        border: "1px solid var(--color-neutral-200)",
+                        cursor: "pointer",
+                      }}
+                      onClick={() => window.open(getMediaUrl(media), "_blank")}
+                    >
+                      <img
+                        src={getMediaUrl(media)}
+                        alt="media"
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          transition: "transform 200ms",
+                        }}
+                        onMouseEnter={(e) =>
+                          (e.currentTarget.style.transform = "scale(1.05)")
+                        }
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.transform = "scale(1)")
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Posted by */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                padding: "0.75rem 1rem",
+                background: "var(--color-neutral-50)",
+                border: "1px solid var(--color-neutral-200)",
+                borderRadius: "0.625rem",
+              }}
+            >
+              <FontAwesomeIcon
+                icon={faUser}
+                style={{ color: "#1ab189", fontSize: "0.875rem" }}
+              />
+              <p
+                style={{
+                  fontSize: "0.8125rem",
+                  color: "var(--color-neutral-600)",
+                  margin: 0,
+                }}
+              >
+                Posted by{" "}
+                <strong style={{ color: "var(--color-neutral-900)" }}>
+                  {viewingUpdate.posted_by_name}
+                </strong>
+              </p>
             </div>
           </div>
-        </div>
+
+          <ModalFooter>
+            <button
+              onClick={() => {
+                setDeletingUpdate({
+                  id: viewingUpdate.id,
+                  projectId: viewingUpdate.project_id,
+                  title: viewingUpdate.title || "this update",
+                });
+                setViewingUpdate(null);
+              }}
+              disabled={deleteUpdateMutation.isPending}
+              style={{
+                marginRight: "auto",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                padding: "0.5rem 1rem",
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.2)",
+                color: "#ef4444",
+                borderRadius: "0.625rem",
+                fontSize: "0.875rem",
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "background 150ms",
+              }}
+            >
+              <FontAwesomeIcon icon={faTrash} style={{ fontSize: "0.75rem" }} />
+              Delete
+            </button>
+            <button
+              className="btn btn-ghost"
+              onClick={() => setViewingUpdate(null)}
+            >
+              Close
+            </button>
+          </ModalFooter>
+        </Modal>
       )}
 
-      <style jsx>{`
-        @keyframes slide-in-right {
-          from {
-            transform: translateX(100%);
-            opacity: 0;
+      {/* ── Delete Modal ──────────────────────────────────────────────────────── */}
+      {deletingUpdate && (
+        <DeleteModal
+          target={deletingUpdate}
+          isDeleting={deleteUpdateMutation.isPending}
+          onConfirm={() =>
+            deleteUpdateMutation.mutate({
+              projectId: deletingUpdate.projectId,
+              updateId: deletingUpdate.id,
+            })
           }
-          to {
-            transform: translateX(0);
-            opacity: 1;
-          }
-        }
+          onCancel={() => setDeletingUpdate(null)}
+        />
+      )}
 
-        .animate-slide-in-right {
-          animation: slide-in-right 0.3s ease-out;
-        }
-
-        .line-clamp-3 {
-          display: -webkit-box;
-          -webkit-line-clamp: 3;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-        }
-      `}</style>
+      {/* ── Discard Modal ─────────────────────────────────────────────────────── */}
+      {showDiscardModal && (
+        <DiscardModal
+          onConfirm={() => {
+            resetForm();
+            setShowDiscardModal(false);
+          }}
+          onCancel={() => setShowDiscardModal(false)}
+        />
+      )}
     </div>
   );
 }

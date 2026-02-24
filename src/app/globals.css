@@ -2,25 +2,43 @@
 @import "tailwindcss";
 
 @theme {
-  /* === PRIMARY COLOR — single value only === */
+  /* === PRIMARY COLORS (original website values) === */
+  --color-primary-500: #1ab189;
+  --color-primary-600: #0d9563;
+  --color-primary-700: #059953;
   --color-primary: #1ab189;
-  --color-primary-light: rgba(26, 177, 137, 0.12); /* soft tint for bg use */
+  --color-primary-light: #2dc99e;
+  --color-primary-dark: #0d9563;
 
-  /* === NEUTRAL PALETTE === */
+  /* === SECONDARY COLORS === */
+  --color-secondary-400: #00b8d4;
+  --color-secondary-500: #0099b3;
+  --color-secondary-600: #007a8f;
+  --color-secondary: #00b8d4;
+  --color-secondary-light: #33c5dc;
+  --color-secondary-dark: #007a8f;
+
+  /* === NEUTRAL COLORS === */
   --color-neutral-0: #ffffff;
-  --color-neutral-50: #fafafa;
-  --color-neutral-100: #f4f4f5;
+  --color-neutral-50: #f9fafb;
+  --color-neutral-100: #f3f4f6;
   --color-neutral-150: #ebebed;
-  --color-neutral-200: #e4e4e7;
-  --color-neutral-300: #d1d1d6;
-  --color-neutral-400: #a1a1aa;
-  --color-neutral-500: #71717a;
-  --color-neutral-600: #52525b;
-  --color-neutral-700: #3f3f46;
-  --color-neutral-800: #27272a;
-  --color-neutral-900: #18181b;
+  --color-neutral-200: #e5e7eb;
+  --color-neutral-300: #d1d5db;
+  --color-neutral-400: #9ca3af;
+  --color-neutral-500: #6b7280;
+  --color-neutral-600: #4b5563;
+  --color-neutral-700: #374151;
+  --color-neutral-800: #1f2937;
+  --color-neutral-900: #111827;
 
-  /* === ACCENT COLORS === */
+  /* === STATUS COLORS === */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+
+  /* === ACCENT COLORS (for portal use) === */
   --color-accent-amber: #f59e0b;
   --color-accent-amber-light: #fef3c7;
   --color-accent-amber-dark: #92400e;
@@ -33,57 +51,284 @@
   /* === TYPOGRAPHY === */
   --font-sans:
     "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-display:
-    "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "Fira Code", "Courier New", monospace;
-
-  /* === BORDER RADIUS === */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.625rem;
-  --radius-lg: 0.875rem;
-  --radius-xl: 1.25rem;
-  --radius-full: 9999px;
-
-  /* === SHADOWS === */
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.04);
-  --shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.06), 0 4px 8px rgba(0, 0, 0, 0.04);
-  --shadow-focus: 0 0 0 3px rgba(26, 177, 137, 0.18);
 
   /* === TRANSITIONS === */
-  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ============================================================
-   BASE RESET & DEFAULTS
+   BASE — website global styles (unchanged from original)
    ============================================================ */
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
 html {
   scroll-behavior: smooth;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
   font-family: var(--font-sans);
   color: var(--color-neutral-900);
-  background-color: var(--color-neutral-50);
+  background-color: var(--color-neutral-0);
   line-height: 1.6;
-  font-size: 1rem;
 }
 
 /* ============================================================
-   TYPOGRAPHY
+   WEBSITE TYPOGRAPHY UTILITIES
    ============================================================ */
-.page-title {
+.heading-1 {
+  font-size: clamp(2.5rem, 5vw, 3.5rem);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.heading-2 {
+  font-size: clamp(2rem, 4vw, 2.5rem);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.heading-3 {
+  font-size: clamp(1.5rem, 3vw, 1.875rem);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.heading-4 {
+  font-size: clamp(1.25rem, 2.5vw, 1.5rem);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.body-large {
+  font-size: clamp(1rem, 2vw, 1.125rem);
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+.body-regular {
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+.body-small {
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   WEBSITE BUTTON UTILITIES
+   ============================================================ */
+.btn-primary {
+  background-color: var(--color-primary-500);
+  color: var(--color-neutral-0);
+  padding: 0.875rem 2rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.9375rem;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: inline-block;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.btn-primary:hover {
+  background-color: var(--color-primary-600);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(26, 177, 137, 0.3);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-primary-lg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+  padding: 1.125rem 2.25rem;
+  border-radius: 0.875rem;
+  font-weight: 700;
+  font-size: 1.0625rem;
+  color: white;
+  background-color: var(--color-primary-500);
+  box-shadow: 0 6px 16px rgba(26, 177, 137, 0.3);
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.btn-primary-lg:hover {
+  background-color: var(--color-primary-600);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 24px rgba(26, 177, 137, 0.4);
+}
+
+.btn-secondary {
+  background-color: var(--color-neutral-0);
+  color: var(--color-primary-500);
+  padding: 0.875rem 2rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font-size: 0.9375rem;
+  border: 2px solid var(--color-primary-500);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: inline-block;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.btn-secondary:hover {
+  background-color: var(--color-neutral-50);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(26, 177, 137, 0.2);
+}
+
+.btn-secondary:active {
+  transform: translateY(0);
+}
+
+/* ============================================================
+   WEBSITE COLOR UTILITIES
+   ============================================================ */
+.text-primary {
+  color: var(--color-primary-500);
+}
+
+.text-secondary {
+  color: var(--color-secondary-600);
+}
+
+.text-neutral-0 {
+  color: var(--color-neutral-0);
+}
+
+.text-neutral-500 {
+  color: var(--color-neutral-500);
+}
+
+.text-neutral-600 {
+  color: var(--color-neutral-600);
+}
+
+.text-neutral-700 {
+  color: var(--color-neutral-700);
+}
+
+.text-neutral-800 {
+  color: var(--color-neutral-800);
+}
+
+.text-primary-500 {
+  color: var(--color-primary-500);
+}
+
+.text-primary-700 {
+  color: var(--color-primary-700);
+}
+
+.bg-primary {
+  background-color: var(--color-primary-500);
+}
+
+.bg-primary-600 {
+  background-color: var(--color-primary-600);
+}
+
+.bg-primary-700 {
+  background-color: var(--color-primary-700);
+}
+
+.bg-secondary {
+  background-color: var(--color-secondary-600);
+}
+
+.bg-neutral-0 {
+  background-color: var(--color-neutral-0);
+}
+
+.bg-neutral-50 {
+  background-color: var(--color-neutral-50);
+}
+
+.border-primary {
+  border-color: var(--color-primary-500);
+}
+
+.border-neutral-0 {
+  border-color: var(--color-neutral-0);
+}
+
+.border-neutral-200 {
+  border-color: var(--color-neutral-200);
+}
+
+.shadow-sm {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* ============================================================
+   PORTAL DESIGN SYSTEM
+   Scoped under .portal-layout so it never bleeds into website
+   ============================================================ */
+.portal-layout {
+  /* Portal-specific token overrides */
+  --portal-radius-sm: 0.375rem;
+  --portal-radius-md: 0.625rem;
+  --portal-radius-lg: 0.875rem;
+  --portal-radius-xl: 1.25rem;
+  --portal-radius-full: 9999px;
+
+  --portal-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --portal-shadow-sm:
+    0 1px 3px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --portal-shadow-md:
+    0 4px 6px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --portal-shadow-lg:
+    0 10px 20px rgba(0, 0, 0, 0.06), 0 4px 8px rgba(0, 0, 0, 0.04);
+  --portal-shadow-focus: 0 0 0 3px rgba(26, 177, 137, 0.18);
+
+  --portal-primary: #1ab189;
+  --portal-primary-light: rgba(26, 177, 137, 0.12);
+
+  --portal-transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --portal-transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  font-family: var(--font-sans);
+  background-color: var(--color-neutral-50);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Portal scrollbar */
+.portal-layout ::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.portal-layout ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.portal-layout ::-webkit-scrollbar-thumb {
+  background: var(--color-neutral-200);
+  border-radius: var(--portal-radius-full);
+}
+.portal-layout ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-neutral-300);
+}
+
+/* Portal focus */
+.portal-layout :focus-visible {
+  outline: 2px solid var(--portal-primary);
+  outline-offset: 2px;
+}
+
+/* ── Typography ── */
+.portal-layout .page-title {
   font-size: 1.75rem;
   font-weight: 700;
   letter-spacing: -0.025em;
@@ -91,14 +336,14 @@ body {
   line-height: 1.2;
 }
 
-.section-title {
+.portal-layout .section-title {
   font-size: 1.125rem;
   font-weight: 600;
   letter-spacing: -0.015em;
   color: var(--color-neutral-900);
 }
 
-.label-sm {
+.portal-layout .label-sm {
   font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -106,7 +351,7 @@ body {
   color: var(--color-neutral-500);
 }
 
-.stat-number {
+.portal-layout .stat-number {
   font-size: 2rem;
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -114,10 +359,8 @@ body {
   line-height: 1;
 }
 
-/* ============================================================
-   BUTTON SYSTEM
-   ============================================================ */
-.btn {
+/* ── Buttons ── */
+.portal-layout .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -127,157 +370,187 @@ body {
   font-weight: 600;
   line-height: 1;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--portal-radius-md);
   cursor: pointer;
   transition:
-    background-color var(--transition-fast),
-    box-shadow var(--transition-fast),
-    transform var(--transition-fast),
-    opacity var(--transition-fast);
+    background-color var(--portal-transition-fast),
+    box-shadow var(--portal-transition-fast),
+    transform var(--portal-transition-fast),
+    opacity var(--portal-transition-fast);
   text-decoration: none;
   white-space: nowrap;
   -webkit-user-select: none;
   user-select: none;
 }
 
-.btn:disabled {
+.portal-layout .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
   pointer-events: none;
 }
 
-/* Sizes */
-.btn-sm {
+.portal-layout .btn-sm {
   padding: 0.5rem 0.875rem;
   font-size: 0.8125rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--portal-radius-sm);
 }
 
-.btn-md {
+.portal-layout .btn-md {
   padding: 0.625rem 1.25rem;
 }
 
-.btn-lg {
+.portal-layout .btn-lg {
   padding: 0.875rem 1.75rem;
   font-size: 0.9375rem;
-  border-radius: var(--radius-lg);
+  border-radius: var(--portal-radius-lg);
 }
 
-.btn-xl {
-  padding: 1rem 2rem;
-  font-size: 1rem;
-  border-radius: var(--radius-lg);
-}
-
-/* Primary */
-.btn-primary {
-  background-color: var(--color-primary);
+/* Portal primary button — overrides website .btn-primary */
+.portal-layout .btn-primary {
+  background-color: var(--portal-primary);
   color: white;
+  padding: 0.625rem 1.25rem;
+  border-radius: var(--portal-radius-md);
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: none;
+  transform: none;
+  box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    opacity var(--portal-transition-fast),
+    box-shadow var(--portal-transition-fast);
 }
-.btn-primary:hover {
+.portal-layout .btn-primary:hover {
   opacity: 0.88;
-  box-shadow: var(--shadow-md);
+  transform: none;
+  box-shadow: var(--portal-shadow-md);
 }
-.btn-primary:active {
+.portal-layout .btn-primary:active {
   opacity: 0.78;
   transform: translateY(1px);
 }
 
-/* Secondary (outlined) */
-.btn-secondary {
+.portal-layout .btn-secondary {
   background-color: transparent;
-  color: var(--color-primary);
-  border: 1.5px solid var(--color-primary);
+  color: var(--portal-primary);
+  border: 1.5px solid var(--portal-primary);
+  padding: 0.625rem 1.25rem;
+  border-radius: var(--portal-radius-md);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--portal-transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
 }
-.btn-secondary:hover {
-  background-color: var(--color-primary-light);
-}
-.btn-secondary:active {
-  background-color: rgba(26, 177, 137, 0.2);
+.portal-layout .btn-secondary:hover {
+  background-color: var(--portal-primary-light);
+  transform: none;
+  box-shadow: none;
 }
 
-/* Ghost */
-.btn-ghost {
+.portal-layout .btn-ghost {
   background-color: transparent;
   color: var(--color-neutral-700);
   border: 1.5px solid var(--color-neutral-200);
+  padding: 0.625rem 1.25rem;
+  border-radius: var(--portal-radius-md);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color var(--portal-transition-fast),
+    border-color var(--portal-transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
 }
-.btn-ghost:hover {
+.portal-layout .btn-ghost:hover {
   background-color: var(--color-neutral-100);
   border-color: var(--color-neutral-300);
 }
 
-/* Danger */
-.btn-danger {
+.portal-layout .btn-danger {
   background-color: var(--color-accent-red);
   color: white;
+  padding: 0.625rem 1.25rem;
+  border-radius: var(--portal-radius-md);
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition:
+    background-color var(--portal-transition-fast),
+    box-shadow var(--portal-transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }
-.btn-danger:hover {
+.portal-layout .btn-danger:hover {
   background-color: var(--color-accent-red-dark);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--portal-shadow-md);
 }
 
-/* Icon-only button */
-.btn-icon {
+.portal-layout .btn-icon {
   padding: 0.625rem;
-  border-radius: var(--radius-md);
+  border-radius: var(--portal-radius-md);
   width: 2.5rem;
   height: 2.5rem;
 }
 
-/* ============================================================
-   CARD SYSTEM
-   ============================================================ */
-.card {
+/* ── Cards ── */
+.portal-layout .card {
   background-color: var(--color-neutral-0);
   border: 1px solid var(--color-neutral-200);
-  border-radius: var(--radius-xl);
+  border-radius: var(--portal-radius-xl);
   transition:
-    box-shadow var(--transition-base),
-    border-color var(--transition-base);
+    box-shadow var(--portal-transition-base),
+    border-color var(--portal-transition-base);
 }
 
-.card-hover {
-  cursor: pointer;
-}
-.card-hover:hover {
-  box-shadow: var(--shadow-lg);
+.portal-layout .card-hover:hover {
+  box-shadow: var(--portal-shadow-lg);
   border-color: var(--color-neutral-300);
 }
 
-.card-sm {
-  border-radius: var(--radius-lg);
+.portal-layout .card-sm {
+  border-radius: var(--portal-radius-lg);
 }
 
-.card-body {
+.portal-layout .card-body {
   padding: 1.5rem;
 }
 
-.card-body-sm {
+.portal-layout .card-body-sm {
   padding: 1rem 1.25rem;
 }
 
-/* ============================================================
-   STAT CARD
-   ============================================================ */
-.stat-card {
+/* ── Stat card ── */
+.portal-layout .stat-card {
   background-color: var(--color-neutral-0);
   border: 1px solid var(--color-neutral-200);
-  border-radius: var(--radius-xl);
+  border-radius: var(--portal-radius-xl);
   padding: 1.375rem 1.5rem 1.25rem;
   transition:
-    box-shadow var(--transition-base),
-    border-color var(--transition-base);
+    box-shadow var(--portal-transition-base),
+    border-color var(--portal-transition-base);
 }
-.stat-card:hover {
-  box-shadow: var(--shadow-lg);
+.portal-layout .stat-card:hover {
+  box-shadow: var(--portal-shadow-lg);
   border-color: var(--color-neutral-300);
 }
 
-/* ============================================================
-   BADGE / TAG SYSTEM
-   ============================================================ */
-.badge {
+/* ── Badges ── */
+.portal-layout .badge {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
@@ -285,74 +558,69 @@ body {
   font-weight: 600;
   letter-spacing: 0.03em;
   padding: 0.25rem 0.625rem;
-  border-radius: var(--radius-full);
+  border-radius: var(--portal-radius-full);
   white-space: nowrap;
 }
 
-/* Primary badge — tint bg, full color text */
-.badge-primary {
-  background-color: var(--color-primary-light);
-  color: var(--color-primary);
+.portal-layout .badge-primary {
+  background-color: var(--portal-primary-light);
+  color: var(--portal-primary);
 }
-.badge-amber {
+.portal-layout .badge-amber {
   background-color: var(--color-accent-amber-light);
   color: var(--color-accent-amber-dark);
 }
-.badge-red {
+.portal-layout .badge-red {
   background-color: var(--color-accent-red-light);
   color: var(--color-accent-red-dark);
 }
-.badge-neutral {
+.portal-layout .badge-neutral {
   background-color: var(--color-neutral-100);
   color: var(--color-neutral-600);
 }
 
-/* ============================================================
-   AVATAR
-   ============================================================ */
-.avatar {
+/* ── Avatar ── */
+.portal-layout .avatar {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-full);
+  border-radius: var(--portal-radius-full);
   font-weight: 700;
   overflow: hidden;
   flex-shrink: 0;
   letter-spacing: 0.02em;
 }
 
-.avatar-sm {
+.portal-layout .avatar-sm {
   width: 2rem;
   height: 2rem;
   font-size: 0.6875rem;
 }
 
-.avatar-md {
+.portal-layout .avatar-md {
   width: 2.5rem;
   height: 2.5rem;
   font-size: 0.8125rem;
 }
 
-.avatar-lg {
+.portal-layout .avatar-lg {
   width: 3rem;
   height: 3rem;
   font-size: 1rem;
 }
 
-.avatar-primary {
-  background-color: var(--color-primary);
+.portal-layout .avatar-primary {
+  background-color: var(--portal-primary);
   color: white;
 }
 
-.avatar-neutral {
+.portal-layout .avatar-neutral {
   background-color: var(--color-neutral-200);
   color: var(--color-neutral-700);
 }
 
-/* ============================================================
-   FORM ELEMENTS
-   ============================================================ */
-.input {
+/* ── Input ── */
+.portal-layout .input {
   width: 100%;
   padding: 0.625rem 1rem;
   font-family: var(--font-sans);
@@ -360,77 +628,63 @@ body {
   color: var(--color-neutral-900);
   background-color: var(--color-neutral-0);
   border: 1.5px solid var(--color-neutral-200);
-  border-radius: var(--radius-md);
+  border-radius: var(--portal-radius-md);
   transition:
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
+    border-color var(--portal-transition-fast),
+    box-shadow var(--portal-transition-fast);
   outline: none;
 }
-.input:focus {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow-focus);
+.portal-layout .input:focus {
+  border-color: var(--portal-primary);
+  box-shadow: var(--portal-shadow-focus);
 }
-.input::placeholder {
+.portal-layout .input::placeholder {
   color: var(--color-neutral-400);
 }
 
-/* ============================================================
-   DIVIDER
-   ============================================================ */
-.divider {
-  width: 100%;
-  height: 1px;
-  background-color: var(--color-neutral-200);
-  border: none;
-}
-
-/* ============================================================
-   PROGRESS BAR
-   ============================================================ */
-.progress-track {
+/* ── Progress bar ── */
+.portal-layout .progress-track {
   width: 100%;
   height: 0.375rem;
   background-color: var(--color-neutral-150);
-  border-radius: var(--radius-full);
+  border-radius: var(--portal-radius-full);
   overflow: hidden;
 }
 
-.progress-fill {
+.portal-layout .progress-fill {
   height: 100%;
-  background-color: var(--color-primary);
-  border-radius: var(--radius-full);
+  background-color: var(--portal-primary);
+  border-radius: var(--portal-radius-full);
   transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ============================================================
-   NAVIGATION LINK (sidebar)
-   ============================================================ */
-.nav-item {
+/* ── Nav items (sidebar) ── */
+.portal-layout .nav-item {
   position: relative;
   display: flex;
   align-items: center;
   gap: 0.75rem;
   padding: 0.6875rem 1rem;
-  border-radius: var(--radius-md);
+  border-radius: var(--portal-radius-md);
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--color-neutral-500);
   transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast);
+    background-color var(--portal-transition-fast),
+    color var(--portal-transition-fast);
   text-decoration: none;
   cursor: pointer;
 }
-.nav-item:hover {
+.portal-layout .nav-item:hover {
   background-color: var(--color-neutral-100);
   color: var(--color-neutral-900);
 }
-.nav-item.active {
-  background-color: var(--color-primary-light);
-  color: var(--color-primary);
+.portal-layout .nav-item.active {
+  background-color: rgba(26, 177, 137, 0.1);
+  color: var(--portal-primary);
   font-weight: 600;
 }
-.nav-item.active::before {
+.portal-layout .nav-item.active::before {
   content: "";
   position: absolute;
   left: 0;
@@ -438,85 +692,6 @@ body {
   transform: translateY(-50%);
   width: 3px;
   height: 1.5rem;
-  background-color: var(--color-primary);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-}
-
-/* ============================================================
-   UTILITIES
-   ============================================================ */
-.text-primary {
-  color: var(--color-primary);
-}
-.text-neutral-0 {
-  color: white;
-}
-.text-neutral-400 {
-  color: var(--color-neutral-400);
-}
-.text-neutral-500 {
-  color: var(--color-neutral-500);
-}
-.text-neutral-600 {
-  color: var(--color-neutral-600);
-}
-.text-neutral-700 {
-  color: var(--color-neutral-700);
-}
-.text-neutral-800 {
-  color: var(--color-neutral-800);
-}
-.text-neutral-900 {
-  color: var(--color-neutral-900);
-}
-.text-accent-red {
-  color: var(--color-accent-red);
-}
-.text-accent-amber {
-  color: var(--color-accent-amber);
-}
-
-.bg-neutral-0 {
-  background-color: var(--color-neutral-0);
-}
-.bg-neutral-50 {
-  background-color: var(--color-neutral-50);
-}
-.bg-neutral-100 {
-  background-color: var(--color-neutral-100);
-}
-.bg-primary {
-  background-color: var(--color-primary);
-}
-.bg-primary-light {
-  background-color: var(--color-primary-light);
-}
-
-.border-neutral-200 {
-  border-color: var(--color-neutral-200);
-}
-.border-primary {
-  border-color: var(--color-primary);
-}
-
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-neutral-200);
-  border-radius: var(--radius-full);
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-neutral-300);
-}
-
-/* Focus visible */
-:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  background-color: var(--portal-primary);
+  border-radius: 0 var(--portal-radius-sm) var(--portal-radius-sm) 0;
 }

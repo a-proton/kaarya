@@ -1,10 +1,8 @@
-// app/layout.tsx
 import type { Metadata } from "next";
 import { Poppins } from "next/font/google";
 import "./globals.css";
 import { config } from "@fortawesome/fontawesome-svg-core";
 import "@fortawesome/fontawesome-svg-core/styles.css";
-import Chatbot from "../components/Chatbot";
 
 config.autoAddCss = false;
 
@@ -26,11 +24,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={poppins.variable}>
-        {children}
-        {/* Global Chatbot - Available on all pages */}
-        <Chatbot />
-      </body>
+      <body className={poppins.variable}>{children}</body>
     </html>
   );
 }

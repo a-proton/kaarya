@@ -18,21 +18,23 @@ import {
   faClock,
   faFolder,
 } from "@fortawesome/free-solid-svg-icons";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 
-// Define the API response structure
+// ─── Types ──────────────────────────────────────────────────────────────────
+
 interface ApiMilestone {
   id: number;
   project: number;
   title: string;
   description: string;
-  target_date: string | null; // API uses this instead of due_date
+  target_date: string | null;
   completion_date: string | null;
   amount: string;
   status: "pending" | "in_progress" | "completed";
-  status_display: string; // e.g., "Pending"
+  status_display: string;
   milestone_order: number | null;
   completion_percentage: number;
   created_at: string;
@@ -53,7 +55,6 @@ interface Project {
   expected_end_date: string;
 }
 
-// Frontend Milestone type - adapted to use API data
 interface Milestone {
   id: number;
   project: number;
@@ -61,12 +62,11 @@ interface Milestone {
   client_name?: string;
   title: string;
   description: string;
-  due_date: string; // We'll map target_date to this for UI
+  due_date: string;
   amount: string;
   status: "pending" | "in_progress" | "completed";
   created_at: string;
   updated_at: string;
-  // Add any other fields you need for display
   status_display: string;
   completion_percentage: number;
 }
@@ -80,20 +80,561 @@ interface MilestoneFormData {
   status: "pending" | "in_progress" | "completed";
 }
 
+interface ApiError {
+  data?: { detail?: string };
+  message?: string;
+}
+
+interface DeleteTarget {
+  id: number;
+  title: string;
+}
+
+// ─── Design tokens ───────────────────────────────────────────────────────────
+
+const STATUS_STYLES: Record<
+  string,
+  {
+    bg: string;
+    color: string;
+    border: string;
+    icon: typeof faCheck;
+    label: string;
+  }
+> = {
+  pending: {
+    bg: "rgba(245,158,11,0.1)",
+    color: "#92400e",
+    border: "rgba(245,158,11,0.3)",
+    icon: faExclamationTriangle,
+    label: "Pending",
+  },
+  in_progress: {
+    bg: "rgba(59,130,246,0.1)",
+    color: "#1d4ed8",
+    border: "rgba(59,130,246,0.3)",
+    icon: faClock,
+    label: "In Progress",
+  },
+  completed: {
+    bg: "rgba(26,177,137,0.1)",
+    color: "#065f46",
+    border: "rgba(26,177,137,0.3)",
+    icon: faCheck,
+    label: "Completed",
+  },
+};
+
+const baseInput: React.CSSProperties = {
+  width: "100%",
+  padding: "0.625rem 1rem",
+  fontFamily: "inherit",
+  fontSize: "0.875rem",
+  color: "var(--color-neutral-900)",
+  background: "#fff",
+  border: "1px solid var(--color-neutral-200)",
+  borderRadius: "0.625rem",
+  outline: "none",
+  transition: "border-color 150ms, box-shadow 150ms",
+};
+
+const focusRing: React.CSSProperties = {
+  borderColor: "#1ab189",
+  boxShadow: "0 0 0 3px rgba(26,177,137,0.12)",
+};
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function formatCurrency(amount: string | number): string {
+  const n = typeof amount === "string" ? parseFloat(amount) : amount;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(n || 0);
+}
+
+function isOverdue(dueDate: string, status: string): boolean {
+  if (status === "completed") return false;
+  return new Date(dueDate) < new Date();
+}
+
+function getProjectProgress(
+  milestones: Milestone[],
+  projectId: string,
+): number {
+  const pm = milestones.filter((m) => m.project.toString() === projectId);
+  if (!pm.length) return 0;
+  return Math.round(
+    (pm.filter((m) => m.status === "completed").length / pm.length) * 100,
+  );
+}
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUS_STYLES[status] || STATUS_STYLES.pending;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "0.3rem",
+        fontSize: "0.6875rem",
+        fontWeight: 600,
+        letterSpacing: "0.03em",
+        padding: "0.25rem 0.625rem",
+        borderRadius: 9999,
+        background: s.bg,
+        color: s.color,
+        border: `1px solid ${s.border}`,
+        whiteSpace: "nowrap",
+      }}
+    >
+      <FontAwesomeIcon icon={s.icon} style={{ fontSize: "0.625rem" }} />
+      {s.label}
+    </span>
+  );
+}
+
+function FocusInput({
+  as: Tag = "input",
+  style,
+  ...props
+}: {
+  as?: "input" | "select" | "textarea";
+  style?: React.CSSProperties;
+} & Record<string, unknown>) {
+  const [focused, setFocused] = useState(false);
+  const El = Tag as "input";
+  return (
+    <El
+      {...props}
+      style={{ ...baseInput, ...(focused ? focusRing : {}), ...style }}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+    />
+  );
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+
+function Toast({ message, onClose }: { message: string; onClose: () => void }) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: "2rem",
+        right: "2rem",
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        gap: "0.75rem",
+        background: "var(--color-neutral-900)",
+        color: "#fff",
+        padding: "0.875rem 1.25rem",
+        borderRadius: 9999,
+        boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+        animation: "slideInRight 0.25s ease",
+        minWidth: 260,
+      }}
+    >
+      <span
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          background: "#1ab189",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        <FontAwesomeIcon
+          icon={faCheck}
+          style={{ fontSize: "0.75rem", color: "#fff" }}
+        />
+      </span>
+      <span style={{ fontSize: "0.875rem", fontWeight: 500, flex: 1 }}>
+        {message}
+      </span>
+      <button
+        onClick={onClose}
+        style={{
+          background: "none",
+          border: "none",
+          color: "rgba(255,255,255,0.6)",
+          cursor: "pointer",
+          padding: 0,
+        }}
+      >
+        <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
+      </button>
+    </div>
+  );
+}
+
+// ─── Modal shell ──────────────────────────────────────────────────────────────
+
+function Modal({
+  children,
+  onClose,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 50,
+        padding: "1rem",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#fff",
+          borderRadius: "1.25rem",
+          boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+          maxWidth: 640,
+          width: "100%",
+          maxHeight: "90vh",
+          overflowY: "auto",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ModalHeader({
+  title,
+  subtitle,
+  onClose,
+}: {
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: "sticky",
+        top: 0,
+        background: "#fff",
+        borderBottom: "1px solid var(--color-neutral-200)",
+        padding: "1.25rem 1.5rem",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        zIndex: 10,
+        borderRadius: "1.25rem 1.25rem 0 0",
+      }}
+    >
+      <div>
+        <p
+          style={{
+            fontSize: "1rem",
+            fontWeight: 700,
+            color: "var(--color-neutral-900)",
+            margin: 0,
+          }}
+        >
+          {title}
+        </p>
+        {subtitle && (
+          <p
+            style={{
+              fontSize: "0.8125rem",
+              color: "var(--color-neutral-500)",
+              margin: "0.15rem 0 0",
+            }}
+          >
+            {subtitle}
+          </p>
+        )}
+      </div>
+      <button
+        onClick={onClose}
+        style={{
+          background: "var(--color-neutral-100)",
+          border: "none",
+          borderRadius: "0.5rem",
+          width: 32,
+          height: 32,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--color-neutral-600)",
+        }}
+      >
+        <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.875rem" }} />
+      </button>
+    </div>
+  );
+}
+
+function ModalFooter({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        position: "sticky",
+        bottom: 0,
+        background: "var(--color-neutral-50)",
+        borderTop: "1px solid var(--color-neutral-200)",
+        padding: "1rem 1.5rem",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: "0.75rem",
+        borderRadius: "0 0 1.25rem 1.25rem",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DeleteModal({
+  target,
+  isDeleting,
+  onConfirm,
+  onCancel,
+}: {
+  target: DeleteTarget;
+  isDeleting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 60,
+        padding: "1rem",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#fff",
+          borderRadius: "1.25rem",
+          boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+          maxWidth: 420,
+          width: "100%",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div style={{ padding: "1.5rem 1.5rem 0" }}>
+          <div
+            style={{
+              width: 52,
+              height: 52,
+              background: "rgba(239,68,68,0.1)",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginBottom: "1rem",
+            }}
+          >
+            <FontAwesomeIcon
+              icon={faTrash}
+              style={{ color: "#ef4444", fontSize: "1.125rem" }}
+            />
+          </div>
+          <p
+            style={{
+              fontSize: "1rem",
+              fontWeight: 700,
+              color: "var(--color-neutral-900)",
+              margin: "0 0 0.375rem",
+            }}
+          >
+            Delete Milestone
+          </p>
+          <p
+            style={{
+              fontSize: "0.875rem",
+              color: "var(--color-neutral-500)",
+              margin: 0,
+              lineHeight: 1.5,
+            }}
+          >
+            Are you sure you want to delete{" "}
+            <strong style={{ color: "var(--color-neutral-800)" }}>
+              "{target.title}"
+            </strong>
+            ? This action cannot be undone.
+          </p>
+        </div>
+
+        {/* Warning box */}
+        <div
+          style={{
+            margin: "1.25rem 1.5rem",
+            background: "rgba(239,68,68,0.05)",
+            border: "1px solid rgba(239,68,68,0.2)",
+            borderRadius: "0.625rem",
+            padding: "0.75rem 1rem",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "0.625rem",
+          }}
+        >
+          <FontAwesomeIcon
+            icon={faExclamationTriangle}
+            style={{
+              color: "#ef4444",
+              fontSize: "0.8125rem",
+              marginTop: 2,
+              flexShrink: 0,
+            }}
+          />
+          <p
+            style={{
+              fontSize: "0.8125rem",
+              color: "#991b1b",
+              margin: 0,
+              lineHeight: 1.5,
+            }}
+          >
+            Any invoices or payments linked to this milestone may be affected.
+          </p>
+        </div>
+
+        {/* Footer */}
+        <div
+          style={{
+            background: "var(--color-neutral-50)",
+            borderTop: "1px solid var(--color-neutral-200)",
+            padding: "1rem 1.5rem",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: "0.75rem",
+          }}
+        >
+          <button
+            className="btn btn-ghost"
+            onClick={onCancel}
+            disabled={isDeleting}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={isDeleting}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              padding: "0.625rem 1.25rem",
+              background: "#ef4444",
+              color: "#fff",
+              border: "none",
+              borderRadius: "0.625rem",
+              fontSize: "0.875rem",
+              fontWeight: 600,
+              cursor: isDeleting ? "not-allowed" : "pointer",
+              opacity: isDeleting ? 0.6 : 1,
+              transition: "opacity 150ms, box-shadow 150ms",
+            }}
+            onMouseEnter={(e) => {
+              if (!isDeleting)
+                (e.currentTarget as HTMLButtonElement).style.boxShadow =
+                  "0 4px 12px rgba(239,68,68,0.35)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.boxShadow = "none";
+            }}
+          >
+            {isDeleting ? (
+              <>
+                <FontAwesomeIcon
+                  icon={faSpinner}
+                  className="animate-spin"
+                  style={{ fontSize: "0.75rem" }}
+                />
+                Deleting…
+              </>
+            ) : (
+              <>
+                <FontAwesomeIcon
+                  icon={faTrash}
+                  style={{ fontSize: "0.75rem" }}
+                />
+                Yes, Delete
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FormLabel({
+  children,
+  required,
+}: {
+  children: React.ReactNode;
+  required?: boolean;
+}) {
+  return (
+    <label
+      style={{
+        display: "block",
+        fontSize: "0.75rem",
+        fontWeight: 600,
+        color: "var(--color-neutral-700)",
+        marginBottom: "0.375rem",
+        letterSpacing: "0.02em",
+      }}
+    >
+      {children}
+      {required && (
+        <span style={{ color: "#ef4444", marginLeft: "0.2rem" }}>*</span>
+      )}
+    </label>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
 export default function ProviderMilestonesPage() {
   const queryClient = useQueryClient();
   const [selectedProject, setSelectedProject] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
-  const [successMessage, setSuccessMessage] = useState("");
+  const [toast, setToast] = useState<string | null>(null);
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState<Milestone | null>(
-    null
+    null,
   );
   const [viewingMilestone, setViewingMilestone] = useState<Milestone | null>(
-    null
+    null,
   );
+  const [deletingMilestone, setDeletingMilestone] =
+    useState<DeleteTarget | null>(null);
   const [milestoneForm, setMilestoneForm] = useState<MilestoneFormData>({
     project: "",
     title: "",
@@ -103,18 +644,23 @@ export default function ProviderMilestonesPage() {
     status: "pending",
   });
 
-  // Fetch projects
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  // ── Queries ──────────────────────────────────────────────────────────────
+
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
     queryKey: ["projects"],
     queryFn: async () => {
       const response = await api.get<{ results: Project[] }>(
-        "/api/v1/projects/"
+        "/api/v1/projects/",
       );
       return response.results || [];
     },
   });
 
-  // Fetch ALL milestones in one go — wait for projects first internally
   const {
     data: allMilestonesData,
     isLoading: milestonesLoading,
@@ -128,88 +674,64 @@ export default function ProviderMilestonesPage() {
         projects = projectsData;
       } else {
         const projRes = await api.get<{ results: Project[] }>(
-          "/api/v1/projects/"
+          "/api/v1/projects/",
         );
         projects = projRes.results || [];
       }
-
       if (projects.length === 0) return [];
 
-      const milestonesPromises = projects.map((project) =>
-        api
-          .get<{ results: ApiMilestone[] }>(
-            `/api/v1/projects/${project.id}/milestones/`
-          )
-          .then((res) => {
-            console.log(`Milestones for project ${project.id}:`, res);
-            const results = res.results || [];
-            // Add project ID to each milestone if it's missing
-            return results.map((m) => ({
-              ...m,
-              project: m.project || project.id,
-              amount: m.amount || "0",
-            }));
-          })
-          .catch((err) => {
-            console.error(
-              `Error fetching milestones for project ${project.id}:`,
-              err
-            );
-            return [];
-          })
+      const arrays = await Promise.all(
+        projects.map((project) =>
+          api
+            .get<{ results: ApiMilestone[] }>(
+              `/api/v1/projects/${project.id}/milestones/`,
+            )
+            .then((res) =>
+              (res.results || []).map((m) => ({
+                ...m,
+                project: m.project || project.id,
+                amount: m.amount || "0",
+              })),
+            )
+            .catch(() => [] as ApiMilestone[]),
+        ),
       );
 
-      const milestonesArrays = await Promise.all(milestonesPromises);
-      const allApiMilestones = milestonesArrays.flat();
-
-      console.log("All fetched milestones:", allApiMilestones);
-
-      // Transform API response to frontend Milestone type
-      return allApiMilestones.map((milestone) => {
+      return arrays.flat().map((milestone) => {
         const project = projects.find((p) => p.id === milestone.project);
         return {
           ...milestone,
-          // Map API field to frontend field
           due_date:
             milestone.target_date ||
             milestone.completion_date ||
-            new Date().toISOString().split("T")[0], // Fallback
+            new Date().toISOString().split("T")[0],
           project_name: project?.project_name || "Unknown Project",
           client_name: project?.client?.full_name || "Unassigned",
-          // Keep original API fields for display if needed
-          status_display: milestone.status_display,
-          completion_percentage: milestone.completion_percentage,
-        };
+        } as Milestone;
       });
     },
-    enabled: true, // Always run
+    enabled: true,
   });
 
-  // Mutations (unchanged)
+  // ── Mutations ─────────────────────────────────────────────────────────────
+
   const createMilestoneMutation = useMutation({
-    mutationFn: async (data: MilestoneFormData) => {
-      const response = await api.post(
-        `/api/v1/projects/${data.project}/milestones/create/`,
-        {
-          title: data.title,
-          description: data.description,
-          // Send due_date as target_date to API
-          target_date: data.due_date,
-          amount: data.amount,
-          status: data.status,
-        }
-      );
-      return response;
-    },
+    mutationFn: async (data: MilestoneFormData) =>
+      api.post(`/api/v1/projects/${data.project}/milestones/create/`, {
+        title: data.title,
+        description: data.description,
+        target_date: data.due_date,
+        amount: data.amount,
+        status: data.status,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["all-milestones"] });
-      showSuccessNotification("Milestone created successfully!");
+      showToast("Milestone created successfully!");
       closeMilestoneModal();
     },
-    onError: (error: any) => {
-      alert(
-        error.data?.detail || error.message || "Failed to create milestone"
-      );
+    onError: (err: unknown) => {
+      const e = err as ApiError;
+      alert(e.data?.detail || e.message || "Failed to create milestone");
     },
   });
 
@@ -220,52 +742,48 @@ export default function ProviderMilestonesPage() {
     }: {
       id: number;
       data: Partial<MilestoneFormData>;
-    }) => {
-      const response = await api.put(`/api/v1/milestones/${id}/update/`, {
+    }) =>
+      api.put(`/api/v1/milestones/${id}/update/`, {
         title: data.title,
         description: data.description,
-        target_date: data.due_date, // Send as target_date
+        target_date: data.due_date,
         amount: data.amount,
         status: data.status,
-      });
-      return response;
-    },
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["all-milestones"] });
-      showSuccessNotification("Milestone updated successfully!");
+      showToast("Milestone updated successfully!");
       closeMilestoneModal();
     },
-    onError: (error: any) => {
-      alert(
-        error.data?.detail || error.message || "Failed to update milestone"
-      );
+    onError: (err: unknown) => {
+      const e = err as ApiError;
+      alert(e.data?.detail || e.message || "Failed to update milestone");
     },
   });
 
   const deleteMilestoneMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await api.delete(`/api/v1/milestones/${id}/delete/`);
-    },
+    mutationFn: async (id: number) =>
+      api.delete(`/api/v1/milestones/${id}/delete/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["all-milestones"] });
-      showSuccessNotification("Milestone deleted successfully!");
+      showToast("Milestone deleted successfully!");
     },
-    onError: (error: any) => {
-      alert(
-        error.data?.detail || error.message || "Failed to delete milestone"
-      );
+    onError: (err: unknown) => {
+      const e = err as ApiError;
+      alert(e.data?.detail || e.message || "Failed to delete milestone");
     },
   });
 
-  const projects = Array.isArray(projectsData) ? projectsData : [];
-  const milestones = Array.isArray(allMilestonesData) ? allMilestonesData : [];
+  // ── Local state helpers ────────────────────────────────────────────────────
 
-  // Debug logs
+  const projects: Project[] = Array.isArray(projectsData) ? projectsData : [];
+  const milestones: Milestone[] = Array.isArray(allMilestonesData)
+    ? allMilestonesData
+    : [];
+
   useEffect(() => {
-    console.log("Projects:", projectsData);
-    console.log("Raw API Milestones:", allMilestonesData);
     if (isError) console.error("Milestones fetch error:", error);
-  }, [projectsData, allMilestonesData, isError, error]);
+  }, [isError, error]);
 
   const openMilestoneModal = (milestone?: Milestone) => {
     if (milestone) {
@@ -274,7 +792,7 @@ export default function ProviderMilestonesPage() {
         project: milestone.project.toString(),
         title: milestone.title,
         description: milestone.description,
-        due_date: milestone.due_date, // This is now target_date from API
+        due_date: milestone.due_date,
         amount: milestone.amount,
         status: milestone.status,
       });
@@ -305,12 +823,6 @@ export default function ProviderMilestonesPage() {
     });
   };
 
-  const showSuccessNotification = (message: string) => {
-    setSuccessMessage(message);
-    setShowSuccessMessage(true);
-    setTimeout(() => setShowSuccessMessage(false), 3000);
-  };
-
   const saveMilestone = () => {
     if (
       !milestoneForm.project ||
@@ -336,114 +848,78 @@ export default function ProviderMilestonesPage() {
     }
   };
 
-  const deleteMilestone = (id: number) => {
-    if (confirm("Are you sure you want to delete this milestone?")) {
-      deleteMilestoneMutation.mutate(id);
-    }
+  const deleteMilestone = (id: number, title: string) => {
+    setDeletingMilestone({ id, title });
   };
 
-  const viewMilestone = (milestone: Milestone) => {
-    setViewingMilestone(milestone);
+  const confirmDelete = () => {
+    if (!deletingMilestone) return;
+    deleteMilestoneMutation.mutate(deletingMilestone.id, {
+      onSuccess: () => setDeletingMilestone(null),
+      onError: () => setDeletingMilestone(null),
+    });
   };
 
-  const closeViewModal = () => {
-    setViewingMilestone(null);
-  };
+  // ── Derived data ──────────────────────────────────────────────────────────
 
-  // Filter milestones
-  const filteredMilestones = milestones.filter((milestone) => {
-    const matchesProject =
-      selectedProject === "all" ||
-      milestone.project.toString() === selectedProject;
-    const matchesStatus =
-      selectedStatus === "all" || milestone.status === selectedStatus;
-    const matchesSearch =
-      searchQuery === "" ||
-      milestone.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      milestone.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (milestone.project_name &&
-        milestone.project_name
-          .toLowerCase()
-          .includes(searchQuery.toLowerCase()));
-    return matchesProject && matchesStatus && matchesSearch;
+  const filteredMilestones = milestones.filter((m) => {
+    const matchProject =
+      selectedProject === "all" || m.project.toString() === selectedProject;
+    const matchStatus = selectedStatus === "all" || m.status === selectedStatus;
+    const q = searchQuery.toLowerCase();
+    const matchSearch =
+      !q ||
+      m.title.toLowerCase().includes(q) ||
+      m.description.toLowerCase().includes(q) ||
+      (m.project_name?.toLowerCase().includes(q) ?? false);
+    return matchProject && matchStatus && matchSearch;
   });
 
-  // Group milestones by project — with safe access
-  const groupedMilestones = filteredMilestones.reduce((acc, milestone) => {
-    const projectId = milestone.project?.toString();
-    if (!projectId) return acc;
-    if (!acc[projectId]) acc[projectId] = [];
-    acc[projectId].push(milestone);
+  const groupedMilestones = filteredMilestones.reduce<
+    Record<string, Milestone[]>
+  >((acc, m) => {
+    const pid = m.project?.toString();
+    if (!pid) return acc;
+    if (!acc[pid]) acc[pid] = [];
+    acc[pid].push(m);
     return acc;
-  }, {} as { [key: string]: Milestone[] });
-
-  const getStatusBadgeColor = (status: string) => {
-    const colors = {
-      pending: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      in_progress: "bg-blue-100 text-blue-700 border-blue-200",
-      completed: "bg-green-100 text-green-700 border-green-200",
-    };
-    return colors[status as keyof typeof colors];
-  };
-
-  const getStatusIcon = (status: string) => {
-    const icons = {
-      pending: faExclamationTriangle,
-      in_progress: faClock,
-      completed: faCheck,
-    };
-    return icons[status as keyof typeof icons];
-  };
-
-  const getStatusText = (status: string) => {
-    const texts = {
-      pending: "Pending",
-      in_progress: "In Progress",
-      completed: "Completed",
-    };
-    return texts[status as keyof typeof texts];
-  };
-
-  const isOverdue = (dueDate: string, status: string) => {
-    if (status === "completed") return false;
-    return new Date(dueDate) < new Date();
-  };
-
-  const formatCurrency = (amount: string | number) => {
-    const numAmount = typeof amount === "string" ? parseFloat(amount) : amount;
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(numAmount);
-  };
-
-  const getProjectProgress = (projectId: string) => {
-    const projectMilestones = milestones.filter(
-      (m) => m.project.toString() === projectId
-    );
-    const completed = projectMilestones.filter(
-      (m) => m.status === "completed"
-    ).length;
-    return projectMilestones.length > 0
-      ? Math.round((completed / projectMilestones.length) * 100)
-      : 0;
-  };
+  }, {});
 
   const selectedProjectData = projects.find(
-    (p) => p.id.toString() === milestoneForm.project
+    (p) => p.id.toString() === milestoneForm.project,
   );
-
+  const isSaving =
+    createMilestoneMutation.isPending || updateMilestoneMutation.isPending;
   const isLoading = projectsLoading || milestonesLoading;
+
+  // ── Loading / Error screens ────────────────────────────────────────────────
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center">
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "var(--color-neutral-50)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
           <FontAwesomeIcon
             icon={faSpinner}
-            className="text-primary-600 text-4xl mb-4 animate-spin"
+            style={{
+              fontSize: "2.5rem",
+              color: "#1ab189",
+              marginBottom: "1rem",
+            }}
+            className="animate-spin"
           />
-          <p className="text-neutral-600">Loading milestones...</p>
+          <p
+            style={{ color: "var(--color-neutral-600)", fontSize: "0.9375rem" }}
+          >
+            Loading milestones…
+          </p>
         </div>
       </div>
     );
@@ -451,18 +927,64 @@ export default function ProviderMilestonesPage() {
 
   if (isError) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <div className="text-center bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FontAwesomeIcon icon={faTimes} className="text-red-600 text-2xl" />
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "var(--color-neutral-50)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            background: "#fff",
+            border: "1px solid var(--color-neutral-200)",
+            borderRadius: "1.25rem",
+            padding: "3rem",
+            maxWidth: 420,
+            textAlign: "center",
+          }}
+        >
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              background: "rgba(239,68,68,0.1)",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 1.25rem",
+            }}
+          >
+            <FontAwesomeIcon
+              icon={faTimes}
+              style={{ color: "#ef4444", fontSize: "1.25rem" }}
+            />
           </div>
-          <h3 className="text-lg font-semibold text-red-900 mb-2">
+          <h3
+            style={{
+              fontSize: "1.0625rem",
+              fontWeight: 700,
+              color: "var(--color-neutral-900)",
+              marginBottom: "0.5rem",
+            }}
+          >
             Error Loading Milestones
           </h3>
-          <p className="text-red-700 mb-4">Failed to load milestones</p>
+          <p
+            style={{
+              color: "var(--color-neutral-500)",
+              fontSize: "0.875rem",
+              marginBottom: "1.5rem",
+            }}
+          >
+            Something went wrong. Please try again.
+          </p>
           <button
             onClick={() => window.location.reload()}
-            className="btn-primary"
+            className="btn btn-primary"
           >
             Try Again
           </button>
@@ -471,141 +993,218 @@ export default function ProviderMilestonesPage() {
     );
   }
 
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   return (
-    <div className="min-h-screen bg-neutral-50">
-      {/* Animation styles */}
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `
-            @keyframes slide-in-right {
-              from { transform: translateX(100%); opacity: 0; }
-              to { transform: translateX(0); opacity: 1; }
-            }
-            .animate-slide-in-right {
-              animation: slide-in-right 0.3s ease-out;
-            }
-          `,
+    <div style={{ minHeight: "100vh", background: "var(--color-neutral-50)" }}>
+      <style>{`
+        @keyframes slideInRight {
+          from { transform: translateX(60px); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+        .animate-spin { animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .milestone-row:hover { background: var(--color-neutral-50); }
+        .action-btn { background: none; border: none; cursor: pointer; border-radius: 0.5rem; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; transition: background 150ms; }
+        .action-btn:hover { background: var(--color-neutral-100); }
+        .chip-filter { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; border: 1px solid; }
+      `}</style>
+
+      {/* Toast */}
+      {toast && <Toast message={toast} onClose={() => setToast(null)} />}
+
+      {/* Page header */}
+      <div
+        style={{
+          background: "#fff",
+          borderBottom: "1px solid var(--color-neutral-200)",
+          padding: "1.5rem 2rem",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "1rem",
         }}
-      />
-
-      {/* Success Toast */}
-      {showSuccessMessage && (
-        <div className="fixed top-8 right-8 z-[60] animate-slide-in-right">
-          <div className="bg-green-600 text-neutral-0 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 min-w-[300px]">
-            <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
-              <FontAwesomeIcon icon={faCheck} />
-            </div>
-            <div className="flex-1">
-              <p className="font-semibold">{successMessage}</p>
-            </div>
-            <button
-              onClick={() => setShowSuccessMessage(false)}
-              className="text-neutral-0 hover:text-neutral-200 transition-colors"
-            >
-              <FontAwesomeIcon icon={faTimes} />
-            </button>
-          </div>
+      >
+        <div>
+          <h1
+            style={{
+              fontSize: "1.375rem",
+              fontWeight: 700,
+              color: "var(--color-neutral-900)",
+              margin: 0,
+            }}
+          >
+            Milestones
+          </h1>
+          <p
+            style={{
+              fontSize: "0.875rem",
+              color: "var(--color-neutral-500)",
+              margin: "0.25rem 0 0",
+            }}
+          >
+            Track progress and manage project milestones
+          </p>
         </div>
-      )}
-
-      {/* Header */}
-      <div className="bg-neutral-0 border-b border-neutral-200 px-8 py-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h1 className="heading-2 text-neutral-900 mb-1">
-              Milestones Management
-            </h1>
-            <p className="text-neutral-600 body-regular">
-              Create milestones, track progress, and respond to client questions
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => openMilestoneModal()}
-              className="btn-primary flex items-center gap-2 shadow-lg"
-            >
-              <FontAwesomeIcon icon={faPlus} />
-              Create Milestone
-            </button>
-          </div>
-        </div>
+        <button
+          className="btn btn-primary"
+          onClick={() => openMilestoneModal()}
+        >
+          <FontAwesomeIcon icon={faPlus} style={{ fontSize: "0.75rem" }} />
+          Create Milestone
+        </button>
       </div>
 
-      <div className="p-8 max-w-7xl mx-auto">
-        {/* Filters and Search */}
-        <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-6 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Project Filter */}
+      <div style={{ padding: "2rem", maxWidth: 1200, margin: "0 auto" }}>
+        {/* Filters card */}
+        <div
+          style={{
+            background: "#fff",
+            border: "1px solid var(--color-neutral-200)",
+            borderRadius: "1rem",
+            padding: "1.25rem 1.5rem",
+            marginBottom: "1.5rem",
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: "1rem",
+            }}
+          >
+            {/* Project filter */}
             <div>
-              <label className="block text-neutral-700 font-semibold mb-2 body-small">
+              <FormLabel>Project</FormLabel>
+              <div style={{ position: "relative" }}>
                 <FontAwesomeIcon
                   icon={faFolder}
-                  className="mr-2 text-primary-600"
+                  style={{
+                    position: "absolute",
+                    left: "0.875rem",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    color: "#1ab189",
+                    fontSize: "0.75rem",
+                    pointerEvents: "none",
+                  }}
                 />
-                Filter by Project
-              </label>
-              <select
-                value={selectedProject}
-                onChange={(e) => setSelectedProject(e.target.value)}
-                className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all cursor-pointer"
-              >
-                <option value="all">All Projects</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.project_name}
-                  </option>
-                ))}
-              </select>
+                <FocusInput
+                  as="select"
+                  value={selectedProject}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                    setSelectedProject(e.target.value)
+                  }
+                  style={{ paddingLeft: "2.25rem", cursor: "pointer" }}
+                >
+                  <option value="all">All Projects</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.project_name}
+                    </option>
+                  ))}
+                </FocusInput>
+              </div>
             </div>
-            {/* Status Filter */}
+
+            {/* Status filter */}
             <div>
-              <label className="block text-neutral-700 font-semibold mb-2 body-small">
+              <FormLabel>Status</FormLabel>
+              <div style={{ position: "relative" }}>
                 <FontAwesomeIcon
                   icon={faFilter}
-                  className="mr-2 text-primary-600"
+                  style={{
+                    position: "absolute",
+                    left: "0.875rem",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    color: "#1ab189",
+                    fontSize: "0.75rem",
+                    pointerEvents: "none",
+                  }}
                 />
-                Filter by Status
-              </label>
-              <select
-                value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
-                className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all cursor-pointer"
-              >
-                <option value="all">All Statuses</option>
-                <option value="pending">Pending</option>
-                <option value="in_progress">In Progress</option>
-                <option value="completed">Completed</option>
-              </select>
+                <FocusInput
+                  as="select"
+                  value={selectedStatus}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                    setSelectedStatus(e.target.value)
+                  }
+                  style={{ paddingLeft: "2.25rem", cursor: "pointer" }}
+                >
+                  <option value="all">All Statuses</option>
+                  <option value="pending">Pending</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                </FocusInput>
+              </div>
             </div>
+
             {/* Search */}
             <div>
-              <label className="block text-neutral-700 font-semibold mb-2 body-small">
+              <FormLabel>Search</FormLabel>
+              <div style={{ position: "relative" }}>
                 <FontAwesomeIcon
                   icon={faSearch}
-                  className="mr-2 text-primary-600"
+                  style={{
+                    position: "absolute",
+                    left: "0.875rem",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    color: "var(--color-neutral-400)",
+                    fontSize: "0.75rem",
+                    pointerEvents: "none",
+                  }}
                 />
-                Search Milestones
-              </label>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by title or description..."
-                className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
-              />
+                <FocusInput
+                  value={searchQuery}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setSearchQuery(e.target.value)
+                  }
+                  placeholder="Search by title, description…"
+                  style={{ paddingLeft: "2.25rem" }}
+                />
+              </div>
             </div>
           </div>
 
-          {/* Active Filters Display */}
+          {/* Active filter chips */}
           {(selectedProject !== "all" ||
             selectedStatus !== "all" ||
             searchQuery) && (
-            <div className="flex items-center gap-2 mt-4 pt-4 border-t border-neutral-200 flex-wrap">
-              <span className="text-neutral-600 text-sm font-medium">
-                Active Filters:
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                marginTop: "1rem",
+                paddingTop: "1rem",
+                borderTop: "1px solid var(--color-neutral-200)",
+                flexWrap: "wrap",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "0.75rem",
+                  color: "var(--color-neutral-500)",
+                  fontWeight: 500,
+                }}
+              >
+                Filters:
               </span>
               {selectedProject !== "all" && (
-                <span className="px-3 py-1 bg-primary-50 text-primary-700 rounded-lg text-sm font-medium border border-primary-200">
+                <span
+                  className="chip-filter"
+                  style={{
+                    background: "rgba(26,177,137,0.08)",
+                    color: "#065f46",
+                    borderColor: "rgba(26,177,137,0.2)",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faFolder}
+                    style={{ fontSize: "0.6rem" }}
+                  />
                   {
                     projects.find((p) => p.id.toString() === selectedProject)
                       ?.project_name
@@ -613,523 +1212,948 @@ export default function ProviderMilestonesPage() {
                 </span>
               )}
               {selectedStatus !== "all" && (
-                <span className="px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium border border-blue-200">
-                  {getStatusText(selectedStatus)}
+                <span
+                  className="chip-filter"
+                  style={{
+                    background: "rgba(59,130,246,0.08)",
+                    color: "#1d4ed8",
+                    borderColor: "rgba(59,130,246,0.2)",
+                  }}
+                >
+                  {STATUS_STYLES[selectedStatus]?.label}
                 </span>
               )}
               {searchQuery && (
-                <span className="px-3 py-1 bg-green-50 text-green-700 rounded-lg text-sm font-medium border border-green-200">
-                  Search: "{searchQuery}"
+                <span
+                  className="chip-filter"
+                  style={{
+                    background: "var(--color-neutral-100)",
+                    color: "var(--color-neutral-700)",
+                    borderColor: "var(--color-neutral-200)",
+                  }}
+                >
+                  "{searchQuery}"
                 </span>
               )}
+              <button
+                onClick={() => {
+                  setSelectedProject("all");
+                  setSelectedStatus("all");
+                  setSearchQuery("");
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--color-neutral-500)",
+                  fontSize: "0.75rem",
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                  padding: 0,
+                }}
+              >
+                Clear all
+              </button>
             </div>
           )}
         </div>
 
-        {/* Milestones List */}
+        {/* Milestone groups */}
         {filteredMilestones.length === 0 ? (
-          <div className="bg-neutral-0 rounded-xl border border-neutral-200 p-12 text-center">
-            <FontAwesomeIcon
-              icon={faCheckCircle}
-              className="text-6xl text-neutral-300 mb-4"
-            />
-            <h3 className="heading-4 text-neutral-900 mb-2">
-              No Milestones Found
+          <div
+            style={{
+              background: "#fff",
+              border: "1px solid var(--color-neutral-200)",
+              borderRadius: "1rem",
+              padding: "4rem 2rem",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                width: 64,
+                height: 64,
+                background: "rgba(26,177,137,0.08)",
+                borderRadius: "50%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 1.25rem",
+              }}
+            >
+              <FontAwesomeIcon
+                icon={faCheckCircle}
+                style={{ color: "#1ab189", fontSize: "1.5rem" }}
+              />
+            </div>
+            <h3
+              style={{
+                fontSize: "1rem",
+                fontWeight: 700,
+                color: "var(--color-neutral-900)",
+                marginBottom: "0.5rem",
+              }}
+            >
+              No milestones found
             </h3>
-            <p className="text-neutral-600 mb-4">
+            <p
+              style={{
+                fontSize: "0.875rem",
+                color: "var(--color-neutral-500)",
+                marginBottom: "1.5rem",
+              }}
+            >
               {searchQuery ||
               selectedProject !== "all" ||
               selectedStatus !== "all"
-                ? "Try adjusting your filters or search query"
+                ? "Try adjusting your filters"
                 : "Get started by creating your first milestone"}
             </p>
             <button
+              className="btn btn-primary"
               onClick={() => openMilestoneModal()}
-              className="btn-primary inline-flex items-center gap-2"
             >
-              <FontAwesomeIcon icon={faPlus} />
+              <FontAwesomeIcon icon={faPlus} style={{ fontSize: "0.75rem" }} />
               Create Milestone
             </button>
           </div>
         ) : (
-          <div className="space-y-6">
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
+          >
             {Object.entries(groupedMilestones).map(
-              ([projectId, projectMilestones]) => {
+              ([projectId, pMilestones]) => {
                 const project = projects.find(
-                  (p) => p.id.toString() === projectId
+                  (p) => p.id.toString() === projectId,
                 );
-                const progress = getProjectProgress(projectId);
+                const progress = getProjectProgress(milestones, projectId);
+                const completedCount = pMilestones.filter(
+                  (m) => m.status === "completed",
+                ).length;
+
                 return (
                   <div
                     key={projectId}
-                    className="bg-neutral-0 rounded-xl border border-neutral-200 overflow-hidden"
+                    style={{
+                      background: "#fff",
+                      border: "1px solid var(--color-neutral-200)",
+                      borderRadius: "1rem",
+                      overflow: "hidden",
+                    }}
                   >
-                    {/* Project Header */}
-                    <div className="bg-gradient-to-r from-primary-50 to-secondary-50 p-6 border-b border-neutral-200">
-                      <div className="flex items-center justify-between mb-3">
-                        <div>
-                          <h2 className="heading-4 text-neutral-900">
-                            {project?.project_name}
-                          </h2>
-                          <p className="text-neutral-600 text-sm mt-1">
-                            <FontAwesomeIcon icon={faUser} className="mr-1" />
-                            Client: {project?.client?.full_name || "Unassigned"}
-                          </p>
-                        </div>
-                        <span className="text-sm font-semibold text-neutral-600">
-                          {
-                            projectMilestones.filter(
-                              (m) => m.status === "completed"
-                            ).length
-                          }{" "}
-                          / {projectMilestones.length} Completed
-                        </span>
-                      </div>
-                      <div className="w-full bg-neutral-200 rounded-full h-2">
+                    {/* Project header */}
+                    <div
+                      style={{
+                        padding: "1.25rem 1.5rem",
+                        borderBottom: "1px solid var(--color-neutral-200)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          justifyContent: "space-between",
+                          marginBottom: "0.875rem",
+                        }}
+                      >
                         <div
-                          className="bg-primary-600 h-2 rounded-full transition-all duration-500"
-                          style={{ width: `${progress}%` }}
-                        />
-                      </div>
-                    </div>
-                    {/* Milestones */}
-                    <div className="divide-y divide-neutral-200">
-                      {projectMilestones.map((milestone) => (
-                        <div
-                          key={milestone.id}
-                          className="p-6 hover:bg-neutral-50 transition-colors"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.75rem",
+                          }}
                         >
-                          <div className="flex items-start justify-between mb-4">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-3 mb-2">
-                                <h3 className="heading-4 text-neutral-900">
-                                  {milestone.title}
-                                </h3>
-                                <span
-                                  className={`text-xs font-semibold px-2 py-1 border rounded flex items-center gap-1 ${getStatusBadgeColor(
-                                    milestone.status
-                                  )}`}
-                                >
-                                  <FontAwesomeIcon
-                                    icon={getStatusIcon(milestone.status)}
-                                  />
-                                  {getStatusText(milestone.status)}
-                                </span>
-                                {isOverdue(
-                                  milestone.due_date,
-                                  milestone.status
-                                ) && (
-                                  <span className="text-xs font-semibold px-2 py-1 bg-red-100 text-red-700 border border-red-200 rounded">
-                                    Overdue
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-neutral-700 mb-3">
-                                {milestone.description}
-                              </p>
-                              <div className="flex items-center gap-4 text-sm text-neutral-600 flex-wrap">
-                                <span className="flex items-center gap-1 font-semibold text-green-600">
-                                  <FontAwesomeIcon
-                                    icon={faDollarSign}
-                                    className="text-xs"
-                                  />
-                                  {formatCurrency(milestone.amount)}
-                                </span>
-                                <span className="flex items-center gap-1">
-                                  <FontAwesomeIcon
-                                    icon={faCalendar}
-                                    className="text-xs"
-                                  />
-                                  <span className="font-medium">Due:</span>{" "}
-                                  {new Date(
-                                    milestone.due_date
-                                  ).toLocaleDateString("en-US", {
-                                    month: "short",
-                                    day: "numeric",
-                                    year: "numeric",
-                                  })}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 ml-4">
-                              <button
-                                onClick={() => viewMilestone(milestone)}
-                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                title="View details"
-                              >
-                                <FontAwesomeIcon icon={faEye} />
-                              </button>
-                              <button
-                                onClick={() => openMilestoneModal(milestone)}
-                                className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                                title="Edit milestone"
-                              >
-                                <FontAwesomeIcon icon={faPenToSquare} />
-                              </button>
-                              <button
-                                onClick={() => deleteMilestone(milestone.id)}
-                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                title="Delete milestone"
-                                disabled={deleteMilestoneMutation.isPending}
-                              >
-                                <FontAwesomeIcon icon={faTrash} />
-                              </button>
-                            </div>
+                          <div
+                            style={{
+                              width: 36,
+                              height: 36,
+                              background: "rgba(26,177,137,0.1)",
+                              borderRadius: "0.625rem",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <FontAwesomeIcon
+                              icon={faFolder}
+                              style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                            />
+                          </div>
+                          <div>
+                            <p
+                              style={{
+                                fontSize: "0.9375rem",
+                                fontWeight: 700,
+                                color: "var(--color-neutral-900)",
+                                margin: 0,
+                              }}
+                            >
+                              {project?.project_name}
+                            </p>
+                            <p
+                              style={{
+                                fontSize: "0.8125rem",
+                                color: "var(--color-neutral-500)",
+                                margin: "0.15rem 0 0",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "0.35rem",
+                              }}
+                            >
+                              <FontAwesomeIcon
+                                icon={faUser}
+                                style={{ fontSize: "0.625rem" }}
+                              />
+                              {project?.client?.full_name || "Unassigned"}
+                            </p>
                           </div>
                         </div>
-                      ))}
+                        <div style={{ textAlign: "right" }}>
+                          <p
+                            style={{
+                              fontSize: "0.8125rem",
+                              fontWeight: 600,
+                              color: "var(--color-neutral-700)",
+                              margin: 0,
+                            }}
+                          >
+                            {completedCount} / {pMilestones.length}
+                          </p>
+                          <p
+                            style={{
+                              fontSize: "0.6875rem",
+                              color: "var(--color-neutral-400)",
+                              margin: "0.15rem 0 0",
+                            }}
+                          >
+                            completed
+                          </p>
+                        </div>
+                      </div>
+                      {/* Progress */}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.75rem",
+                        }}
+                      >
+                        <div
+                          style={{
+                            flex: 1,
+                            height: 6,
+                            background: "var(--color-neutral-150)",
+                            borderRadius: 9999,
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: "100%",
+                              width: `${progress}%`,
+                              background: "#1ab189",
+                              borderRadius: 9999,
+                              transition: "width 0.6s ease",
+                            }}
+                          />
+                        </div>
+                        <span
+                          style={{
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                            color: "#1ab189",
+                            minWidth: 36,
+                            textAlign: "right",
+                          }}
+                        >
+                          {progress}%
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Milestone rows */}
+                    <div>
+                      {pMilestones.map((milestone, idx) => {
+                        const overdue = isOverdue(
+                          milestone.due_date,
+                          milestone.status,
+                        );
+                        return (
+                          <div
+                            key={milestone.id}
+                            className="milestone-row"
+                            style={{
+                              padding: "1rem 1.5rem",
+                              borderBottom:
+                                idx < pMilestones.length - 1
+                                  ? "1px solid var(--color-neutral-200)"
+                                  : "none",
+                              transition: "background 150ms",
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "flex-start",
+                                gap: "1rem",
+                              }}
+                            >
+                              {/* Left content */}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    flexWrap: "wrap",
+                                    gap: "0.5rem",
+                                    marginBottom: "0.375rem",
+                                  }}
+                                >
+                                  <p
+                                    style={{
+                                      fontSize: "0.9375rem",
+                                      fontWeight: 600,
+                                      color: "var(--color-neutral-900)",
+                                      margin: 0,
+                                    }}
+                                  >
+                                    {milestone.title}
+                                  </p>
+                                  <StatusBadge status={milestone.status} />
+                                  {overdue && (
+                                    <span
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "0.25rem",
+                                        fontSize: "0.6875rem",
+                                        fontWeight: 600,
+                                        padding: "0.25rem 0.625rem",
+                                        borderRadius: 9999,
+                                        background: "rgba(239,68,68,0.1)",
+                                        color: "#991b1b",
+                                        border:
+                                          "1px solid rgba(239,68,68,0.25)",
+                                      }}
+                                    >
+                                      <FontAwesomeIcon
+                                        icon={faExclamationTriangle}
+                                        style={{ fontSize: "0.6rem" }}
+                                      />
+                                      Overdue
+                                    </span>
+                                  )}
+                                </div>
+                                {milestone.description && (
+                                  <p
+                                    style={{
+                                      fontSize: "0.8125rem",
+                                      color: "var(--color-neutral-500)",
+                                      margin: "0 0 0.625rem",
+                                      overflow: "hidden",
+                                      display: "-webkit-box",
+                                      WebkitLineClamp: 2,
+                                      WebkitBoxOrient: "vertical",
+                                    }}
+                                  >
+                                    {milestone.description}
+                                  </p>
+                                )}
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    flexWrap: "wrap",
+                                    gap: "1rem",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      fontSize: "0.8125rem",
+                                      fontWeight: 700,
+                                      color: "#1ab189",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: "0.25rem",
+                                    }}
+                                  >
+                                    <FontAwesomeIcon
+                                      icon={faDollarSign}
+                                      style={{ fontSize: "0.625rem" }}
+                                    />
+                                    {formatCurrency(milestone.amount)}
+                                  </span>
+                                  <span
+                                    style={{
+                                      fontSize: "0.8125rem",
+                                      color: "var(--color-neutral-500)",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: "0.35rem",
+                                    }}
+                                  >
+                                    <FontAwesomeIcon
+                                      icon={faCalendar}
+                                      style={{ fontSize: "0.625rem" }}
+                                    />
+                                    {new Date(
+                                      milestone.due_date,
+                                    ).toLocaleDateString("en-US", {
+                                      month: "short",
+                                      day: "numeric",
+                                      year: "numeric",
+                                    })}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Actions */}
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "0.25rem",
+                                  flexShrink: 0,
+                                }}
+                              >
+                                <button
+                                  className="action-btn"
+                                  onClick={() => setViewingMilestone(milestone)}
+                                  title="View details"
+                                  style={{ color: "var(--color-neutral-500)" }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faEye}
+                                    style={{ fontSize: "0.875rem" }}
+                                  />
+                                </button>
+                                <button
+                                  className="action-btn"
+                                  onClick={() => openMilestoneModal(milestone)}
+                                  title="Edit"
+                                  style={{ color: "var(--color-neutral-500)" }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faPenToSquare}
+                                    style={{ fontSize: "0.875rem" }}
+                                  />
+                                </button>
+                                <button
+                                  className="action-btn"
+                                  onClick={() =>
+                                    deleteMilestone(
+                                      milestone.id,
+                                      milestone.title,
+                                    )
+                                  }
+                                  title="Delete"
+                                  disabled={deleteMilestoneMutation.isPending}
+                                  style={{ color: "#ef4444" }}
+                                >
+                                  <FontAwesomeIcon
+                                    icon={faTrash}
+                                    style={{ fontSize: "0.875rem" }}
+                                  />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
-              }
+              },
             )}
           </div>
         )}
       </div>
 
-      {/* Create/Edit Milestone Modal */}
+      {/* ── Create / Edit Modal ──────────────────────────────────────────────── */}
       {showMilestoneModal && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between z-10">
-              <div>
-                <h3 className="heading-4 text-neutral-900">
-                  {editingMilestone ? "Edit Milestone" : "Create New Milestone"}
-                </h3>
-                <p className="text-neutral-600 text-sm mt-1">
-                  {editingMilestone
-                    ? "Update milestone details and payment amount"
-                    : "Create a new milestone with payment amount"}
-                </p>
-              </div>
-              <button
-                onClick={closeMilestoneModal}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+        <Modal onClose={closeMilestoneModal}>
+          <ModalHeader
+            title={editingMilestone ? "Edit Milestone" : "Create Milestone"}
+            subtitle={
+              editingMilestone
+                ? "Update details and payment amount"
+                : "Add a new milestone with payment amount"
+            }
+            onClose={closeMilestoneModal}
+          />
+
+          <div
+            style={{
+              padding: "1.5rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "1.25rem",
+            }}
+          >
+            {/* Project */}
+            <div>
+              <FormLabel required>Project</FormLabel>
+              <FocusInput
+                as="select"
+                value={milestoneForm.project}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                  setMilestoneForm({
+                    ...milestoneForm,
+                    project: e.target.value,
+                  })
+                }
+                disabled={!!editingMilestone}
+                style={{
+                  cursor: editingMilestone ? "not-allowed" : "pointer",
+                  background: editingMilestone
+                    ? "var(--color-neutral-100)"
+                    : "#fff",
+                }}
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
-              </button>
-            </div>
-            <div className="p-6 space-y-5">
-              {/* Project Selection */}
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Project <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={milestoneForm.project}
-                  onChange={(e) =>
-                    setMilestoneForm({
-                      ...milestoneForm,
-                      project: e.target.value,
-                    })
-                  }
-                  disabled={!!editingMilestone}
-                  className="w-full px-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all cursor-pointer disabled:bg-neutral-100"
+                <option value="">Select a project</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.project_name} — {p.client?.full_name || "No client"}
+                  </option>
+                ))}
+              </FocusInput>
+              {selectedProjectData && (
+                <p
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "var(--color-neutral-500)",
+                    marginTop: "0.375rem",
+                  }}
                 >
-                  <option value="">Select a project</option>
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.project_name} -{" "}
-                      {project.client?.full_name || "No client"}
-                    </option>
-                  ))}
-                </select>
-                {selectedProjectData && (
-                  <p className="mt-2 text-sm text-neutral-600">
-                    Client:{" "}
-                    <span className="font-semibold">
-                      {selectedProjectData.client?.full_name || "Unassigned"}
-                    </span>
-                  </p>
-                )}
-              </div>
+                  Client:{" "}
+                  <strong style={{ color: "var(--color-neutral-700)" }}>
+                    {selectedProjectData.client?.full_name || "Unassigned"}
+                  </strong>
+                </p>
+              )}
+            </div>
+
+            {/* Title */}
+            <div>
+              <FormLabel required>Title</FormLabel>
+              <FocusInput
+                value={milestoneForm.title}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  setMilestoneForm({ ...milestoneForm, title: e.target.value })
+                }
+                placeholder="e.g., Initial Design Phase"
+              />
+            </div>
+
+            {/* Description */}
+            <div>
+              <FormLabel>Description</FormLabel>
+              <FocusInput
+                as="textarea"
+                value={milestoneForm.description}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                  setMilestoneForm({
+                    ...milestoneForm,
+                    description: e.target.value,
+                  })
+                }
+                placeholder="Describe this milestone…"
+                style={{ resize: "none", minHeight: 100 }}
+                rows={4}
+              />
+            </div>
+
+            {/* Amount + Due date */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "1rem",
+              }}
+            >
               <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Milestone Title <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={milestoneForm.title}
-                  onChange={(e) =>
-                    setMilestoneForm({
-                      ...milestoneForm,
-                      title: e.target.value,
-                    })
-                  }
-                  placeholder="e.g., Initial Design Phase"
-                  className="w-full px-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Description
-                </label>
-                <textarea
-                  value={milestoneForm.description}
-                  onChange={(e) =>
-                    setMilestoneForm({
-                      ...milestoneForm,
-                      description: e.target.value,
-                    })
-                  }
-                  placeholder="Describe this milestone..."
-                  rows={4}
-                  className="w-full px-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all resize-none"
-                />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Payment Amount <span className="text-red-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <FontAwesomeIcon
-                      icon={faDollarSign}
-                      className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400"
-                    />
-                    <input
-                      type="number"
-                      value={milestoneForm.amount}
-                      onChange={(e) =>
-                        setMilestoneForm({
-                          ...milestoneForm,
-                          amount: e.target.value,
-                        })
-                      }
-                      placeholder="0.00"
-                      min="0"
-                      step="0.01"
-                      className="w-full pl-10 pr-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                    Due Date <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={milestoneForm.due_date}
-                    onChange={(e) =>
+                <FormLabel required>Payment Amount</FormLabel>
+                <div style={{ position: "relative" }}>
+                  <FontAwesomeIcon
+                    icon={faDollarSign}
+                    style={{
+                      position: "absolute",
+                      left: "0.875rem",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      color: "var(--color-neutral-400)",
+                      fontSize: "0.75rem",
+                      pointerEvents: "none",
+                    }}
+                  />
+                  <FocusInput
+                    type="number"
+                    value={milestoneForm.amount}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                       setMilestoneForm({
                         ...milestoneForm,
-                        due_date: e.target.value,
+                        amount: e.target.value,
                       })
                     }
-                    min={selectedProjectData?.start_date}
-                    max={selectedProjectData?.expected_end_date}
-                    className="w-full px-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
+                    placeholder="0.00"
+                    min="0"
+                    step="0.01"
+                    style={{ paddingLeft: "2.25rem" }}
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-neutral-700 font-semibold mb-2 body-small">
-                  Status <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={milestoneForm.status}
-                  onChange={(e) =>
+                <FormLabel required>Due Date</FormLabel>
+                <FocusInput
+                  type="date"
+                  value={milestoneForm.due_date}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                     setMilestoneForm({
                       ...milestoneForm,
-                      status: e.target.value as
-                        | "pending"
-                        | "in_progress"
-                        | "completed",
+                      due_date: e.target.value,
                     })
                   }
-                  className="w-full px-4 py-3 bg-neutral-0 border-2 border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all cursor-pointer"
-                >
-                  <option value="pending">⚠ Pending</option>
-                  <option value="in_progress">⏱ In Progress</option>
-                  <option value="completed">✓ Completed</option>
-                </select>
-              </div>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-blue-700 text-sm flex items-start gap-2">
-                  <FontAwesomeIcon
-                    icon={faCheckCircle}
-                    className="mt-0.5 flex-shrink-0"
-                  />
-                  <span>
-                    This milestone will be visible to the client and payment
-                    amount will be used for invoicing.
-                  </span>
-                </p>
+                  min={selectedProjectData?.start_date}
+                  max={selectedProjectData?.expected_end_date}
+                />
               </div>
             </div>
-            <div className="sticky bottom-0 bg-neutral-50 border-t border-neutral-200 px-6 py-4 flex items-center justify-end gap-3">
-              <button
-                onClick={closeMilestoneModal}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
-                disabled={
-                  createMilestoneMutation.isPending ||
-                  updateMilestoneMutation.isPending
+
+            {/* Status */}
+            <div>
+              <FormLabel required>Status</FormLabel>
+              <FocusInput
+                as="select"
+                value={milestoneForm.status}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                  setMilestoneForm({
+                    ...milestoneForm,
+                    status: e.target.value as MilestoneFormData["status"],
+                  })
                 }
+                style={{ cursor: "pointer" }}
               >
-                Cancel
-              </button>
-              <button
-                onClick={saveMilestone}
-                className="btn-primary flex items-center gap-2"
-                disabled={
-                  createMilestoneMutation.isPending ||
-                  updateMilestoneMutation.isPending
-                }
-              >
-                {createMilestoneMutation.isPending ||
-                updateMilestoneMutation.isPending ? (
-                  <>
-                    <FontAwesomeIcon
-                      icon={faSpinner}
-                      className="animate-spin"
-                    />
-                    {editingMilestone ? "Updating..." : "Creating..."}
-                  </>
-                ) : (
-                  <>
-                    <FontAwesomeIcon
-                      icon={editingMilestone ? faCheckCircle : faPlus}
-                    />
-                    {editingMilestone ? "Update Milestone" : "Create Milestone"}
-                  </>
-                )}
-              </button>
+                <option value="pending">⚠ Pending</option>
+                <option value="in_progress">⏱ In Progress</option>
+                <option value="completed">✓ Completed</option>
+              </FocusInput>
+            </div>
+
+            {/* Info note */}
+            <div
+              style={{
+                background: "rgba(26,177,137,0.06)",
+                border: "1px solid rgba(26,177,137,0.2)",
+                borderRadius: "0.625rem",
+                padding: "0.875rem 1rem",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "0.625rem",
+              }}
+            >
+              <FontAwesomeIcon
+                icon={faCheckCircle}
+                style={{
+                  color: "#1ab189",
+                  fontSize: "0.875rem",
+                  marginTop: 2,
+                  flexShrink: 0,
+                }}
+              />
+              <p style={{ fontSize: "0.8125rem", color: "#065f46", margin: 0 }}>
+                This milestone will be visible to the client and the payment
+                amount will be used for invoicing.
+              </p>
             </div>
           </div>
-        </div>
+
+          <ModalFooter>
+            <button
+              className="btn btn-ghost"
+              onClick={closeMilestoneModal}
+              disabled={isSaving}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={saveMilestone}
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <>
+                  <FontAwesomeIcon
+                    icon={faSpinner}
+                    className="animate-spin"
+                    style={{ fontSize: "0.75rem" }}
+                  />
+                  {editingMilestone ? "Updating…" : "Creating…"}
+                </>
+              ) : (
+                <>
+                  <FontAwesomeIcon
+                    icon={editingMilestone ? faCheckCircle : faPlus}
+                    style={{ fontSize: "0.75rem" }}
+                  />
+                  {editingMilestone ? "Update Milestone" : "Create Milestone"}
+                </>
+              )}
+            </button>
+          </ModalFooter>
+        </Modal>
       )}
 
-      {/* View Milestone Modal */}
+      {/* ── View Milestone Modal ─────────────────────────────────────────────── */}
       {viewingMilestone && (
-        <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-gradient-to-r from-primary-50 to-secondary-50 border-b border-neutral-200 px-6 py-4 flex items-center justify-between z-10">
-              <div>
-                <h3 className="heading-4 text-neutral-900">
-                  Milestone Details
-                </h3>
-                <p className="text-neutral-600 text-sm mt-1">
-                  {viewingMilestone.project_name} -{" "}
-                  {viewingMilestone.client_name}
-                </p>
-              </div>
-              <button
-                onClick={closeViewModal}
-                className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
+        <Modal onClose={() => setViewingMilestone(null)}>
+          <ModalHeader
+            title="Milestone Details"
+            subtitle={`${viewingMilestone.project_name} — ${viewingMilestone.client_name}`}
+            onClose={() => setViewingMilestone(null)}
+          />
+
+          <div
+            style={{
+              padding: "1.5rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "1.25rem",
+            }}
+          >
+            {/* Title */}
+            <div>
+              <p
+                style={{
+                  fontSize: "0.6875rem",
+                  fontWeight: 600,
+                  color: "var(--color-neutral-400)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  marginBottom: "0.375rem",
+                }}
               >
-                <FontAwesomeIcon icon={faTimes} className="text-neutral-600" />
-              </button>
+                Title
+              </p>
+              <p
+                style={{
+                  fontSize: "1rem",
+                  fontWeight: 700,
+                  color: "var(--color-neutral-900)",
+                  margin: 0,
+                }}
+              >
+                {viewingMilestone.title}
+              </p>
             </div>
-            <div className="p-6 space-y-6">
+
+            {/* Description */}
+            {viewingMilestone.description && (
               <div>
-                <label className="block text-neutral-600 font-medium mb-2 body-small">
-                  Title
-                </label>
-                <p className="text-neutral-900 font-semibold text-lg">
-                  {viewingMilestone.title}
+                <p
+                  style={{
+                    fontSize: "0.6875rem",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-400)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    marginBottom: "0.375rem",
+                  }}
+                >
+                  Description
                 </p>
-              </div>
-              {viewingMilestone.description && (
-                <div>
-                  <label className="block text-neutral-600 font-medium mb-2 body-small">
-                    Description
-                  </label>
-                  <div className="bg-neutral-50 rounded-lg p-4 border border-neutral-200">
-                    <p className="text-neutral-700 leading-relaxed">
-                      {viewingMilestone.description}
-                    </p>
-                  </div>
-                </div>
-              )}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-neutral-600 font-medium mb-2 body-small">
-                    Payment Amount
-                  </label>
-                  <div className="flex items-center gap-2 text-neutral-900 font-bold text-2xl bg-green-50 p-4 rounded-lg border border-green-200">
-                    <FontAwesomeIcon
-                      icon={faDollarSign}
-                      className="text-green-600"
-                    />
-                    {formatCurrency(viewingMilestone.amount)}
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-neutral-600 font-medium mb-2 body-small">
-                    Due Date
-                  </label>
-                  <div className="flex items-center gap-2 text-neutral-900 font-medium bg-neutral-50 p-4 rounded-lg border border-neutral-200">
-                    <FontAwesomeIcon
-                      icon={faCalendar}
-                      className="text-primary-600"
-                    />
-                    <span className="text-sm">
-                      {new Date(viewingMilestone.due_date).toLocaleDateString(
-                        "en-US",
-                        {
-                          weekday: "long",
-                          year: "numeric",
-                          month: "long",
-                          day: "numeric",
-                        }
-                      )}
-                    </span>
-                  </div>
+                <div
+                  style={{
+                    background: "var(--color-neutral-50)",
+                    border: "1px solid var(--color-neutral-200)",
+                    borderRadius: "0.625rem",
+                    padding: "0.875rem 1rem",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "var(--color-neutral-700)",
+                      lineHeight: 1.6,
+                      margin: 0,
+                    }}
+                  >
+                    {viewingMilestone.description}
+                  </p>
                 </div>
               </div>
+            )}
+
+            {/* Amount + Date */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "1rem",
+              }}
+            >
               <div>
-                <label className="block text-neutral-600 font-medium mb-2 body-small">
-                  Status
-                </label>
-                <span
-                  className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold border ${getStatusBadgeColor(
-                    viewingMilestone.status
-                  )}`}
+                <p
+                  style={{
+                    fontSize: "0.6875rem",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-400)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    marginBottom: "0.375rem",
+                  }}
+                >
+                  Payment Amount
+                </p>
+                <div
+                  style={{
+                    background: "rgba(26,177,137,0.06)",
+                    border: "1px solid rgba(26,177,137,0.2)",
+                    borderRadius: "0.625rem",
+                    padding: "0.875rem 1rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                  }}
                 >
                   <FontAwesomeIcon
-                    icon={getStatusIcon(viewingMilestone.status)}
+                    icon={faDollarSign}
+                    style={{ color: "#1ab189", fontSize: "1rem" }}
                   />
-                  {getStatusText(viewingMilestone.status)}
-                </span>
+                  <span
+                    style={{
+                      fontSize: "1.25rem",
+                      fontWeight: 700,
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    {formatCurrency(viewingMilestone.amount)}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <p
+                  style={{
+                    fontSize: "0.6875rem",
+                    fontWeight: 600,
+                    color: "var(--color-neutral-400)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    marginBottom: "0.375rem",
+                  }}
+                >
+                  Due Date
+                </p>
+                <div
+                  style={{
+                    background: "var(--color-neutral-50)",
+                    border: "1px solid var(--color-neutral-200)",
+                    borderRadius: "0.625rem",
+                    padding: "0.875rem 1rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                  }}
+                >
+                  <FontAwesomeIcon
+                    icon={faCalendar}
+                    style={{ color: "#1ab189", fontSize: "0.875rem" }}
+                  />
+                  <span
+                    style={{
+                      fontSize: "0.8125rem",
+                      fontWeight: 600,
+                      color: "var(--color-neutral-900)",
+                    }}
+                  >
+                    {new Date(viewingMilestone.due_date).toLocaleDateString(
+                      "en-US",
+                      {
+                        weekday: "short",
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                      },
+                    )}
+                  </span>
+                </div>
               </div>
             </div>
-            <div className="sticky bottom-0 bg-neutral-50 border-t border-neutral-200 px-6 py-4 flex items-center justify-between gap-3">
-              <button
-                onClick={() => {
-                  if (
-                    confirm("Are you sure you want to delete this milestone?")
-                  ) {
-                    deleteMilestone(viewingMilestone.id);
-                    closeViewModal();
-                  }
+
+            {/* Status */}
+            <div>
+              <p
+                style={{
+                  fontSize: "0.6875rem",
+                  fontWeight: 600,
+                  color: "var(--color-neutral-400)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  marginBottom: "0.5rem",
                 }}
-                className="px-5 py-2.5 bg-red-600 text-neutral-0 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center gap-2"
-                disabled={deleteMilestoneMutation.isPending}
               >
-                <FontAwesomeIcon icon={faTrash} />
-                Delete
-              </button>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={closeViewModal}
-                  className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors"
-                >
-                  Close
-                </button>
-                <button
-                  onClick={() => {
-                    closeViewModal();
-                    openMilestoneModal(viewingMilestone);
-                  }}
-                  className="btn-primary flex items-center gap-2"
-                >
-                  <FontAwesomeIcon icon={faPenToSquare} />
-                  Edit Milestone
-                </button>
-              </div>
+                Status
+              </p>
+              <StatusBadge status={viewingMilestone.status} />
             </div>
           </div>
-        </div>
+
+          <ModalFooter>
+            <button
+              onClick={() => {
+                deleteMilestone(viewingMilestone.id, viewingMilestone.title);
+                setViewingMilestone(null);
+              }}
+              disabled={deleteMilestoneMutation.isPending}
+              style={{
+                marginRight: "auto",
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.2)",
+                color: "#ef4444",
+                borderRadius: "0.625rem",
+                padding: "0.5rem 1rem",
+                fontSize: "0.875rem",
+                fontWeight: 600,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                transition: "background 150ms",
+              }}
+            >
+              <FontAwesomeIcon icon={faTrash} style={{ fontSize: "0.75rem" }} />
+              Delete
+            </button>
+            <button
+              className="btn btn-ghost"
+              onClick={() => setViewingMilestone(null)}
+            >
+              Close
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setViewingMilestone(null);
+                openMilestoneModal(viewingMilestone);
+              }}
+            >
+              <FontAwesomeIcon
+                icon={faPenToSquare}
+                style={{ fontSize: "0.75rem" }}
+              />
+              Edit
+            </button>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {/* ── Delete Confirmation Modal ────────────────────────────────────────── */}
+      {deletingMilestone && (
+        <DeleteModal
+          target={deletingMilestone}
+          isDeleting={deleteMilestoneMutation.isPending}
+          onConfirm={confirmDelete}
+          onCancel={() => setDeletingMilestone(null)}
+        />
       )}
     </div>
   );
