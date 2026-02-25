@@ -52,6 +52,7 @@ interface ReportData {
 interface ProjectItem {
   id?: number;
   name?: string;
+  project_name?: string; // Django model uses project_name
   client?: string;
   status?: string;
   total_cost?: number;
@@ -117,16 +118,30 @@ interface ReportFilters {
   project_id?: number;
 }
 
+// ========== UTILITY: handle both plain arrays and DRF paginated { results: [] } ==========
+function extractArray<T>(data: unknown): T[] {
+  if (Array.isArray(data)) return data as T[];
+  if (
+    data &&
+    typeof data === "object" &&
+    "results" in data &&
+    Array.isArray((data as Record<string, unknown>).results)
+  ) {
+    return (data as { results: T[] }).results;
+  }
+  return [];
+}
+
 // ========== ICON MAPPING ==========
 const iconMapping: Record<string, unknown> = {
-  faProjectDiagram: faProjectDiagram,
-  faChartLine: faChartLine,
-  faUsers: faUsers,
-  faUserTie: faUserTie,
-  faCheckCircle: faCheckCircle,
+  faProjectDiagram,
+  faChartLine,
+  faUsers,
+  faUserTie,
+  faCheckCircle,
 };
 
-// ========== HELPER FUNCTIONS ==========
+// ========== HELPERS ==========
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
     value,
@@ -152,7 +167,10 @@ const formatDateTime = (dateString: string) => {
   });
 };
 
-// ========== DESIGN SYSTEM TOKENS ==========
+// Handles both `name` (report serializer) and `project_name` (Django model)
+const getProjectName = (p: ProjectItem) => p.name ?? p.project_name ?? "N/A";
+
+// ========== DESIGN TOKENS ==========
 const GREEN = "#1ab189";
 const GREEN_TINT = "rgba(26,177,137,0.10)";
 const GREEN_RING = "rgba(26,177,137,0.18)";
@@ -177,11 +195,10 @@ const STATUS_STYLES: Record<string, { background: string; color: string }> = {
   cancelled: { background: "#fee2e2", color: "#991b1b" },
 };
 
+// ========== SUB-COMPONENTS ==========
 function StatusBadge({ status }: { status: string }) {
-  const s = STATUS_STYLES[status?.toLowerCase().replace(" ", "_")] ?? {
-    background: "#f3f4f6",
-    color: "#374151",
-  };
+  const key = status?.toLowerCase().replace(/\s+/g, "_");
+  const s = STATUS_STYLES[key] ?? { background: "#f3f4f6", color: "#374151" };
   return (
     <span
       style={{
@@ -231,6 +248,7 @@ function SectionHeader({ title }: { title: string }) {
           fontWeight: 700,
           fontSize: "1rem",
           color: "var(--color-neutral-900)",
+          margin: 0,
         }}
       >
         {title}
@@ -264,21 +282,35 @@ export default function ReportsPage() {
   // ========== QUERIES ==========
   const { data: reportTypes, isLoading: typesLoading } = useQuery({
     queryKey: ["report-types"],
-    queryFn: () => api.get<ReportType[]>("/api/v1/reports/types/"),
+    queryFn: async () => {
+      const data = await api.get<unknown>("/api/v1/reports/types/");
+      return extractArray<ReportType>(data);
+    },
     retry: 1,
   });
 
   const { data: clientsList } = useQuery({
     queryKey: ["clients-for-reports"],
-    queryFn: () => api.get<ClientItem[]>("/api/v1/reports/clients/"),
+    queryFn: async () => {
+      const data = await api.get<unknown>("/api/v1/reports/clients/");
+      return extractArray<ClientItem>(data);
+    },
     retry: 1,
   });
 
   const { data: projectsList } = useQuery({
     queryKey: ["projects-for-reports"],
-    queryFn: () => api.get<ProjectItem[]>("/api/v1/projects/"),
+    queryFn: async () => {
+      const data = await api.get<unknown>("/api/v1/projects/");
+      return extractArray<ProjectItem>(data);
+    },
     retry: 1,
   });
+
+  // Safe arrays — always plain arrays even if query hasn't resolved yet
+  const safeReportTypes = reportTypes ?? [];
+  const safeClients = clientsList ?? [];
+  const safeProjects = projectsList ?? [];
 
   // ========== GENERATE REPORT ==========
   const handleGenerateReport = async (reportId: string) => {
@@ -350,9 +382,7 @@ export default function ReportsPage() {
         `Generated: ${formatDateTime(reportData.generated_at)}`,
         pageWidth / 2,
         28,
-        {
-          align: "center",
-        },
+        { align: "center" },
       );
 
       let yPos = 40;
@@ -392,7 +422,7 @@ export default function ReportsPage() {
             ],
           ],
           body: reportData.projects.map((p) => [
-            p.name ?? "N/A",
+            getProjectName(p),
             p.client ?? "N/A",
             p.status ?? "N/A",
             formatCurrency(p.total_cost ?? 0),
@@ -483,15 +513,17 @@ export default function ReportsPage() {
     try {
       const wb = XLSX.utils.book_new();
       if (reportData.summary) {
-        const data = Object.entries(reportData.summary).map(([key, value]) => ({
-          Metric: key
-            .replace(/_/g, " ")
-            .replace(/\b\w/g, (l) => l.toUpperCase()),
-          Value: value,
-        }));
+        const summaryData = Object.entries(reportData.summary).map(
+          ([key, value]) => ({
+            Metric: key
+              .replace(/_/g, " ")
+              .replace(/\b\w/g, (l) => l.toUpperCase()),
+            Value: value,
+          }),
+        );
         XLSX.utils.book_append_sheet(
           wb,
-          XLSX.utils.json_to_sheet(data),
+          XLSX.utils.json_to_sheet(summaryData),
           "Summary",
         );
       }
@@ -525,6 +557,7 @@ export default function ReportsPage() {
           XLSX.utils.json_to_sheet(reportData.payment_details),
           "Payments",
         );
+
       XLSX.writeFile(
         wb,
         `${reportData.report_type.replace(/\s+/g, "_")}_${Date.now()}.xlsx`,
@@ -542,6 +575,7 @@ export default function ReportsPage() {
     setIsExporting(true);
     try {
       let csv = `${reportData.report_type}\nGenerated: ${formatDateTime(reportData.generated_at)}\n\n`;
+
       if (reportData.summary) {
         csv += "SUMMARY\n";
         Object.entries(reportData.summary).forEach(([k, v]) => {
@@ -552,7 +586,7 @@ export default function ReportsPage() {
       if (reportData.projects?.length) {
         csv += "PROJECTS\nName,Client,Status,Total Cost,Received,Balance\n";
         reportData.projects.forEach((p) => {
-          csv += `"${p.name ?? ""}","${p.client ?? ""}","${p.status ?? ""}",${p.total_cost ?? 0},${p.received ?? 0},${p.balance ?? 0}\n`;
+          csv += `"${getProjectName(p)}","${p.client ?? ""}","${p.status ?? ""}",${p.total_cost ?? 0},${p.received ?? 0},${p.balance ?? 0}\n`;
         });
         csv += "\n";
       }
@@ -568,7 +602,15 @@ export default function ReportsPage() {
         reportData.clients.forEach((c) => {
           csv += `"${c.name ?? ""}",${c.total_projects ?? 0},${c.total_revenue ?? 0},${c.total_paid ?? 0},${c.average_rating ?? 0}\n`;
         });
+        csv += "\n";
       }
+      if (reportData.milestones?.length) {
+        csv += "MILESTONES\nProject,Title,Status,Progress,Target Date\n";
+        reportData.milestones.forEach((m) => {
+          csv += `"${m.project ?? ""}","${m.title ?? ""}","${m.status ?? ""}",${m.completion_percentage ?? 0}%,${m.target_date ?? ""}\n`;
+        });
+      }
+
       saveAs(
         new Blob([csv], { type: "text/csv;charset=utf-8;" }),
         `${reportData.report_type.replace(/\s+/g, "_")}_${Date.now()}.csv`,
@@ -584,6 +626,7 @@ export default function ReportsPage() {
   const renderSummaryCards = () => {
     if (!reportData?.summary) return null;
     const s = reportData.summary as Record<string, number>;
+
     type CardDef = { label: string; value: string | number };
     let cards: CardDef[] = [];
 
@@ -629,6 +672,8 @@ export default function ReportsPage() {
         { label: "Completion Rate", value: `${s.completion_rate ?? 0}%` },
       ];
     }
+
+    if (!cards.length) return null;
 
     return (
       <div
@@ -698,7 +743,7 @@ export default function ReportsPage() {
       ];
       rows = reportData.projects.map((p) => [
         <span key="name" style={{ fontWeight: 600 }}>
-          {p.name ?? "N/A"}
+          {getProjectName(p)}
         </span>,
         p.client ?? "N/A",
         <StatusBadge key="status" status={p.status ?? ""} />,
@@ -936,7 +981,13 @@ export default function ReportsPage() {
     );
   }
 
-  const currentReportType = reportTypes?.find((r) => r.id === selectedReport);
+  const currentReportType = safeReportTypes.find(
+    (r) => r.id === selectedReport,
+  );
+  const showProjectFilter =
+    selectedReport === "projects-summary" ||
+    selectedReport === "milestone-completion" ||
+    selectedReport === "financial-report";
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--color-neutral-50)" }}>
@@ -957,6 +1008,7 @@ export default function ReportsPage() {
             gap: "1rem",
           }}
         >
+          {/* Left */}
           <div
             style={{ display: "flex", alignItems: "center", gap: "0.875rem" }}
           >
@@ -1021,7 +1073,7 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* Action buttons */}
+          {/* Right: action buttons */}
           {selectedReport && (
             <div
               style={{
@@ -1249,7 +1301,7 @@ export default function ReportsPage() {
                 />
               </div>
 
-              {/* Status — for projects-summary */}
+              {/* Status — projects-summary only */}
               {selectedReport === "projects-summary" && (
                 <div>
                   <label
@@ -1281,8 +1333,8 @@ export default function ReportsPage() {
                 </div>
               )}
 
-              {/* Client selector — for client-analysis */}
-              {selectedReport === "client-analysis" && clientsList && (
+              {/* Client — client-analysis only */}
+              {selectedReport === "client-analysis" && (
                 <div>
                   <label
                     style={{
@@ -1313,58 +1365,56 @@ export default function ReportsPage() {
                     {...focusHandlers("client_id")}
                   >
                     <option value="">All Clients</option>
-                    {clientsList.map((c) => (
+                    {safeClients.map((c) => (
                       <option key={c.id} value={c.id}>
-                        {c.name} ({c.email})
+                        {c.name}
+                        {c.email ? ` (${c.email})` : ""}
                       </option>
                     ))}
                   </select>
                 </div>
               )}
 
-              {/* Project selector — for detailed project report */}
-              {(selectedReport === "projects-summary" ||
-                selectedReport === "milestone-completion" ||
-                selectedReport === "financial-report") &&
-                projectsList && (
-                  <div>
-                    <label
-                      style={{
-                        display: "block",
-                        fontSize: "0.8125rem",
-                        fontWeight: 600,
-                        color: "var(--color-neutral-700)",
-                        marginBottom: "0.375rem",
-                      }}
-                    >
-                      <FontAwesomeIcon
-                        icon={faProjectDiagram}
-                        style={{ marginRight: 6, color: GREEN }}
-                      />
-                      Project (Detailed)
-                    </label>
-                    <select
-                      value={filters.project_id ?? ""}
-                      onChange={(e) =>
-                        setFilters((f) => ({
-                          ...f,
-                          project_id: e.target.value
-                            ? parseInt(e.target.value)
-                            : undefined,
-                        }))
-                      }
-                      style={{ ...inputStyle("project_id"), cursor: "pointer" }}
-                      {...focusHandlers("project_id")}
-                    >
-                      <option value="">All Projects</option>
-                      {projectsList.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+              {/* Project — projects-summary, milestone-completion, financial-report */}
+              {showProjectFilter && (
+                <div>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.8125rem",
+                      fontWeight: 600,
+                      color: "var(--color-neutral-700)",
+                      marginBottom: "0.375rem",
+                    }}
+                  >
+                    <FontAwesomeIcon
+                      icon={faProjectDiagram}
+                      style={{ marginRight: 6, color: GREEN }}
+                    />
+                    Project (Detailed)
+                  </label>
+                  <select
+                    value={filters.project_id ?? ""}
+                    onChange={(e) =>
+                      setFilters((f) => ({
+                        ...f,
+                        project_id: e.target.value
+                          ? parseInt(e.target.value)
+                          : undefined,
+                      }))
+                    }
+                    style={{ ...inputStyle("project_id"), cursor: "pointer" }}
+                    {...focusHandlers("project_id")}
+                  >
+                    <option value="">All Projects</option>
+                    {safeProjects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {getProjectName(p)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
             <div
@@ -1398,7 +1448,7 @@ export default function ReportsPage() {
               gap: "1.25rem",
             }}
           >
-            {reportTypes?.map((rt) => (
+            {safeReportTypes.map((rt) => (
               <div
                 key={rt.id}
                 onClick={() => handleGenerateReport(rt.id)}
@@ -1461,7 +1511,7 @@ export default function ReportsPage() {
                 <div
                   style={{ display: "flex", flexWrap: "wrap", gap: "0.375rem" }}
                 >
-                  {rt.available_formats.map((fmt) => (
+                  {(rt.available_formats ?? []).map((fmt) => (
                     <span
                       key={fmt}
                       style={{
@@ -1571,7 +1621,6 @@ export default function ReportsPage() {
         )}
       </div>
 
-      {/* Print styles */}
       <style>{`
         @media print {
           body > *:not([data-print]) { display: none; }

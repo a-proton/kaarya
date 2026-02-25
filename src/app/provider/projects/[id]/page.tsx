@@ -902,9 +902,6 @@ export default function ViewProjectPage({ params }: PageProps) {
                         color: isActive
                           ? "#1ab189"
                           : "var(--color-neutral-500)",
-                        borderBottom: isActive
-                          ? "2px solid #1ab189"
-                          : "2px solid transparent",
                         background: "none",
                         border: "none",
                         borderBottom: isActive
