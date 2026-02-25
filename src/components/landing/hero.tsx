@@ -12,6 +12,7 @@ import {
   faStar,
 } from "@fortawesome/free-solid-svg-icons";
 import LocationModal from "../../components/LocationModal";
+import GuideModal from "../../components/GuideModal";
 import {
   requestLocationPermission,
   getStoredLocation,
@@ -23,34 +24,42 @@ export default function Hero() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [locationText, setLocationText] = useState("");
+  const [showGuideModal, setShowGuideModal] = useState(false);
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [userLocation, setUserLocation] = useState<LocationData | null>(null);
 
   useEffect(() => {
-    // Check for stored location
     const stored = getStoredLocation();
     if (stored) {
-      setUserLocation(stored);
+      // Already have location — no need for guide or permission prompt
       reverseGeocode(stored.latitude, stored.longitude).then((city) => {
+        setUserLocation(stored);
         setLocationText(city);
       });
     } else {
-      // Request location permission on mount
-      requestLocationPermission().then((result) => {
-        if (result.granted && result.location) {
-          setUserLocation(result.location);
-          reverseGeocode(
-            result.location.latitude,
-            result.location.longitude,
-          ).then((city) => {
-            setLocationText(city);
-          });
-        } else {
-          setShowLocationModal(true);
-        }
-      });
+      // First visit — show the guide modal before anything else
+      const t = setTimeout(() => setShowGuideModal(true), 0);
+      return () => clearTimeout(t);
     }
   }, []);
+
+  /** Called when user finishes / closes the guide modal */
+  const handleGuideClose = () => {
+    setShowGuideModal(false);
+    // NOW request location permission — only after user has seen the guide
+    requestLocationPermission().then((result) => {
+      if (result.granted && result.location) {
+        setUserLocation(result.location);
+        reverseGeocode(
+          result.location.latitude,
+          result.location.longitude,
+        ).then((city) => setLocationText(city));
+      } else {
+        // Permission denied — show manual-input modal
+        setShowLocationModal(true);
+      }
+    });
+  };
 
   const handleSearch = () => {
     const params = new URLSearchParams();
@@ -60,13 +69,11 @@ export default function Hero() {
       params.append("lat", userLocation.latitude.toString());
       params.append("lon", userLocation.longitude.toString());
     }
-
     router.push(`/services?${params.toString()}`);
   };
 
   const handleManualLocation = () => {
     setShowLocationModal(false);
-    // Focus on location input
     document.getElementById("location-input")?.focus();
   };
 
@@ -173,7 +180,10 @@ export default function Hero() {
         </div>
       </section>
 
-      {/* Location Modal */}
+      {/* Guide Modal — shown first on new visits, triggers location request on close */}
+      <GuideModal isOpen={showGuideModal} onClose={handleGuideClose} />
+
+      {/* Location Modal — shown only if browser permission was denied */}
       <LocationModal
         isOpen={showLocationModal}
         onClose={() => setShowLocationModal(false)}
