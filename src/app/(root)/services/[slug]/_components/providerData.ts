@@ -89,7 +89,9 @@ export interface Provider {
 // ==================================================================================
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+  typeof window === "undefined"
+    ? process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000"
+    : process.env.NEXT_PUBLIC_API_BASE_URL || "";
 
 async function publicApiFetch(endpoint: string): Promise<any> {
   const url = `${API_BASE_URL}${endpoint}`;
