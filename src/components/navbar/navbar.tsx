@@ -12,9 +12,7 @@ export default function Navbar() {
           {/* Logo */}
           <div className="flex-shrink-0">
             <Link href="/">
-              <h1 className="text-2xl font-bold text-[#1ab189] m-0 cursor-pointer">
-                Kaarya
-              </h1>
+              <img src="logo.png" alt="" className="h-20 w-20" />
             </Link>
           </div>
 
