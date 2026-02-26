@@ -15,7 +15,7 @@ export default function CTASection() {
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link
-              href={"/"}
+              href={"/services"}
               className="bg-neutral-0 text-primary border-2 border-neutral-0 px-8 py-3 rounded-lg font-medium
              transition-all duration-200 ease-out
              hover:bg-neutral-50 hover:-translate-y-0.5

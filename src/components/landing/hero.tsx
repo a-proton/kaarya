@@ -20,6 +20,9 @@ import {
   LocationData,
 } from "../../lib/locationService";
 
+const GUIDE_SEEN_KEY = "kaarya_guide_seen";
+const MANUAL_LOCATION_KEY = "kaarya_manual_location";
+
 export default function Hero() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
@@ -29,15 +32,23 @@ export default function Hero() {
   const [userLocation, setUserLocation] = useState<LocationData | null>(null);
 
   useEffect(() => {
-    const stored = getStoredLocation();
-    if (stored) {
-      // Already have location — no need for guide or permission prompt
-      reverseGeocode(stored.latitude, stored.longitude).then((city) => {
-        setUserLocation(stored);
+    const storedGps = getStoredLocation();
+    const storedManual = localStorage.getItem(MANUAL_LOCATION_KEY);
+    const guideSeen = localStorage.getItem(GUIDE_SEEN_KEY);
+
+    if (storedGps) {
+      // GPS location already granted and stored — restore it
+      reverseGeocode(storedGps.latitude, storedGps.longitude).then((city) => {
+        setUserLocation(storedGps);
         setLocationText(city);
       });
-    } else {
-      // First visit — show the guide modal before anything else
+    } else if (storedManual) {
+      // User previously typed a location manually — restore it
+      setLocationText(storedManual);
+    }
+
+    // Show guide only if user has never seen it before
+    if (!guideSeen) {
       const t = setTimeout(() => setShowGuideModal(true), 0);
       return () => clearTimeout(t);
     }
@@ -45,8 +56,15 @@ export default function Hero() {
 
   /** Called when user finishes / closes the guide modal */
   const handleGuideClose = () => {
+    // Mark guide as seen so it never shows again
+    localStorage.setItem(GUIDE_SEEN_KEY, "true");
     setShowGuideModal(false);
-    // NOW request location permission — only after user has seen the guide
+
+    // Only request location if we don't already have one
+    const storedGps = getStoredLocation();
+    const storedManual = localStorage.getItem(MANUAL_LOCATION_KEY);
+    if (storedGps || storedManual) return;
+
     requestLocationPermission().then((result) => {
       if (result.granted && result.location) {
         setUserLocation(result.location);
@@ -62,6 +80,11 @@ export default function Hero() {
   };
 
   const handleSearch = () => {
+    // Persist manually typed location whenever a search is triggered
+    if (locationText && !userLocation) {
+      localStorage.setItem(MANUAL_LOCATION_KEY, locationText);
+    }
+
     const params = new URLSearchParams();
     if (searchQuery) params.append("query", searchQuery);
     if (locationText) params.append("location", locationText);
@@ -75,6 +98,19 @@ export default function Hero() {
   const handleManualLocation = () => {
     setShowLocationModal(false);
     document.getElementById("location-input")?.focus();
+  };
+
+  /** Persist manual location as the user types so it survives a refresh */
+  const handleLocationTextChange = (value: string) => {
+    setLocationText(value);
+    if (!userLocation) {
+      // Only persist manual text; GPS location is stored by locationService
+      if (value) {
+        localStorage.setItem(MANUAL_LOCATION_KEY, value);
+      } else {
+        localStorage.removeItem(MANUAL_LOCATION_KEY);
+      }
+    }
   };
 
   return (
@@ -122,7 +158,7 @@ export default function Hero() {
                     type="text"
                     placeholder="Where?"
                     value={locationText}
-                    onChange={(e) => setLocationText(e.target.value)}
+                    onChange={(e) => handleLocationTextChange(e.target.value)}
                     onKeyPress={(e) => e.key === "Enter" && handleSearch()}
                     className="flex-1 border-none bg-transparent text-[0.9375rem] text-neutral-700 outline-none min-w-0 placeholder:text-neutral-400"
                   />
@@ -180,7 +216,7 @@ export default function Hero() {
         </div>
       </section>
 
-      {/* Guide Modal — shown first on new visits, triggers location request on close */}
+      {/* Guide Modal — shown only on first ever visit */}
       <GuideModal isOpen={showGuideModal} onClose={handleGuideClose} />
 
       {/* Location Modal — shown only if browser permission was denied */}

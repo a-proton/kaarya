@@ -15,7 +15,7 @@ export default function Footer() {
             <ul className="flex flex-col gap-3">
               <li>
                 <Link
-                  href="#our-story"
+                  href="/our-story"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   Our Story
@@ -23,7 +23,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#how-it-works"
+                  href="/how-it-works"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   How It Works
@@ -64,7 +64,7 @@ export default function Footer() {
             <ul className="flex flex-col gap-3">
               <li>
                 <Link
-                  href="#signup"
+                  href="/join-provider"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   Sign Up
@@ -72,7 +72,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#verification"
+                  href="/verification"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   Verification Process
@@ -113,7 +113,7 @@ export default function Footer() {
             <ul className="flex flex-col gap-3">
               <li>
                 <Link
-                  href="#find-services"
+                  href="/find-service"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   Find Services
@@ -121,7 +121,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#how-to-hire"
+                  href="/how-to-hire"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   How to Hire
@@ -129,7 +129,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#safety"
+                  href="/safety"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   Safety Guidelines
@@ -162,7 +162,7 @@ export default function Footer() {
             <ul className="flex flex-col gap-3">
               <li>
                 <Link
-                  href="#help"
+                  href="/help-centre"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   Help Center
@@ -170,7 +170,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#contact"
+                  href="/contact"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   Contact Us
@@ -178,7 +178,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#terms"
+                  href="/terms"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   Terms of Service
@@ -186,7 +186,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#privacy"
+                  href="/privacy"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   Privacy Policy
@@ -194,7 +194,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#trust"
+                  href="/trust"
                   className="text-neutral-300 text-[0.9375rem] hover:text-white transition-colors duration-300"
                 >
                   Trust & Safety
