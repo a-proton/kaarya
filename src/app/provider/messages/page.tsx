@@ -21,6 +21,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { uploadMessageMedia } from "@/lib/storageService";
+import { useInvalidateProviderCounts } from "@/hooks/useNotificationCount"; // ← added
 
 // ==================================================================================
 // TYPE DEFINITIONS
@@ -217,6 +218,7 @@ const formatTime = (dateString: string) => {
 
 export default function MessagesPage() {
   const queryClient = useQueryClient();
+  const invalidateProviderCounts = useInvalidateProviderCounts(); // ← added
   const [selectedConversationId, setSelectedConversationId] = useState<
     number | null
   >(null);
@@ -357,12 +359,16 @@ export default function MessagesPage() {
     },
   });
 
+  // ── Mark read mutation ──
+  // onSuccess: invalidates both the local unread-count query AND the navbar
+  // provider-message-count query so the sidebar badge decreases immediately
   const markReadMutation = useMutation({
     mutationFn: (id: number) =>
       api.post(`/api/v1/messages/conversations/${id}/mark-read/`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
       queryClient.invalidateQueries({ queryKey: ["unread-count"] });
+      invalidateProviderCounts(); // ← this makes the navbar badge decrease instantly
     },
   });
 

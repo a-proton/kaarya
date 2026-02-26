@@ -18,8 +18,17 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { getUserProfile, clearTokens, getRefreshToken } from "@/lib/auth";
 import { api } from "@/lib/api";
+import { useClientCounts } from "@/hooks/useNotificationCount"; // ← added
 
-const navigationItems = [
+// ── Nav item type — badgeKey drives the live badge ──────────────────
+interface NavItem {
+  icon: Parameters<typeof FontAwesomeIcon>[0]["icon"];
+  label: string;
+  href: string;
+  badgeKey?: "messages" | "notifications";
+}
+
+const navigationItems: NavItem[] = [
   { icon: faHome, label: "Dashboard", href: "/client/dashboard" },
   {
     icon: faClipboardList,
@@ -27,7 +36,12 @@ const navigationItems = [
     href: "/client/project-updates",
   },
   { icon: faCheckCircle, label: "Milestones", href: "/client/milestones" },
-  { icon: faMessage, label: "Messages", href: "/client/messages" },
+  {
+    icon: faMessage,
+    label: "Messages",
+    href: "/client/messages",
+    badgeKey: "messages", // ← triggers live badge
+  },
   { icon: faCreditCard, label: "Payments", href: "/client/payments" },
   { icon: faGear, label: "Settings", href: "/client/settings" },
   { icon: faQuestionCircle, label: "Help & Support", href: "/client/support" },
@@ -44,9 +58,33 @@ function getInitials(name: string): string {
   return words[0].substring(0, 2).toUpperCase();
 }
 
+// ── Small badge shown next to nav label ─────────────────────────────
+function SidebarBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      aria-hidden="true"
+      className="flex items-center justify-center font-bold rounded-full"
+      style={{
+        minWidth: "1.1rem",
+        height: "1.1rem",
+        padding: "0 0.2rem",
+        fontSize: "0.58rem",
+        backgroundColor: "#1ab189",
+        color: "white",
+        flexShrink: 0,
+        animation: "badge-pop 200ms ease-out",
+      }}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
 export default function ClientSidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const { unreadMessages } = useClientCounts(); // ← added
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [userProfile, setUserProfile] = useState<{
@@ -94,12 +132,27 @@ export default function ClientSidebar() {
     }
   };
 
+  // Map badgeKey → live count
+  const badgeCounts: Record<string, number> = {
+    messages: unreadMessages,
+    notifications: 0, // not used in sidebar but kept for extensibility
+  };
+
   const displayName =
     userProfile?.full_name || userProfile?.email || "Client User";
   const initials = userProfile?.initials || "CL";
 
   return (
     <>
+      {/* Badge pop animation */}
+      <style>{`
+        @keyframes badge-pop {
+          0%   { transform: scale(0.5); opacity: 0; }
+          70%  { transform: scale(1.2); }
+          100% { transform: scale(1);   opacity: 1; }
+        }
+      `}</style>
+
       <aside
         className="fixed left-0 top-0 h-screen w-64 flex flex-col z-40"
         style={{
@@ -166,6 +219,9 @@ export default function ClientSidebar() {
           >
             {navigationItems.map((item) => {
               const isActive = pathname === item.href;
+              const badgeCount = item.badgeKey
+                ? (badgeCounts[item.badgeKey] ?? 0)
+                : 0;
               return (
                 <li key={item.href}>
                   <Link
@@ -215,6 +271,8 @@ export default function ClientSidebar() {
                       }}
                     />
                     <span className="flex-1 truncate">{item.label}</span>
+                    {/* Live badge — only renders when count > 0 */}
+                    <SidebarBadge count={badgeCount} />
                   </Link>
                 </li>
               );

@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { getUserProfile, clearTokens, getRefreshToken } from "@/lib/auth";
 import { api } from "@/lib/api";
 import Link from "next/link";
+import { useClientCounts } from "@/hooks/useNotificationCount"; // ← added
 
 interface ApiError {
   message?: string;
@@ -38,7 +39,7 @@ function getGreeting(): string {
 
 export default function ClientTopbar() {
   const router = useRouter();
-  const [notificationCount] = useState(7);
+  const { unreadNotifications } = useClientCounts(); // ← replaced useState(7)
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [userProfile, setUserProfile] = useState<{
@@ -95,6 +96,7 @@ export default function ClientTopbar() {
     .toUpperCase();
 
   const initials = userProfile?.initials || "CL";
+  const badgeCount = unreadNotifications > 99 ? "99+" : unreadNotifications;
 
   return (
     <>
@@ -163,11 +165,15 @@ export default function ClientTopbar() {
             />
           </div>
 
-          {/* Notifications */}
+          {/* Notifications bell */}
           <Link
             href="/client/notifications"
             className="relative flex items-center justify-center rounded-xl transition-colors"
-            aria-label="Notifications"
+            aria-label={
+              unreadNotifications > 0
+                ? `Notifications — ${unreadNotifications} unread`
+                : "Notifications"
+            }
             style={{
               width: "2.5rem",
               height: "2.5rem",
@@ -186,21 +192,31 @@ export default function ClientTopbar() {
           >
             <FontAwesomeIcon
               icon={faBell}
-              style={{ color: "var(--color-neutral-500)", fontSize: "0.9rem" }}
+              style={{
+                color:
+                  unreadNotifications > 0
+                    ? "#1ab189"
+                    : "var(--color-neutral-500)",
+                fontSize: "0.9rem",
+              }}
             />
-            {notificationCount > 0 && (
+            {unreadNotifications > 0 && (
               <span
+                aria-hidden="true"
                 className="absolute flex items-center justify-center font-bold text-white rounded-full"
                 style={{
                   top: "-5px",
                   right: "-5px",
-                  width: "1.1rem",
+                  minWidth: "1.1rem",
                   height: "1.1rem",
+                  padding: "0 0.2rem",
                   fontSize: "0.55rem",
                   backgroundColor: "#1ab189",
+                  border: "2px solid var(--color-neutral-0)",
+                  animation: "badge-pop 200ms ease-out",
                 }}
               >
-                {notificationCount}
+                {badgeCount}
               </span>
             )}
           </Link>
@@ -225,6 +241,15 @@ export default function ClientTopbar() {
           </button>
         </div>
       </header>
+
+      {/* Badge pop animation */}
+      <style>{`
+        @keyframes badge-pop {
+          0%   { transform: scale(0.5); opacity: 0; }
+          70%  { transform: scale(1.2); }
+          100% { transform: scale(1);   opacity: 1; }
+        }
+      `}</style>
 
       {/* Logout Modal */}
       {showLogoutModal && (

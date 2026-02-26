@@ -16,8 +16,11 @@ import {
   faPlus,
   faTimes,
   faCheck,
+  faRotate,
+  faBolt,
+  faExternalLinkAlt,
 } from "@fortawesome/free-solid-svg-icons";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
@@ -35,6 +38,7 @@ interface Payment {
   payment_status: "pending" | "completed" | "failed";
   notes: string;
   created_at: string;
+  posted_by_name?: string;
 }
 
 interface Project {
@@ -78,6 +82,16 @@ interface PaymentFormData {
 // HELPERS
 // ==================================================================================
 
+const fmt = (n: number | string | null | undefined) => {
+  if (n === null || n === undefined || n === "") return "0.00";
+  const num = typeof n === "string" ? parseFloat(n) : n;
+  if (isNaN(num)) return "0.00";
+  return num.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
+
 const getInitials = (name: string) =>
   name
     .split(" ")
@@ -98,6 +112,245 @@ const PROJECT_COLORS = [
 ];
 const projectColor = (id: number) => PROJECT_COLORS[id % PROJECT_COLORS.length];
 
+const isEsewa = (method?: string) =>
+  method?.toLowerCase().includes("esewa") ?? false;
+
+// ==================================================================================
+// PAYMENT METHOD BADGE
+// ==================================================================================
+
+function MethodBadge({ method }: { method?: string }) {
+  if (!method)
+    return <span style={{ color: "var(--color-neutral-400)" }}>—</span>;
+
+  if (isEsewa(method)) {
+    return (
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "0.25rem",
+          padding: "0.18rem 0.5rem",
+          borderRadius: "0.3rem",
+          fontSize: "0.68rem",
+          fontWeight: 700,
+          backgroundColor: "rgba(96,187,71,0.12)",
+          color: "#2d7a1f",
+          border: "1px solid rgba(96,187,71,0.3)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <FontAwesomeIcon
+          icon={faExternalLinkAlt}
+          style={{ fontSize: "0.55rem" }}
+        />
+        eSewa
+      </span>
+    );
+  }
+
+  return (
+    <span
+      style={{
+        fontSize: "0.8125rem",
+        color: "var(--color-neutral-600)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {method}
+    </span>
+  );
+}
+
+// ==================================================================================
+// TOAST
+// ==================================================================================
+
+function Toast({
+  msg,
+  type = "success",
+  onClose,
+}: {
+  msg: string;
+  type?: "success" | "error" | "info";
+  onClose: () => void;
+}) {
+  const colors = {
+    success: "#1ab189",
+    error: "#ef4444",
+    info: "#3b82f6",
+  };
+  const icons = {
+    success: faCheck,
+    error: faTimes,
+    info: faBolt,
+  };
+
+  return (
+    <div className="fixed top-5 right-5 z-[60]" style={{ minWidth: "17rem" }}>
+      <div
+        className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
+        style={{
+          backgroundColor: "var(--color-neutral-900)",
+          boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+        }}
+      >
+        <div
+          className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: colors[type] }}
+        >
+          <FontAwesomeIcon
+            icon={icons[type]}
+            style={{ color: "white", fontSize: "0.6rem" }}
+          />
+        </div>
+        <p
+          className="flex-1 font-medium"
+          style={{ fontSize: "0.875rem", color: "white" }}
+        >
+          {msg}
+        </p>
+        <button
+          onClick={onClose}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: "rgba(255,255,255,0.5)",
+            padding: 0,
+          }}
+        >
+          <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ==================================================================================
+// INPUT STYLES
+// ==================================================================================
+
+const inputBase: React.CSSProperties = {
+  width: "100%",
+  padding: "0.75rem 1rem",
+  fontFamily: "var(--font-sans)",
+  fontSize: "0.875rem",
+  color: "var(--color-neutral-900)",
+  backgroundColor: "var(--color-neutral-0)",
+  border: "1px solid var(--color-neutral-200)",
+  borderRadius: "0.625rem",
+  outline: "none",
+  boxSizing: "border-box" as const,
+  transition: "border-color 150ms, box-shadow 150ms",
+};
+const iFocus = (
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+  >,
+) => {
+  e.currentTarget.style.borderColor = "#1ab189";
+  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(26,177,137,0.12)";
+};
+const iBlur = (
+  e: React.FocusEvent<
+    HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+  >,
+) => {
+  e.currentTarget.style.borderColor = "var(--color-neutral-200)";
+  e.currentTarget.style.boxShadow = "none";
+};
+
+// ==================================================================================
+// LIVE PAYMENT FEED — shows recent eSewa payments streamed in
+// ==================================================================================
+
+function LiveFeed({ payments }: { payments: Payment[] }) {
+  const recent = payments
+    .filter(
+      (p) => isEsewa(p.payment_method) && p.payment_status === "completed",
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    )
+    .slice(0, 3);
+
+  if (recent.length === 0) return null;
+
+  return (
+    <div
+      className="rounded-2xl mb-5 overflow-hidden"
+      style={{
+        border: "1px solid rgba(96,187,71,0.25)",
+        backgroundColor: "rgba(96,187,71,0.04)",
+      }}
+    >
+      <div
+        className="flex items-center gap-2 px-4 py-2.5"
+        style={{
+          borderBottom: "1px solid rgba(96,187,71,0.15)",
+          backgroundColor: "rgba(96,187,71,0.08)",
+        }}
+      >
+        <span
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            backgroundColor: "#60BB47",
+            display: "inline-block",
+            boxShadow: "0 0 0 2px rgba(96,187,71,0.3)",
+            animation: "pulse 2s infinite",
+          }}
+        />
+        <span
+          style={{
+            fontSize: "0.72rem",
+            fontWeight: 700,
+            color: "#2d7a1f",
+            letterSpacing: "0.05em",
+            textTransform: "uppercase",
+          }}
+        >
+          Recent eSewa Payments
+        </span>
+      </div>
+      <div className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
+        {recent.map((p) => (
+          <div
+            key={p.id}
+            className="flex items-center gap-2 rounded-xl px-3 py-1.5"
+            style={{
+              backgroundColor: "rgba(96,187,71,0.1)",
+              border: "1px solid rgba(96,187,71,0.2)",
+            }}
+          >
+            <FontAwesomeIcon
+              icon={faCheckCircle}
+              style={{ color: "#16a34a", fontSize: "0.7rem" }}
+            />
+            <span
+              style={{ fontSize: "0.8rem", fontWeight: 700, color: "#16a34a" }}
+            >
+              ${fmt(p.amount)}
+            </span>
+            <span
+              style={{ fontSize: "0.72rem", color: "var(--color-neutral-500)" }}
+            >
+              {new Date(p.created_at).toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+          </div>
+        ))}
+      </div>
+      <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }`}</style>
+    </div>
+  );
+}
+
 // ==================================================================================
 // MAIN COMPONENT
 // ==================================================================================
@@ -109,12 +362,23 @@ export default function EarningsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All Status");
   const [openActionsMenu, setOpenActionsMenu] = useState<number | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{
+    top: number;
+    right: number;
+  }>({ top: 0, right: 0 });
   const [showAddPaymentModal, setShowAddPaymentModal] = useState(false);
   const [selectedProjectForPayment, setSelectedProjectForPayment] = useState<
     number | null
   >(null);
-  const [showToast, setShowToast] = useState(false);
-  const [toastMsg, setToastMsg] = useState("");
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{
+    msg: string;
+    type: "success" | "error" | "info";
+  } | null>(null);
+  const [lastPaymentCount, setLastPaymentCount] = useState<
+    Record<number, number>
+  >({});
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [paymentForm, setPaymentForm] = useState<PaymentFormData>({
     amount: "",
@@ -125,9 +389,15 @@ export default function EarningsPage() {
     notes: "",
   });
 
-  // ==================================================================================
-  // DATA FETCHING
-  // ==================================================================================
+  const notify = (
+    msg: string,
+    type: "success" | "error" | "info" = "success",
+  ) => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4500);
+  };
+
+  // ── Projects query ───────────────────────────────────────────────────────
 
   const {
     data: projectsData,
@@ -135,7 +405,7 @@ export default function EarningsPage() {
     isError: projectsError,
     error: projectsErrorData,
   } = useQuery<ProjectsResponse>({
-    queryKey: ["projects", statusFilter],
+    queryKey: ["provider-projects", statusFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (statusFilter !== "All Status") {
@@ -149,8 +419,10 @@ export default function EarningsPage() {
 
   const projectIds = projectsData?.results.map((p) => p.id) || [];
 
-  const paymentsQueries = useQuery({
-    queryKey: ["all-payments", projectIds],
+  // ── Payments query — refetchInterval polls every 30s for new eSewa payments ──
+
+  const paymentsQuery = useQuery({
+    queryKey: ["provider-all-payments", projectIds],
     queryFn: async () => {
       if (projectIds.length === 0) return {};
       const paymentsMap: Record<number, Payment[]> = {};
@@ -161,7 +433,7 @@ export default function EarningsPage() {
               `/api/v1/projects/${projectId}/payments/`,
             );
             paymentsMap[projectId] = response.results || [];
-          } catch (err) {
+          } catch {
             paymentsMap[projectId] = [];
           }
         }),
@@ -169,15 +441,69 @@ export default function EarningsPage() {
       return paymentsMap;
     },
     enabled: projectIds.length > 0,
+    // Poll every 30 seconds to catch new eSewa payments from clients
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 
-  // ==================================================================================
-  // DATA PROCESSING
-  // ==================================================================================
+  // ── Detect new payments and notify ──────────────────────────────────────
+
+  useEffect(() => {
+    if (!paymentsQuery.data) return;
+    const newCounts: Record<number, number> = {};
+    let hasNew = false;
+
+    Object.entries(paymentsQuery.data).forEach(([projectId, payments]) => {
+      const pid = Number(projectId);
+      const count = payments.length;
+      newCounts[pid] = count;
+
+      if (
+        lastPaymentCount[pid] !== undefined &&
+        count > lastPaymentCount[pid]
+      ) {
+        const newOnes = payments
+          .sort(
+            (a, b) =>
+              new Date(b.created_at).getTime() -
+              new Date(a.created_at).getTime(),
+          )
+          .slice(0, count - lastPaymentCount[pid]);
+
+        const esewaNew = newOnes.filter((p) => isEsewa(p.payment_method));
+        if (esewaNew.length > 0) {
+          const total = esewaNew.reduce(
+            (s, p) => s + parseFloat(p.amount || "0"),
+            0,
+          );
+          notify(`New eSewa payment received: $${fmt(total)}`, "info");
+          hasNew = true;
+        }
+      }
+    });
+
+    if (Object.keys(lastPaymentCount).length > 0) {
+      // Already initialized, just update
+    }
+    setLastPaymentCount(newCounts);
+  }, [paymentsQuery.data]);
+
+  // ── Manual refresh ───────────────────────────────────────────────────────
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await queryClient.invalidateQueries({
+      queryKey: ["provider-all-payments"],
+    });
+    await queryClient.invalidateQueries({ queryKey: ["provider-projects"] });
+    setTimeout(() => setIsRefreshing(false), 600);
+  }, [queryClient]);
+
+  // ── Derived data ─────────────────────────────────────────────────────────
 
   const projects: ProjectWithPayments[] =
     projectsData?.results.map((project) => {
-      const payments = paymentsQueries.data?.[project.id] || [];
+      const payments = paymentsQuery.data?.[project.id] || [];
       const totalPaid = payments
         .filter((p) => p.payment_status === "completed")
         .reduce((sum, p) => sum + parseFloat(p.amount), 0);
@@ -190,8 +516,14 @@ export default function EarningsPage() {
       };
     }) || [];
 
+  const allPayments = projects.flatMap((p) => p.payments);
   const totalEarnings = projects.reduce((sum, p) => sum + p.total_paid, 0);
   const pendingPayments = projects.reduce((sum, p) => sum + p.balance, 0);
+  const esewaTotal = allPayments
+    .filter(
+      (p) => isEsewa(p.payment_method) && p.payment_status === "completed",
+    )
+    .reduce((s, p) => s + parseFloat(p.amount || "0"), 0);
 
   const now = new Date();
   const completedThisMonth = projects.reduce((sum, p) => {
@@ -219,9 +551,7 @@ export default function EarningsPage() {
     return true;
   });
 
-  // ==================================================================================
-  // MUTATIONS
-  // ==================================================================================
+  // ── Mutations ────────────────────────────────────────────────────────────
 
   const createPaymentMutation = useMutation({
     mutationFn: async (data: {
@@ -234,29 +564,29 @@ export default function EarningsPage() {
       );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["all-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["provider-all-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["provider-projects"] });
       setShowAddPaymentModal(false);
       setSelectedProjectForPayment(null);
+      setPaymentError(null);
       resetPaymentForm();
       notify("Payment recorded successfully!");
     },
     onError: (error: any) => {
-      alert(
-        `Failed to record payment: ${error.data?.detail || error.message || "Unknown error"}`,
-      );
+      const d = error?.response?.data;
+      const msg = d
+        ? typeof d === "object"
+          ? (d.error ??
+            Object.entries(d)
+              .map(([f, e]) => `${f}: ${Array.isArray(e) ? e.join(", ") : e}`)
+              .join("; "))
+          : String(d)
+        : (error?.message ?? "Failed to record payment");
+      setPaymentError(msg);
     },
   });
 
-  // ==================================================================================
-  // HANDLERS
-  // ==================================================================================
-
-  const notify = (msg: string) => {
-    setToastMsg(msg);
-    setShowToast(true);
-    setTimeout(() => setShowToast(false), 3000);
-  };
+  // ── Handlers ─────────────────────────────────────────────────────────────
 
   const resetPaymentForm = () => {
     setPaymentForm({
@@ -270,12 +600,17 @@ export default function EarningsPage() {
   };
 
   const handleAddPayment = () => {
+    setPaymentError(null);
     if (!selectedProjectForPayment) {
-      alert("Please select a project");
+      setPaymentError("Please select a project");
       return;
     }
-    if (!paymentForm.amount || !paymentForm.payment_date) {
-      alert("Please fill in required fields (Amount and Date)");
+    if (!paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
+      setPaymentError("Amount must be greater than 0");
+      return;
+    }
+    if (!paymentForm.payment_date) {
+      setPaymentError("Payment date is required");
       return;
     }
     createPaymentMutation.mutate({
@@ -286,6 +621,7 @@ export default function EarningsPage() {
 
   const openAddPaymentModal = (projectId: number) => {
     setSelectedProjectForPayment(projectId);
+    setPaymentError(null);
     resetPaymentForm();
     setShowAddPaymentModal(true);
   };
@@ -294,44 +630,25 @@ export default function EarningsPage() {
     window.location.href = `/provider/earnings/view?id=${projectId}`;
   };
 
-  const handleDownloadInvoice = async (project: ProjectWithPayments) => {
-    alert(
-      `Download functionality for ${project.project_name} would be implemented here`,
+  const getStatusBadge = (status: Project["status"]) => {
+    const map: Record<string, { bg: string; color: string; border: string }> = {
+      completed: { bg: "#f0fdf4", color: "#16a34a", border: "#bbf7d0" },
+      in_progress: { bg: "#eff6ff", color: "#2563eb", border: "#bfdbfe" },
+      pending: { bg: "#fefce8", color: "#ca8a04", border: "#fef08a" },
+      cancelled: { bg: "#fef2f2", color: "#dc2626", border: "#fecaca" },
+      on_hold: { bg: "#fff7ed", color: "#ea580c", border: "#fed7aa" },
+    };
+    return (
+      map[status] ?? { bg: "#f9fafb", color: "#6b7280", border: "#e5e7eb" }
     );
   };
 
-  const handleExportReport = async () => {
-    alert("Export report functionality would be implemented here");
-  };
-
-  const getStatusBadge = (status: Project["status"]) => {
-    switch (status) {
-      case "completed":
-        return { bg: "#f0fdf4", color: "#16a34a", border: "#bbf7d0" };
-      case "in_progress":
-        return { bg: "#eff6ff", color: "#2563eb", border: "#bfdbfe" };
-      case "pending":
-        return { bg: "#fefce8", color: "#ca8a04", border: "#fef08a" };
-      case "cancelled":
-        return { bg: "#fef2f2", color: "#dc2626", border: "#fecaca" };
-      case "on_hold":
-        return { bg: "#fff7ed", color: "#ea580c", border: "#fed7aa" };
-      default:
-        return { bg: "#f9fafb", color: "#6b7280", border: "#e5e7eb" };
-    }
-  };
-
-  const getStatusText = (status: Project["status"]) =>
+  const getStatusText = (status: string) =>
     status.replace("_", " ").replace(/\b\w/g, (l) => l.toUpperCase());
 
-  // ==================================================================================
-  // LOADING & ERROR STATES
-  // ==================================================================================
+  // ── Loading / Error ───────────────────────────────────────────────────────
 
-  const isLoading = projectsLoading || paymentsQueries.isLoading;
-  const isError = projectsError || paymentsQueries.isError;
-
-  if (isLoading) {
+  if (projectsLoading || (paymentsQuery.isLoading && projectIds.length > 0)) {
     return (
       <div
         className="min-h-screen flex items-center justify-center"
@@ -353,7 +670,7 @@ export default function EarningsPage() {
     );
   }
 
-  if (isError) {
+  if (projectsError) {
     return (
       <div
         className="min-h-screen flex items-center justify-center"
@@ -394,48 +711,12 @@ export default function EarningsPage() {
       className="min-h-screen"
       style={{ backgroundColor: "var(--color-neutral-50)" }}
     >
-      {/* Toast */}
-      {showToast && (
-        <div
-          className="fixed top-5 right-5 z-[60]"
-          style={{ minWidth: "17rem" }}
-        >
-          <div
-            className="flex items-center gap-3 rounded-2xl px-5 py-3.5"
-            style={{
-              backgroundColor: "var(--color-neutral-900)",
-              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
-            }}
-          >
-            <div
-              className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
-              style={{ backgroundColor: "#1ab189" }}
-            >
-              <FontAwesomeIcon
-                icon={faCheck}
-                style={{ color: "white", fontSize: "0.6rem" }}
-              />
-            </div>
-            <p
-              className="flex-1 font-medium"
-              style={{ fontSize: "0.875rem", color: "white" }}
-            >
-              {toastMsg}
-            </p>
-            <button
-              onClick={() => setShowToast(false)}
-              style={{
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                color: "rgba(255,255,255,0.5)",
-                padding: 0,
-              }}
-            >
-              <FontAwesomeIcon icon={faTimes} style={{ fontSize: "0.75rem" }} />
-            </button>
-          </div>
-        </div>
+      {toast && (
+        <Toast
+          msg={toast.msg}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
       )}
 
       {/* Page Header */}
@@ -470,6 +751,39 @@ export default function EarningsPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            {/* Refresh button */}
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              title="Refresh payments"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.375rem",
+                padding: "0.5rem 0.875rem",
+                fontSize: "0.8125rem",
+                fontWeight: 500,
+                color: "var(--color-neutral-700)",
+                backgroundColor: "var(--color-neutral-0)",
+                border: "1px solid var(--color-neutral-200)",
+                borderRadius: "0.625rem",
+                cursor: isRefreshing ? "not-allowed" : "pointer",
+                opacity: isRefreshing ? 0.6 : 1,
+              }}
+            >
+              <FontAwesomeIcon
+                icon={faRotate}
+                style={{
+                  fontSize: "0.75rem",
+                  animation: isRefreshing
+                    ? "spin 0.6s linear infinite"
+                    : "none",
+                }}
+              />
+              Refresh
+            </button>
+
+            {/* Period filter */}
             <div className="relative">
               <select
                 value={selectedPeriod}
@@ -502,31 +816,14 @@ export default function EarningsPage() {
                 }}
               />
             </div>
-            <button
-              onClick={handleExportReport}
-              className="flex items-center gap-2"
-              style={{
-                padding: "0.5rem 1rem",
-                fontSize: "0.8125rem",
-                fontWeight: 500,
-                color: "var(--color-neutral-700)",
-                backgroundColor: "var(--color-neutral-0)",
-                border: "1px solid var(--color-neutral-200)",
-                borderRadius: "0.625rem",
-                cursor: "pointer",
-              }}
-            >
-              <FontAwesomeIcon
-                icon={faDownload}
-                style={{ fontSize: "0.75rem" }}
-              />
-              Export Report
-            </button>
           </div>
         </div>
       </div>
 
       <div style={{ padding: "1.75rem 2rem" }}>
+        {/* Live eSewa Feed */}
+        <LiveFeed payments={allPayments} />
+
         {/* Stats Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           {/* Total Earnings */}
@@ -583,11 +880,7 @@ export default function EarningsPage() {
                 lineHeight: 1,
               }}
             >
-              $
-              {totalEarnings.toLocaleString(undefined, {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
+              ${fmt(totalEarnings)}
             </p>
           </div>
 
@@ -625,11 +918,7 @@ export default function EarningsPage() {
                 lineHeight: 1,
               }}
             >
-              $
-              {pendingPayments.toLocaleString(undefined, {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
+              ${fmt(pendingPayments)}
             </p>
           </div>
 
@@ -667,29 +956,25 @@ export default function EarningsPage() {
                 lineHeight: 1,
               }}
             >
-              $
-              {completedThisMonth.toLocaleString(undefined, {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
+              ${fmt(completedThisMonth)}
             </p>
           </div>
 
-          {/* Active Projects */}
+          {/* eSewa Received */}
           <div
             className="rounded-2xl p-5"
             style={{
               backgroundColor: "var(--color-neutral-0)",
-              border: "1px solid var(--color-neutral-200)",
+              border: "1px solid rgba(96,187,71,0.25)",
             }}
           >
             <div
               className="w-10 h-10 rounded-xl flex items-center justify-center mb-4"
-              style={{ backgroundColor: "#eff6ff" }}
+              style={{ backgroundColor: "rgba(96,187,71,0.1)" }}
             >
               <FontAwesomeIcon
-                icon={faChartLine}
-                style={{ color: "#2563eb", fontSize: "1.1rem" }}
+                icon={faExternalLinkAlt}
+                style={{ color: "#60BB47", fontSize: "1rem" }}
               />
             </div>
             <p
@@ -699,17 +984,17 @@ export default function EarningsPage() {
                 marginBottom: "0.25rem",
               }}
             >
-              Active Projects
+              Received via eSewa
             </p>
             <p
               style={{
                 fontSize: "1.375rem",
                 fontWeight: 700,
-                color: "var(--color-neutral-900)",
+                color: "#2d7a1f",
                 lineHeight: 1,
               }}
             >
-              {projects.length}
+              ${fmt(esewaTotal)}
             </p>
           </div>
         </div>
@@ -730,45 +1015,45 @@ export default function EarningsPage() {
               borderBottom: "1px solid var(--color-neutral-200)",
             }}
           >
-            <h2
-              className="font-bold"
-              style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
-            >
-              Projects & Earnings
-            </h2>
-            <div className="flex items-center gap-3 flex-wrap">
-              {/* Search */}
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Search projects…"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+            <div className="flex items-center gap-3">
+              <h2
+                className="font-bold"
+                style={{ fontSize: "1rem", color: "var(--color-neutral-900)" }}
+              >
+                Projects &amp; Earnings
+              </h2>
+              {paymentsQuery.isFetching && (
+                <FontAwesomeIcon
+                  icon={faSpinner}
+                  className="animate-spin"
                   style={{
-                    width: "17rem",
-                    padding: "0.5rem 1rem",
-                    fontFamily: "var(--font-sans)",
-                    fontSize: "0.8125rem",
-                    color: "var(--color-neutral-900)",
-                    backgroundColor: "var(--color-neutral-50)",
-                    border: "1px solid var(--color-neutral-200)",
-                    borderRadius: "0.625rem",
-                    outline: "none",
-                    transition: "border-color 150ms, box-shadow 150ms",
-                  }}
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = "#1ab189";
-                    e.currentTarget.style.boxShadow =
-                      "0 0 0 3px rgba(26,177,137,0.12)";
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor =
-                      "var(--color-neutral-200)";
-                    e.currentTarget.style.boxShadow = "none";
+                    fontSize: "0.75rem",
+                    color: "var(--color-neutral-400)",
                   }}
                 />
-              </div>
-              {/* Status Filter */}
+              )}
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <input
+                type="text"
+                placeholder="Search projects…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{
+                  width: "17rem",
+                  padding: "0.5rem 1rem",
+                  fontFamily: "var(--font-sans)",
+                  fontSize: "0.8125rem",
+                  color: "var(--color-neutral-900)",
+                  backgroundColor: "var(--color-neutral-50)",
+                  border: "1px solid var(--color-neutral-200)",
+                  borderRadius: "0.625rem",
+                  outline: "none",
+                  transition: "border-color 150ms, box-shadow 150ms",
+                }}
+                onFocus={iFocus}
+                onBlur={iBlur}
+              />
               <div className="relative">
                 <select
                   value={statusFilter}
@@ -833,7 +1118,7 @@ export default function EarningsPage() {
               <table
                 style={{
                   width: "100%",
-                  minWidth: "52rem",
+                  minWidth: "60rem",
                   borderCollapse: "collapse",
                 }}
               >
@@ -849,6 +1134,7 @@ export default function EarningsPage() {
                       "Client",
                       "Total Cost",
                       "Paid",
+                      "Last Payment",
                       "Balance",
                       "Status",
                       "Actions",
@@ -857,7 +1143,7 @@ export default function EarningsPage() {
                         key={h}
                         style={{
                           padding: "0.75rem 1.5rem",
-                          textAlign: i === 6 ? "center" : "left",
+                          textAlign: i === 7 ? "center" : "left",
                           fontSize: "0.65rem",
                           fontWeight: 700,
                           color: "var(--color-neutral-400)",
@@ -874,6 +1160,14 @@ export default function EarningsPage() {
                 <tbody>
                   {filteredProjects.map((project, idx) => {
                     const badge = getStatusBadge(project.status);
+                    const lastPayment = [...project.payments]
+                      .sort(
+                        (a, b) =>
+                          new Date(b.created_at).getTime() -
+                          new Date(a.created_at).getTime(),
+                      )
+                      .find((p) => p.payment_status === "completed");
+
                     return (
                       <tr
                         key={project.id}
@@ -926,6 +1220,23 @@ export default function EarningsPage() {
                               >
                                 {project.payments.length} payment
                                 {project.payments.length !== 1 ? "s" : ""}
+                                {project.payments.some((p) =>
+                                  isEsewa(p.payment_method),
+                                ) && (
+                                  <span
+                                    style={{
+                                      marginLeft: "0.375rem",
+                                      padding: "0.1rem 0.3rem",
+                                      borderRadius: "0.25rem",
+                                      fontSize: "0.6rem",
+                                      fontWeight: 700,
+                                      backgroundColor: "rgba(96,187,71,0.12)",
+                                      color: "#2d7a1f",
+                                    }}
+                                  >
+                                    eSewa ✓
+                                  </span>
+                                )}
                               </p>
                             </div>
                           </div>
@@ -953,41 +1264,97 @@ export default function EarningsPage() {
                               color: "var(--color-neutral-900)",
                             }}
                           >
-                            $
-                            {parseFloat(
-                              project.total_cost || "0",
-                            ).toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
+                            ${fmt(project.total_cost)}
                           </p>
                         </td>
 
                         {/* Paid */}
                         <td style={{ padding: "1rem 1.5rem" }}>
-                          <p
-                            className="font-semibold whitespace-nowrap"
-                            style={{ fontSize: "0.875rem", color: "#16a34a" }}
-                          >
-                            $
-                            {project.total_paid.toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </p>
+                          <div>
+                            <p
+                              className="font-semibold whitespace-nowrap"
+                              style={{ fontSize: "0.875rem", color: "#16a34a" }}
+                            >
+                              ${fmt(project.total_paid)}
+                            </p>
+                            {/* Progress mini-bar */}
+                            {parseFloat(project.total_cost || "0") > 0 && (
+                              <div
+                                style={{
+                                  marginTop: "0.25rem",
+                                  height: 3,
+                                  width: "4rem",
+                                  borderRadius: 9999,
+                                  backgroundColor: "var(--color-neutral-100)",
+                                  overflow: "hidden",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      (project.total_paid /
+                                        parseFloat(project.total_cost)) *
+                                        100,
+                                    )}%`,
+                                    height: "100%",
+                                    backgroundColor: "#1ab189",
+                                    borderRadius: 9999,
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Last Payment Method */}
+                        <td style={{ padding: "1rem 1.5rem" }}>
+                          {lastPayment ? (
+                            <div>
+                              <MethodBadge
+                                method={lastPayment.payment_method}
+                              />
+                              <p
+                                style={{
+                                  fontSize: "0.68rem",
+                                  color: "var(--color-neutral-400)",
+                                  marginTop: "0.2rem",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {new Date(
+                                  lastPayment.payment_date,
+                                ).toLocaleDateString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                })}
+                              </p>
+                            </div>
+                          ) : (
+                            <span
+                              style={{
+                                color: "var(--color-neutral-400)",
+                                fontSize: "0.8rem",
+                              }}
+                            >
+                              —
+                            </span>
+                          )}
                         </td>
 
                         {/* Balance */}
                         <td style={{ padding: "1rem 1.5rem" }}>
                           <p
                             className="font-semibold whitespace-nowrap"
-                            style={{ fontSize: "0.875rem", color: "#ea580c" }}
+                            style={{
+                              fontSize: "0.875rem",
+                              color:
+                                project.balance <= 0 ? "#16a34a" : "#ea580c",
+                            }}
                           >
-                            $
-                            {project.balance.toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
+                            {project.balance <= 0
+                              ? "✓ Paid"
+                              : `$${fmt(project.balance)}`}
                           </p>
                         </td>
 
@@ -1013,15 +1380,29 @@ export default function EarningsPage() {
                         {/* Actions */}
                         <td style={{ padding: "1rem 1.5rem" }}>
                           <div className="flex justify-center">
-                            <div className="relative">
+                            <div>
                               <button
-                                onClick={() =>
-                                  setOpenActionsMenu(
-                                    openActionsMenu === project.id
-                                      ? null
-                                      : project.id,
-                                  )
-                                }
+                                onClick={(e) => {
+                                  if (openActionsMenu === project.id) {
+                                    setOpenActionsMenu(null);
+                                  } else {
+                                    const rect = (
+                                      e.currentTarget as HTMLButtonElement
+                                    ).getBoundingClientRect();
+                                    const menuHeight = 120; // approx height of 3 items
+                                    const spaceBelow =
+                                      window.innerHeight - rect.bottom;
+                                    const openUpward =
+                                      spaceBelow < menuHeight + 16;
+                                    setMenuPosition({
+                                      top: openUpward
+                                        ? rect.top - menuHeight - 6
+                                        : rect.bottom + 6,
+                                      right: window.innerWidth - rect.right,
+                                    });
+                                    setOpenActionsMenu(project.id);
+                                  }
+                                }}
                                 style={{
                                   background: "none",
                                   border: "none",
@@ -1055,9 +1436,10 @@ export default function EarningsPage() {
                                     onClick={() => setOpenActionsMenu(null)}
                                   />
                                   <div
-                                    className="absolute right-0 rounded-xl overflow-hidden z-20"
+                                    className="fixed rounded-xl overflow-hidden z-[100]"
                                     style={{
-                                      marginTop: "0.5rem",
+                                      top: menuPosition.top,
+                                      right: menuPosition.right,
                                       width: "11rem",
                                       backgroundColor: "var(--color-neutral-0)",
                                       border:
@@ -1085,12 +1467,15 @@ export default function EarningsPage() {
                                         },
                                       },
                                       {
-                                        icon: faDownload,
-                                        color: "#2563eb",
-                                        label: "Export Payments",
+                                        icon: faRotate,
+                                        color: "#8b5cf6",
+                                        label: "Refresh",
                                         onClick: () => {
-                                          handleDownloadInvoice(project);
+                                          queryClient.invalidateQueries({
+                                            queryKey: ["provider-all-payments"],
+                                          });
                                           setOpenActionsMenu(null);
+                                          notify("Payments refreshed", "info");
                                         },
                                       },
                                     ].map(({ icon, color, label, onClick }) => (
@@ -1143,10 +1528,31 @@ export default function EarningsPage() {
               </table>
             )}
           </div>
+
+          {/* Footer note */}
+          {filteredProjects.length > 0 && (
+            <div
+              style={{
+                padding: "0.75rem 1.5rem",
+                borderTop: "1px solid var(--color-neutral-100)",
+                backgroundColor: "var(--color-neutral-50)",
+              }}
+            >
+              <p
+                style={{
+                  fontSize: "0.72rem",
+                  color: "var(--color-neutral-400)",
+                }}
+              >
+                Payments auto-refresh every 30 seconds · eSewa payments from
+                clients appear automatically
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Add Payment Modal */}
+      {/* ════════════════ ADD PAYMENT MODAL ════════════════ */}
       {showAddPaymentModal && (
         <div
           className="fixed inset-0 flex items-center justify-center z-50 p-4 overflow-y-auto"
@@ -1180,6 +1586,7 @@ export default function EarningsPage() {
                 onClick={() => {
                   setShowAddPaymentModal(false);
                   setSelectedProjectForPayment(null);
+                  setPaymentError(null);
                 }}
                 style={{
                   background: "none",
@@ -1244,17 +1651,17 @@ export default function EarningsPage() {
                           {[
                             {
                               label: "Total Budget",
-                              value: `$${parseFloat(proj.total_cost || "0").toLocaleString()}`,
+                              value: `$${fmt(proj.total_cost)}`,
                               color: "var(--color-neutral-900)",
                             },
                             {
                               label: "Paid",
-                              value: `$${proj.total_paid.toLocaleString()}`,
+                              value: `$${fmt(proj.total_paid)}`,
                               color: "#16a34a",
                             },
                             {
                               label: "Balance",
-                              value: `$${proj.balance.toLocaleString()}`,
+                              value: `$${fmt(proj.balance)}`,
                               color: "#ea580c",
                             },
                           ].map(({ label, value, color }) => (
@@ -1283,6 +1690,25 @@ export default function EarningsPage() {
                       </div>
                     );
                   })()}
+
+                {/* Error */}
+                {paymentError && (
+                  <div
+                    className="rounded-xl p-3 flex items-center gap-2"
+                    style={{
+                      backgroundColor: "#fef2f2",
+                      border: "1px solid #fecaca",
+                      fontSize: "0.875rem",
+                      color: "#dc2626",
+                    }}
+                  >
+                    <FontAwesomeIcon
+                      icon={faExclamationTriangle}
+                      style={{ flexShrink: 0 }}
+                    />
+                    {paymentError}
+                  </div>
+                )}
 
                 {/* Amount */}
                 <div>
@@ -1315,28 +1741,9 @@ export default function EarningsPage() {
                         })
                       }
                       placeholder="0.00"
-                      style={{
-                        width: "100%",
-                        padding: "0.75rem 1rem 0.75rem 2rem",
-                        fontFamily: "var(--font-sans)",
-                        fontSize: "0.875rem",
-                        color: "var(--color-neutral-900)",
-                        backgroundColor: "var(--color-neutral-0)",
-                        border: "1px solid var(--color-neutral-200)",
-                        borderRadius: "0.625rem",
-                        outline: "none",
-                        boxSizing: "border-box",
-                      }}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = "#1ab189";
-                        e.currentTarget.style.boxShadow =
-                          "0 0 0 3px rgba(26,177,137,0.12)";
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor =
-                          "var(--color-neutral-200)";
-                        e.currentTarget.style.boxShadow = "none";
-                      }}
+                      style={{ ...inputBase, paddingLeft: "2rem" }}
+                      onFocus={iFocus}
+                      onBlur={iBlur}
                     />
                   </div>
                 </div>
@@ -1364,28 +1771,9 @@ export default function EarningsPage() {
                           payment_date: e.target.value,
                         })
                       }
-                      style={{
-                        width: "100%",
-                        padding: "0.75rem 1rem",
-                        fontFamily: "var(--font-sans)",
-                        fontSize: "0.875rem",
-                        color: "var(--color-neutral-900)",
-                        backgroundColor: "var(--color-neutral-0)",
-                        border: "1px solid var(--color-neutral-200)",
-                        borderRadius: "0.625rem",
-                        outline: "none",
-                        boxSizing: "border-box",
-                      }}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = "#1ab189";
-                        e.currentTarget.style.boxShadow =
-                          "0 0 0 3px rgba(26,177,137,0.12)";
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor =
-                          "var(--color-neutral-200)";
-                        e.currentTarget.style.boxShadow = "none";
-                      }}
+                      style={inputBase}
+                      onFocus={iFocus}
+                      onBlur={iBlur}
                     />
                   </div>
                   <div>
@@ -1408,29 +1796,9 @@ export default function EarningsPage() {
                           payment_method: e.target.value,
                         })
                       }
-                      style={{
-                        width: "100%",
-                        padding: "0.75rem 1rem",
-                        fontFamily: "var(--font-sans)",
-                        fontSize: "0.875rem",
-                        color: "var(--color-neutral-900)",
-                        backgroundColor: "var(--color-neutral-0)",
-                        border: "1px solid var(--color-neutral-200)",
-                        borderRadius: "0.625rem",
-                        outline: "none",
-                        cursor: "pointer",
-                        boxSizing: "border-box",
-                      }}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = "#1ab189";
-                        e.currentTarget.style.boxShadow =
-                          "0 0 0 3px rgba(26,177,137,0.12)";
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor =
-                          "var(--color-neutral-200)";
-                        e.currentTarget.style.boxShadow = "none";
-                      }}
+                      style={{ ...inputBase, cursor: "pointer" }}
+                      onFocus={iFocus}
+                      onBlur={iBlur}
                     >
                       <option>Bank Transfer</option>
                       <option>Credit Card</option>
@@ -1459,32 +1827,13 @@ export default function EarningsPage() {
                     onChange={(e) =>
                       setPaymentForm({
                         ...paymentForm,
-                        payment_type: e.target.value as any,
+                        payment_type: e.target
+                          .value as PaymentFormData["payment_type"],
                       })
                     }
-                    style={{
-                      width: "100%",
-                      padding: "0.75rem 1rem",
-                      fontFamily: "var(--font-sans)",
-                      fontSize: "0.875rem",
-                      color: "var(--color-neutral-900)",
-                      backgroundColor: "var(--color-neutral-0)",
-                      border: "1px solid var(--color-neutral-200)",
-                      borderRadius: "0.625rem",
-                      outline: "none",
-                      cursor: "pointer",
-                      boxSizing: "border-box",
-                    }}
-                    onFocus={(e) => {
-                      e.currentTarget.style.borderColor = "#1ab189";
-                      e.currentTarget.style.boxShadow =
-                        "0 0 0 3px rgba(26,177,137,0.12)";
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.borderColor =
-                        "var(--color-neutral-200)";
-                      e.currentTarget.style.boxShadow = "none";
-                    }}
+                    style={{ ...inputBase, cursor: "pointer" }}
+                    onFocus={iFocus}
+                    onBlur={iBlur}
                   >
                     <option value="advance">Advance Payment</option>
                     <option value="milestone">Milestone Payment</option>
@@ -1516,28 +1865,9 @@ export default function EarningsPage() {
                       })
                     }
                     placeholder="Enter transaction ID…"
-                    style={{
-                      width: "100%",
-                      padding: "0.75rem 1rem",
-                      fontFamily: "var(--font-sans)",
-                      fontSize: "0.875rem",
-                      color: "var(--color-neutral-900)",
-                      backgroundColor: "var(--color-neutral-0)",
-                      border: "1px solid var(--color-neutral-200)",
-                      borderRadius: "0.625rem",
-                      outline: "none",
-                      boxSizing: "border-box",
-                    }}
-                    onFocus={(e) => {
-                      e.currentTarget.style.borderColor = "#1ab189";
-                      e.currentTarget.style.boxShadow =
-                        "0 0 0 3px rgba(26,177,137,0.12)";
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.borderColor =
-                        "var(--color-neutral-200)";
-                      e.currentTarget.style.boxShadow = "none";
-                    }}
+                    style={inputBase}
+                    onFocus={iFocus}
+                    onBlur={iBlur}
                   />
                 </div>
 
@@ -1561,29 +1891,9 @@ export default function EarningsPage() {
                     }
                     placeholder="Add payment notes…"
                     rows={3}
-                    style={{
-                      width: "100%",
-                      padding: "0.75rem 1rem",
-                      fontFamily: "var(--font-sans)",
-                      fontSize: "0.875rem",
-                      color: "var(--color-neutral-900)",
-                      backgroundColor: "var(--color-neutral-0)",
-                      border: "1px solid var(--color-neutral-200)",
-                      borderRadius: "0.625rem",
-                      outline: "none",
-                      resize: "none",
-                      boxSizing: "border-box",
-                    }}
-                    onFocus={(e) => {
-                      e.currentTarget.style.borderColor = "#1ab189";
-                      e.currentTarget.style.boxShadow =
-                        "0 0 0 3px rgba(26,177,137,0.12)";
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.borderColor =
-                        "var(--color-neutral-200)";
-                      e.currentTarget.style.boxShadow = "none";
-                    }}
+                    style={{ ...inputBase, resize: "none" }}
+                    onFocus={iFocus}
+                    onBlur={iBlur}
                   />
                 </div>
               </div>
@@ -1603,49 +1913,65 @@ export default function EarningsPage() {
                 onClick={() => {
                   setShowAddPaymentModal(false);
                   setSelectedProjectForPayment(null);
+                  setPaymentError(null);
                 }}
                 disabled={createPaymentMutation.isPending}
-                className="btn btn-ghost btn-md"
+                style={{
+                  padding: "0.5rem 1.125rem",
+                  fontSize: "0.8125rem",
+                  fontWeight: 600,
+                  color: "var(--color-neutral-700)",
+                  backgroundColor: "transparent",
+                  border: "1px solid var(--color-neutral-200)",
+                  borderRadius: "0.625rem",
+                  cursor: "pointer",
+                }}
               >
                 Cancel
               </button>
               <button
                 onClick={handleAddPayment}
                 disabled={createPaymentMutation.isPending}
-                className="flex items-center gap-2 btn btn-md"
+                className="flex items-center gap-2"
                 style={{
+                  padding: "0.5rem 1.125rem",
+                  fontSize: "0.8125rem",
+                  fontWeight: 600,
                   backgroundColor: "#1ab189",
                   color: "white",
                   border: "none",
-                  opacity: createPaymentMutation.isPending ? 0.6 : 1,
+                  borderRadius: "0.625rem",
                   cursor: createPaymentMutation.isPending
                     ? "not-allowed"
                     : "pointer",
+                  opacity: createPaymentMutation.isPending ? 0.6 : 1,
+                  boxShadow: "0 2px 8px rgba(26,177,137,0.3)",
                 }}
               >
                 {createPaymentMutation.isPending ? (
-                  <>
-                    <FontAwesomeIcon
-                      icon={faSpinner}
-                      className="animate-spin"
-                      style={{ fontSize: "0.875rem" }}
-                    />
-                    Recording…
-                  </>
+                  <FontAwesomeIcon
+                    icon={faSpinner}
+                    className="animate-spin"
+                    style={{ fontSize: "0.875rem" }}
+                  />
                 ) : (
-                  <>
-                    <FontAwesomeIcon
-                      icon={faPlus}
-                      style={{ fontSize: "0.875rem" }}
-                    />
-                    Record Payment
-                  </>
+                  <FontAwesomeIcon
+                    icon={faPlus}
+                    style={{ fontSize: "0.875rem" }}
+                  />
                 )}
+                {createPaymentMutation.isPending
+                  ? "Recording…"
+                  : "Record Payment"}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 }

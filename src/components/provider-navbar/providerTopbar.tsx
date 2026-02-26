@@ -10,10 +10,11 @@ import {
 import { useState } from "react";
 import { useUser } from "@/contexts/UserContext";
 import Link from "next/link";
+import { useProviderCounts } from "@/hooks/useNotificationCount";
 
 export default function ProviderTopbar() {
   const { user, isLoading: userLoading, logout } = useUser();
-  const [notificationCount] = useState(3);
+  const { unreadNotifications } = useProviderCounts();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
@@ -62,6 +63,9 @@ export default function ProviderTopbar() {
       day: "numeric",
     })
     .toUpperCase();
+
+  // Cap badge display at 99
+  const badgeCount = unreadNotifications > 99 ? "99+" : unreadNotifications;
 
   return (
     <>
@@ -135,11 +139,15 @@ export default function ProviderTopbar() {
             />
           </div>
 
-          {/* Notifications */}
+          {/* Notifications bell */}
           <Link
             href="/provider/notifications"
             className="relative flex items-center justify-center rounded-xl transition-colors"
-            aria-label="Notifications"
+            aria-label={
+              unreadNotifications > 0
+                ? `Notifications — ${unreadNotifications} unread`
+                : "Notifications"
+            }
             style={{
               width: "2.5rem",
               height: "2.5rem",
@@ -158,23 +166,31 @@ export default function ProviderTopbar() {
             <FontAwesomeIcon
               icon={faBell}
               style={{
-                color: "var(--color-neutral-500)",
+                color:
+                  unreadNotifications > 0
+                    ? "var(--color-primary)"
+                    : "var(--color-neutral-500)",
                 fontSize: "0.9rem",
               }}
             />
-            {notificationCount > 0 && (
+
+            {unreadNotifications > 0 && (
               <span
+                aria-hidden="true"
                 className="absolute flex items-center justify-center font-bold text-white rounded-full"
                 style={{
                   top: "-5px",
                   right: "-5px",
-                  width: "1.1rem",
+                  minWidth: "1.1rem",
                   height: "1.1rem",
+                  padding: "0 0.2rem",
                   fontSize: "0.55rem",
                   backgroundColor: "var(--color-primary)",
+                  border: "2px solid var(--color-neutral-0)",
+                  animation: "badge-pop 200ms ease-out",
                 }}
               >
-                {notificationCount}
+                {badgeCount}
               </span>
             )}
           </Link>
@@ -208,6 +224,15 @@ export default function ProviderTopbar() {
           </button>
         </div>
       </header>
+
+      {/* Badge animation */}
+      <style>{`
+        @keyframes badge-pop {
+          0%   { transform: scale(0.5); opacity: 0; }
+          70%  { transform: scale(1.2); }
+          100% { transform: scale(1);   opacity: 1; }
+        }
+      `}</style>
 
       {/* Logout Modal */}
       {showLogoutModal && (

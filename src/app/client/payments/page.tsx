@@ -23,12 +23,14 @@ import {
   faFileInvoice,
   faExclamationCircle,
   faChartLine,
+  faMoneyBillWave,
+  faExternalLinkAlt,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isAuthenticated } from "@/lib/auth";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 // ==================================================================================
 // TYPES
@@ -81,7 +83,6 @@ const fmtDate = (d: string) =>
     year: "numeric",
   });
 
-// Two-letter initials from project name
 const getInitials = (name: string) =>
   name
     .split(" ")
@@ -90,7 +91,6 @@ const getInitials = (name: string) =>
     .toUpperCase()
     .slice(0, 2);
 
-// Deterministic color per project id — same palette as provider page
 const PROJECT_COLORS = [
   "#1ab189",
   "#8b5cf6",
@@ -201,7 +201,16 @@ function TypePill({ type }: { type: string }) {
   );
 }
 
-function Toast({ msg, onClose }: { msg: string; onClose: () => void }) {
+function Toast({
+  msg,
+  type = "success",
+  onClose,
+}: {
+  msg: string;
+  type?: "success" | "error";
+  onClose: () => void;
+}) {
+  const isError = type === "error";
   return (
     <div className="fixed top-5 right-5 z-[60]" style={{ minWidth: "17rem" }}>
       <div
@@ -213,10 +222,10 @@ function Toast({ msg, onClose }: { msg: string; onClose: () => void }) {
       >
         <div
           className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
-          style={{ backgroundColor: "#1ab189" }}
+          style={{ backgroundColor: isError ? "#ef4444" : "#1ab189" }}
         >
           <FontAwesomeIcon
-            icon={faCheck}
+            icon={isError ? faTimes : faCheck}
             style={{ color: "white", fontSize: "0.6rem" }}
           />
         </div>
@@ -243,7 +252,6 @@ function Toast({ msg, onClose }: { msg: string; onClose: () => void }) {
   );
 }
 
-// Input base — longhands to avoid React border/borderColor conflict warning
 const inputBase: React.CSSProperties = {
   width: "100%",
   padding: "0.75rem 1rem",
@@ -277,13 +285,137 @@ const iBlur = (
 };
 
 // ==================================================================================
+// ESEWA PAYMENT METHOD SELECTOR
+// ==================================================================================
+
+type PaymentMethod = "esewa" | "manual";
+
+function MethodSelector({
+  value,
+  onChange,
+}: {
+  value: PaymentMethod;
+  onChange: (m: PaymentMethod) => void;
+}) {
+  const methods: {
+    id: PaymentMethod;
+    label: string;
+    sub: string;
+    color: string;
+  }[] = [
+    {
+      id: "esewa",
+      label: "Pay with eSewa",
+      sub: "Redirects to eSewa gateway — instant confirmation",
+      color: "#60BB47",
+    },
+    {
+      id: "manual",
+      label: "Manual Payment",
+      sub: "Record a bank transfer or cash payment you already made",
+      color: "#3b82f6",
+    },
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
+      {methods.map((m) => {
+        const active = value === m.id;
+        return (
+          <button
+            key={m.id}
+            type="button"
+            onClick={() => onChange(m.id)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "1rem",
+              padding: "0.875rem 1rem",
+              borderRadius: "0.75rem",
+              cursor: "pointer",
+              backgroundColor: active
+                ? `${m.color}0f`
+                : "var(--color-neutral-0)",
+              border: active
+                ? `2px solid ${m.color}`
+                : "1px solid var(--color-neutral-200)",
+              textAlign: "left",
+              transition: "all 150ms",
+            }}
+          >
+            {/* Colour dot */}
+            <div
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: "0.5rem",
+                flexShrink: 0,
+                backgroundColor: active ? m.color : "var(--color-neutral-100)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <FontAwesomeIcon
+                icon={m.id === "esewa" ? faExternalLinkAlt : faMoneyBillWave}
+                style={{
+                  color: active ? "white" : "var(--color-neutral-400)",
+                  fontSize: "0.9rem",
+                }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <p
+                style={{
+                  fontSize: "0.875rem",
+                  fontWeight: 700,
+                  color: active ? m.color : "var(--color-neutral-900)",
+                  margin: 0,
+                }}
+              >
+                {m.label}
+              </p>
+              <p
+                style={{
+                  fontSize: "0.72rem",
+                  color: "var(--color-neutral-400)",
+                  margin: 0,
+                  marginTop: "0.125rem",
+                }}
+              >
+                {m.sub}
+              </p>
+            </div>
+            {/* Active ring */}
+            <div
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: "50%",
+                flexShrink: 0,
+                border: active
+                  ? `5px solid ${m.color}`
+                  : "2px solid var(--color-neutral-300)",
+                backgroundColor: "white",
+              }}
+            />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ==================================================================================
 // MAIN PAGE
 // ==================================================================================
 
 export default function ClientPaymentsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
 
+  // ---------- UI state ----------
   const [filterStatus, setFilterStatus] = useState("all");
   const [selectedProject, setSelectedProject] = useState<number | null>(null);
   const [openActionsMenu, setOpenActionsMenu] = useState<number | null>(null);
@@ -291,9 +423,15 @@ export default function ClientPaymentsPage() {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [paymentError, setPaymentError] = useState<string | null>(null);
-  const [showToast, setShowToast] = useState(false);
-  const [toastMsg, setToastMsg] = useState("");
+  const [toast, setToast] = useState<{
+    msg: string;
+    type: "success" | "error";
+  } | null>(null);
 
+  // ---------- Payment method ----------
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("esewa");
+
+  // ---------- Shared form fields ----------
   const [form, setForm] = useState({
     amount: "",
     payment_date: new Date().toISOString().split("T")[0],
@@ -302,6 +440,8 @@ export default function ClientPaymentsPage() {
     transaction_id: "",
     notes: "",
   });
+
+  const [esewaLoading, setEsewaLoading] = useState(false);
 
   const resetForm = () =>
     setForm({
@@ -313,11 +453,32 @@ export default function ClientPaymentsPage() {
       notes: "",
     });
 
-  const notify = (msg: string) => {
-    setToastMsg(msg);
-    setShowToast(true);
-    setTimeout(() => setShowToast(false), 3000);
+  const notify = (msg: string, type: "success" | "error" = "success") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
   };
+
+  // ---------- Handle eSewa return params ----------
+  useEffect(() => {
+    const esewaStatus = searchParams.get("esewa");
+    if (!esewaStatus) return;
+
+    if (esewaStatus === "success") {
+      const amount = searchParams.get("amount") || "";
+      const tx = searchParams.get("tx") || "";
+      notify(`eSewa payment of NPR ${amount} confirmed! Tx: ${tx}`, "success");
+      queryClient.invalidateQueries({ queryKey: ["project-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["client-projects"] });
+    } else if (esewaStatus === "cancelled") {
+      notify("eSewa payment was cancelled.", "error");
+    } else {
+      const reason = searchParams.get("reason") || "unknown";
+      notify(`eSewa payment failed (${reason}). Please try again.`, "error");
+    }
+
+    // Clean the URL so refreshing doesn't re-trigger
+    router.replace("/client/payments", { scroll: false });
+  }, [searchParams]);
 
   // ── Queries ──────────────────────────────────────────────────────────────
 
@@ -362,7 +523,7 @@ export default function ClientPaymentsPage() {
       setSelectedProject(projects[0].id);
   }, [projects, selectedProject]);
 
-  // ── Mutation ─────────────────────────────────────────────────────────────
+  // ── Manual payment mutation (unchanged) ──────────────────────────────────
 
   const mutation = useMutation({
     mutationFn: async (data: typeof form) => {
@@ -387,7 +548,7 @@ export default function ClientPaymentsPage() {
       setShowPaymentModal(false);
       setPaymentError(null);
       resetForm();
-      notify("Payment recorded successfully!");
+      notify("Manual payment recorded successfully!");
     },
     onError: (error: any) => {
       let msg = "Failed to record payment";
@@ -405,20 +566,79 @@ export default function ClientPaymentsPage() {
     },
   });
 
+  // ── eSewa payment handler ─────────────────────────────────────────────────
+
+  const handleEsewaPayment = async () => {
+    setPaymentError(null);
+
+    if (!form.amount || parseFloat(form.amount) <= 0) {
+      setPaymentError("Amount must be greater than 0");
+      return;
+    }
+    if (!selectedProject) {
+      setPaymentError("No project selected");
+      return;
+    }
+
+    setEsewaLoading(true);
+    try {
+      // Call Django to get signed payload
+      const res = await api.post<{
+        gateway_url: string;
+        payload: Record<string, string>;
+      }>("/api/v1/payments/esewa/initiate/", {
+        amount: parseFloat(form.amount),
+        project_id: selectedProject,
+        payment_type: form.payment_type,
+      });
+
+      const { gateway_url, payload } = res;
+
+      // Build a hidden form and submit — browser navigates to eSewa
+      const form_el = document.createElement("form");
+      form_el.method = "POST";
+      form_el.action = gateway_url;
+      form_el.style.display = "none";
+
+      Object.entries(payload).forEach(([key, val]) => {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = key;
+        input.value = val;
+        form_el.appendChild(input);
+      });
+
+      document.body.appendChild(form_el);
+      form_el.submit();
+      // Page navigates away — no further state needed
+    } catch (err: any) {
+      setEsewaLoading(false);
+      const msg =
+        err?.data?.error || err?.message || "Failed to initiate eSewa payment";
+      setPaymentError(msg);
+    }
+  };
+
+  // ── Unified submit handler ────────────────────────────────────────────────
+
   const handleSubmit = () => {
     setPaymentError(null);
     if (!form.amount || parseFloat(form.amount) <= 0) {
       setPaymentError("Amount must be greater than 0");
       return;
     }
-    if (!form.payment_date) {
-      setPaymentError("Payment date is required");
-      return;
+    if (paymentMethod === "esewa") {
+      handleEsewaPayment();
+    } else {
+      if (!form.payment_date) {
+        setPaymentError("Payment date is required");
+        return;
+      }
+      mutation.mutate(form);
     }
-    mutation.mutate(form);
   };
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  // ── Derived values ────────────────────────────────────────────────────────
 
   const currentProject = projects.find((p) => p.id === selectedProject);
   const totalPaid = payments
@@ -433,7 +653,16 @@ export default function ClientPaymentsPage() {
       ? payments
       : payments.filter((p) => p.payment_status === filterStatus);
 
-  // ── Loading / Error ───────────────────────────────────────────────────────
+  const isSubmitting = mutation.isPending || esewaLoading;
+  const submitLabel = isSubmitting
+    ? esewaLoading
+      ? "Redirecting to eSewa…"
+      : "Recording…"
+    : paymentMethod === "esewa"
+      ? "Pay with eSewa"
+      : "Record Payment";
+
+  // ── Loading / Error states ────────────────────────────────────────────────
 
   if (projectsLoading)
     return (
@@ -502,15 +731,16 @@ export default function ClientPaymentsPage() {
       className="min-h-screen"
       style={{ backgroundColor: "var(--color-neutral-50)" }}
     >
-      {showToast && (
-        <Toast msg={toastMsg} onClose={() => setShowToast(false)} />
+      {toast && (
+        <Toast
+          msg={toast.msg}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
       )}
 
-      {/* ─────────────────────────────────────────────────────────────────
-          CONTENT AREA — white card with padding, exactly like provider page
-          ───────────────────────────────────────────────────────────────── */}
       <div style={{ padding: "1.75rem 2rem" }}>
-        {/* ── Page title row (matches "Earnings" heading + "This Month / Export" buttons) ── */}
+        {/* ── Page title row ── */}
         <div className="flex items-start justify-between flex-wrap gap-4 mb-6">
           <div>
             <h1
@@ -539,6 +769,7 @@ export default function ClientPaymentsPage() {
             onClick={() => {
               setShowPaymentModal(true);
               setPaymentError(null);
+              setPaymentMethod("esewa");
             }}
             disabled={projects.length === 0}
             className="flex items-center gap-2"
@@ -559,7 +790,7 @@ export default function ClientPaymentsPage() {
             }}
           >
             <FontAwesomeIcon icon={faPlus} style={{ fontSize: "0.8rem" }} />
-            Record Payment
+            Make Payment
           </button>
         </div>
 
@@ -581,9 +812,9 @@ export default function ClientPaymentsPage() {
           </div>
         )}
 
-        {/* ── Stat Cards — 4-column layout matching provider page exactly ── */}
+        {/* ── Stat Cards ── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          {/* Card 1 — green accent (Total Project Cost) matches provider "Total Earnings" card */}
+          {/* Total Project Cost */}
           <div
             className="rounded-2xl p-5 relative overflow-hidden"
             style={{
@@ -591,7 +822,6 @@ export default function ClientPaymentsPage() {
               boxShadow: "0 4px 20px rgba(26,177,137,0.25)",
             }}
           >
-            {/* top-right badge */}
             <div className="flex items-center justify-between mb-4">
               <div
                 className="w-10 h-10 rounded-xl flex items-center justify-center"
@@ -641,7 +871,6 @@ export default function ClientPaymentsPage() {
             >
               ${fmt(totalCost)}
             </p>
-            {/* mini progress bar */}
             <div
               style={{
                 marginTop: "1rem",
@@ -670,7 +899,7 @@ export default function ClientPaymentsPage() {
             </div>
           </div>
 
-          {/* Card 2 — Amount Paid (matches provider "Pending Payments" white card layout) */}
+          {/* Amount Paid */}
           <div
             className="rounded-2xl p-5"
             style={{
@@ -709,7 +938,7 @@ export default function ClientPaymentsPage() {
             </p>
           </div>
 
-          {/* Card 3 — Amount Due */}
+          {/* Amount Due */}
           <div
             className="rounded-2xl p-5"
             style={{
@@ -748,7 +977,7 @@ export default function ClientPaymentsPage() {
             </p>
           </div>
 
-          {/* Card 4 — Transactions */}
+          {/* Transactions */}
           <div
             className="rounded-2xl p-5"
             style={{
@@ -787,7 +1016,7 @@ export default function ClientPaymentsPage() {
           </div>
         </div>
 
-        {/* ── Payment History table card (matches "Projects & Earnings" table card) ── */}
+        {/* ── Payment History Table ── */}
         <div
           className="rounded-2xl overflow-hidden"
           style={{
@@ -795,7 +1024,7 @@ export default function ClientPaymentsPage() {
             border: "1px solid var(--color-neutral-200)",
           }}
         >
-          {/* Table toolbar */}
+          {/* Toolbar */}
           <div
             className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
             style={{
@@ -810,7 +1039,6 @@ export default function ClientPaymentsPage() {
               Payment History
             </h2>
             <div className="flex items-center gap-3 flex-wrap">
-              {/* Project selector — only shown when >1 project */}
               {projects.length > 1 && (
                 <div className="relative">
                   <select
@@ -852,7 +1080,6 @@ export default function ClientPaymentsPage() {
                 </div>
               )}
 
-              {/* Status filter */}
               <div className="relative">
                 <select
                   value={filterStatus}
@@ -893,7 +1120,7 @@ export default function ClientPaymentsPage() {
             </div>
           </div>
 
-          {/* Table */}
+          {/* Table body (identical to original) */}
           <div style={{ overflowX: "auto" }}>
             {paymentsLoading ? (
               <div
@@ -926,7 +1153,7 @@ export default function ClientPaymentsPage() {
                 >
                   {filterStatus !== "all"
                     ? "Try adjusting your filter"
-                    : "Record your first payment above"}
+                    : "Make your first payment above"}
                 </p>
               </div>
             ) : (
@@ -944,7 +1171,6 @@ export default function ClientPaymentsPage() {
                       borderBottom: "1px solid var(--color-neutral-200)",
                     }}
                   >
-                    {/* Headers match provider page: PROJECT CLIENT TOTAL COST PAID BALANCE STATUS ACTIONS */}
                     {[
                       "Payment",
                       "Type",
@@ -994,7 +1220,7 @@ export default function ClientPaymentsPage() {
                         ).style.backgroundColor = "transparent";
                       }}
                     >
-                      {/* Payment — coloured avatar initials pill, exactly like BR / EP / BU in provider table */}
+                      {/* Payment avatar */}
                       <td style={{ padding: "1rem 1.5rem" }}>
                         <div className="flex items-center gap-3">
                           <div
@@ -1053,12 +1279,10 @@ export default function ClientPaymentsPage() {
                         </div>
                       </td>
 
-                      {/* Type pill */}
                       <td style={{ padding: "1rem 1.5rem" }}>
                         <TypePill type={payment.payment_type} />
                       </td>
 
-                      {/* Date */}
                       <td style={{ padding: "1rem 1.5rem" }}>
                         <span
                           style={{
@@ -1071,20 +1295,36 @@ export default function ClientPaymentsPage() {
                         </span>
                       </td>
 
-                      {/* Method */}
                       <td style={{ padding: "1rem 1.5rem" }}>
                         <span
                           style={{
                             fontSize: "0.8125rem",
                             color: "var(--color-neutral-700)",
                             whiteSpace: "nowrap",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.35rem",
                           }}
                         >
+                          {/* eSewa badge */}
+                          {payment.payment_method === "eSewa" && (
+                            <span
+                              style={{
+                                backgroundColor: "#60BB4720",
+                                color: "#2d7a1f",
+                                padding: "0.1rem 0.4rem",
+                                borderRadius: "0.3rem",
+                                fontSize: "0.65rem",
+                                fontWeight: 700,
+                              }}
+                            >
+                              eSewa
+                            </span>
+                          )}
                           {payment.payment_method || "—"}
                         </span>
                       </td>
 
-                      {/* Amount — green like "Paid" column in provider, orange for pending */}
                       <td style={{ padding: "1rem 1.5rem" }}>
                         <p
                           className="font-semibold"
@@ -1115,12 +1355,11 @@ export default function ClientPaymentsPage() {
                         )}
                       </td>
 
-                      {/* Status */}
                       <td style={{ padding: "1rem 1.5rem" }}>
                         <StatusPill status={payment.payment_status} />
                       </td>
 
-                      {/* Actions — same ⋮ menu as provider */}
+                      {/* Actions menu */}
                       <td style={{ padding: "1rem 1.5rem" }}>
                         <div className="flex justify-center">
                           <div className="relative">
@@ -1246,7 +1485,7 @@ export default function ClientPaymentsPage() {
       </div>
 
       {/* ════════════════════════════════════════════
-          RECORD PAYMENT MODAL
+          PAYMENT MODAL  (eSewa + Manual)
           ════════════════════════════════════════════ */}
       {showPaymentModal && (
         <div
@@ -1260,6 +1499,7 @@ export default function ClientPaymentsPage() {
               boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
             }}
           >
+            {/* Modal header */}
             <div
               className="flex items-center justify-between"
               style={{
@@ -1274,7 +1514,7 @@ export default function ClientPaymentsPage() {
                   color: "var(--color-neutral-900)",
                 }}
               >
-                Record Payment
+                Make a Payment
               </h3>
               <button
                 onClick={() => {
@@ -1396,6 +1636,25 @@ export default function ClientPaymentsPage() {
                   </div>
                 )}
 
+                {/* ── PAYMENT METHOD SELECTOR ── */}
+                <div>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.8125rem",
+                      fontWeight: 600,
+                      color: "var(--color-neutral-700)",
+                      marginBottom: "0.625rem",
+                    }}
+                  >
+                    Payment Method
+                  </label>
+                  <MethodSelector
+                    value={paymentMethod}
+                    onChange={setPaymentMethod}
+                  />
+                </div>
+
                 {/* Amount */}
                 <div>
                   <label
@@ -1431,62 +1690,7 @@ export default function ClientPaymentsPage() {
                   </div>
                 </div>
 
-                {/* Date + Method */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label
-                      style={{
-                        display: "block",
-                        fontSize: "0.8125rem",
-                        fontWeight: 600,
-                        color: "var(--color-neutral-700)",
-                        marginBottom: "0.5rem",
-                      }}
-                    >
-                      Payment Date <span style={{ color: "#ef4444" }}>*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={form.payment_date}
-                      onChange={(e) =>
-                        setForm({ ...form, payment_date: e.target.value })
-                      }
-                      style={inputBase}
-                      onFocus={iFocus}
-                      onBlur={iBlur}
-                    />
-                  </div>
-                  <div>
-                    <label
-                      style={{
-                        display: "block",
-                        fontSize: "0.8125rem",
-                        fontWeight: 600,
-                        color: "var(--color-neutral-700)",
-                        marginBottom: "0.5rem",
-                      }}
-                    >
-                      Payment Method
-                    </label>
-                    <select
-                      value={form.payment_method}
-                      onChange={(e) =>
-                        setForm({ ...form, payment_method: e.target.value })
-                      }
-                      style={{ ...inputBase, cursor: "pointer" }}
-                      onFocus={iFocus}
-                      onBlur={iBlur}
-                    >
-                      <option>Bank Transfer</option>
-                      <option>Credit Card</option>
-                      <option>Cash</option>
-                      <option>Check</option>
-                      <option>Digital Wallet</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Payment Type */}
+                {/* Payment Type (shared) */}
                 <div>
                   <label
                     style={{
@@ -1515,60 +1719,142 @@ export default function ClientPaymentsPage() {
                   </select>
                 </div>
 
-                {/* Transaction ID */}
-                <div>
-                  <label
-                    style={{
-                      display: "block",
-                      fontSize: "0.8125rem",
-                      fontWeight: 600,
-                      color: "var(--color-neutral-700)",
-                      marginBottom: "0.5rem",
-                    }}
-                  >
-                    Transaction ID
-                  </label>
-                  <input
-                    type="text"
-                    value={form.transaction_id}
-                    onChange={(e) =>
-                      setForm({ ...form, transaction_id: e.target.value })
-                    }
-                    placeholder="Enter transaction ID…"
-                    style={inputBase}
-                    onFocus={iFocus}
-                    onBlur={iBlur}
-                  />
-                </div>
+                {/* ── MANUAL-ONLY FIELDS ── */}
+                {paymentMethod === "manual" && (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label
+                          style={{
+                            display: "block",
+                            fontSize: "0.8125rem",
+                            fontWeight: 600,
+                            color: "var(--color-neutral-700)",
+                            marginBottom: "0.5rem",
+                          }}
+                        >
+                          Payment Date{" "}
+                          <span style={{ color: "#ef4444" }}>*</span>
+                        </label>
+                        <input
+                          type="date"
+                          value={form.payment_date}
+                          onChange={(e) =>
+                            setForm({ ...form, payment_date: e.target.value })
+                          }
+                          style={inputBase}
+                          onFocus={iFocus}
+                          onBlur={iBlur}
+                        />
+                      </div>
+                      <div>
+                        <label
+                          style={{
+                            display: "block",
+                            fontSize: "0.8125rem",
+                            fontWeight: 600,
+                            color: "var(--color-neutral-700)",
+                            marginBottom: "0.5rem",
+                          }}
+                        >
+                          Payment Method
+                        </label>
+                        <select
+                          value={form.payment_method}
+                          onChange={(e) =>
+                            setForm({ ...form, payment_method: e.target.value })
+                          }
+                          style={{ ...inputBase, cursor: "pointer" }}
+                          onFocus={iFocus}
+                          onBlur={iBlur}
+                        >
+                          <option>Bank Transfer</option>
+                          <option>Credit Card</option>
+                          <option>Cash</option>
+                          <option>Check</option>
+                          <option>Digital Wallet</option>
+                        </select>
+                      </div>
+                    </div>
 
-                {/* Notes */}
-                <div>
-                  <label
+                    <div>
+                      <label
+                        style={{
+                          display: "block",
+                          fontSize: "0.8125rem",
+                          fontWeight: 600,
+                          color: "var(--color-neutral-700)",
+                          marginBottom: "0.5rem",
+                        }}
+                      >
+                        Transaction ID
+                      </label>
+                      <input
+                        type="text"
+                        value={form.transaction_id}
+                        onChange={(e) =>
+                          setForm({ ...form, transaction_id: e.target.value })
+                        }
+                        placeholder="Enter transaction ID…"
+                        style={inputBase}
+                        onFocus={iFocus}
+                        onBlur={iBlur}
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        style={{
+                          display: "block",
+                          fontSize: "0.8125rem",
+                          fontWeight: 600,
+                          color: "var(--color-neutral-700)",
+                          marginBottom: "0.5rem",
+                        }}
+                      >
+                        Notes
+                      </label>
+                      <textarea
+                        value={form.notes}
+                        rows={3}
+                        onChange={(e) =>
+                          setForm({ ...form, notes: e.target.value })
+                        }
+                        placeholder="Add payment notes…"
+                        style={{ ...inputBase, resize: "none" }}
+                        onFocus={iFocus}
+                        onBlur={iBlur}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* eSewa info note */}
+                {paymentMethod === "esewa" && (
+                  <div
+                    className="rounded-xl p-3 flex items-start gap-3"
                     style={{
-                      display: "block",
+                      backgroundColor: "#f0fdf4",
+                      border: "1px solid #bbf7d0",
                       fontSize: "0.8125rem",
-                      fontWeight: 600,
-                      color: "var(--color-neutral-700)",
-                      marginBottom: "0.5rem",
+                      color: "#166534",
                     }}
                   >
-                    Notes
-                  </label>
-                  <textarea
-                    value={form.notes}
-                    rows={3}
-                    onChange={(e) =>
-                      setForm({ ...form, notes: e.target.value })
-                    }
-                    placeholder="Add payment notes…"
-                    style={{ ...inputBase, resize: "none" }}
-                    onFocus={iFocus}
-                    onBlur={iBlur}
-                  />
-                </div>
+                    <FontAwesomeIcon
+                      icon={faExternalLinkAlt}
+                      style={{ marginTop: "0.1rem", flexShrink: 0 }}
+                    />
+                    <span>
+                      You'll be redirected to eSewa to complete the payment
+                      securely. Once confirmed, the payment is automatically
+                      recorded to this project.
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
+            {/* Modal footer */}
             <div
               className="flex items-center justify-end gap-3"
               style={{
@@ -1583,7 +1869,7 @@ export default function ClientPaymentsPage() {
                   setShowPaymentModal(false);
                   setPaymentError(null);
                 }}
-                disabled={mutation.isPending}
+                disabled={isSubmitting}
                 style={{
                   padding: "0.5rem 1.125rem",
                   fontSize: "0.8125rem",
@@ -1599,38 +1885,40 @@ export default function ClientPaymentsPage() {
               </button>
               <button
                 onClick={handleSubmit}
-                disabled={mutation.isPending}
+                disabled={isSubmitting}
                 className="flex items-center gap-2"
                 style={{
                   padding: "0.5rem 1.125rem",
                   fontSize: "0.8125rem",
                   fontWeight: 600,
-                  backgroundColor: "#1ab189",
+                  backgroundColor:
+                    paymentMethod === "esewa" ? "#60BB47" : "#1ab189",
                   color: "white",
                   border: "none",
                   borderRadius: "0.625rem",
-                  cursor: mutation.isPending ? "not-allowed" : "pointer",
-                  opacity: mutation.isPending ? 0.6 : 1,
+                  cursor: isSubmitting ? "not-allowed" : "pointer",
+                  opacity: isSubmitting ? 0.6 : 1,
+                  boxShadow:
+                    paymentMethod === "esewa"
+                      ? "0 2px 8px rgba(96,187,71,0.3)"
+                      : "0 2px 8px rgba(26,177,137,0.3)",
                 }}
               >
-                {mutation.isPending ? (
-                  <>
-                    <FontAwesomeIcon
-                      icon={faSpinner}
-                      className="animate-spin"
-                      style={{ fontSize: "0.875rem" }}
-                    />
-                    Recording…
-                  </>
+                {isSubmitting ? (
+                  <FontAwesomeIcon
+                    icon={faSpinner}
+                    className="animate-spin"
+                    style={{ fontSize: "0.875rem" }}
+                  />
                 ) : (
-                  <>
-                    <FontAwesomeIcon
-                      icon={faPlus}
-                      style={{ fontSize: "0.875rem" }}
-                    />
-                    Record Payment
-                  </>
+                  <FontAwesomeIcon
+                    icon={
+                      paymentMethod === "esewa" ? faExternalLinkAlt : faPlus
+                    }
+                    style={{ fontSize: "0.875rem" }}
+                  />
                 )}
+                {submitLabel}
               </button>
             </div>
           </div>
@@ -1638,7 +1926,7 @@ export default function ClientPaymentsPage() {
       )}
 
       {/* ════════════════════════════════════════════
-          RECEIPT MODAL
+          RECEIPT MODAL  (unchanged)
           ════════════════════════════════════════════ */}
       {showReceiptModal && selectedPayment && (
         <div
@@ -1653,7 +1941,6 @@ export default function ClientPaymentsPage() {
               overflow: "hidden",
             }}
           >
-            {/* Green gradient header */}
             <div
               className="relative overflow-hidden"
               style={{
@@ -1737,7 +2024,6 @@ export default function ClientPaymentsPage() {
             </div>
 
             <div style={{ padding: "1.5rem 2rem" }}>
-              {/* Project badge */}
               {currentProject && (
                 <div
                   className="flex items-center gap-2 rounded-xl mb-4 p-3"
@@ -1762,7 +2048,6 @@ export default function ClientPaymentsPage() {
                 </div>
               )}
 
-              {/* Detail rows */}
               <div
                 className="rounded-xl overflow-hidden"
                 style={{ border: "1px solid var(--color-neutral-200)" }}

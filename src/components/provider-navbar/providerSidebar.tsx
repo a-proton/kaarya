@@ -22,8 +22,17 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { useUser } from "@/contexts/UserContext";
+import { useProviderCounts } from "@/hooks/useNotificationCount";
 
-const navigationItems = [
+// ── Nav item type ────────────────────────────────────────────
+interface NavItem {
+  icon: any;
+  label: string;
+  href: string;
+  badgeKey?: "messages" | "notifications"; // which count to show
+}
+
+const navigationItems: NavItem[] = [
   { icon: faTableCellsLarge, label: "Dashboard", href: "/provider/dashboard" },
   { icon: faFolder, label: "Projects", href: "/provider/projects" },
   { icon: faCheckCircle, label: "Milestones", href: "/provider/milestones" },
@@ -41,15 +50,49 @@ const navigationItems = [
     href: "/provider/team-attendance",
   },
   { icon: faCalendar, label: "Calendar", href: "/provider/calendar" },
-  { icon: faMessage, label: "Messages", href: "/provider/messages" },
+  {
+    icon: faMessage,
+    label: "Messages",
+    href: "/provider/messages",
+    badgeKey: "messages", // ← will show unreadMessages count
+  },
   { icon: faDollarSign, label: "Earnings", href: "/provider/earnings" },
   { icon: faFileAlt, label: "Reports", href: "/provider/reports" },
   { icon: faGear, label: "Settings", href: "/provider/settings" },
 ];
 
+// ── Small inline badge ───────────────────────────────────────
+function SidebarBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      style={{
+        minWidth: "1.1rem",
+        height: "1.1rem",
+        padding: "0 0.25rem",
+        borderRadius: "9999px",
+        backgroundColor: "var(--color-primary)",
+        color: "white",
+        fontSize: "0.58rem",
+        fontWeight: 700,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        lineHeight: 1,
+        animation: "badge-pop 200ms ease-out",
+      }}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
+// ── Main component ───────────────────────────────────────────
 export default function ProviderSidebar() {
   const pathname = usePathname();
   const { user, isLoading: userLoading, logout } = useUser();
+  const { unreadMessages } = useProviderCounts();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
@@ -85,6 +128,11 @@ export default function ProviderSidebar() {
   const getRole = () => {
     if (!user) return "";
     return user.business_name ? "Business Owner" : "Service Provider";
+  };
+
+  // Map badgeKey → actual count
+  const badgeCounts: Record<string, number> = {
+    messages: unreadMessages,
   };
 
   return (
@@ -145,6 +193,10 @@ export default function ProviderSidebar() {
           <ul className="space-y-px">
             {navigationItems.map((item) => {
               const isActive = pathname === item.href;
+              const badgeCount = item.badgeKey
+                ? (badgeCounts[item.badgeKey] ?? 0)
+                : 0;
+
               return (
                 <li key={item.href}>
                   <Link
@@ -159,7 +211,20 @@ export default function ProviderSidebar() {
                       fontSize: "0.875rem",
                       textDecoration: "none",
                     }}
+                    onMouseEnter={(e) => {
+                      if (!isActive)
+                        (
+                          e.currentTarget as HTMLAnchorElement
+                        ).style.backgroundColor = "var(--color-neutral-50)";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isActive)
+                        (
+                          e.currentTarget as HTMLAnchorElement
+                        ).style.backgroundColor = "transparent";
+                    }}
                   >
+                    {/* Active indicator bar */}
                     {isActive && (
                       <span
                         className="absolute left-0 top-1/2 rounded-r-sm"
@@ -171,6 +236,7 @@ export default function ProviderSidebar() {
                         }}
                       />
                     )}
+
                     <FontAwesomeIcon
                       icon={item.icon}
                       fixedWidth
@@ -181,7 +247,11 @@ export default function ProviderSidebar() {
                         fontSize: "0.9rem",
                       }}
                     />
+
                     <span className="flex-1 truncate">{item.label}</span>
+
+                    {/* Badge */}
+                    <SidebarBadge count={badgeCount} />
                   </Link>
                 </li>
               );
@@ -198,7 +268,11 @@ export default function ProviderSidebar() {
             onClick={() => setShowLogoutModal(true)}
             disabled={userLoading}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors disabled:opacity-50"
-            style={{ cursor: "pointer", backgroundColor: "transparent" }}
+            style={{
+              cursor: "pointer",
+              backgroundColor: "transparent",
+              border: "none",
+            }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.backgroundColor =
                 "var(--color-neutral-100)";
@@ -259,6 +333,15 @@ export default function ProviderSidebar() {
           </button>
         </div>
       </aside>
+
+      {/* Badge animation */}
+      <style>{`
+        @keyframes badge-pop {
+          0%   { transform: scale(0.5); opacity: 0; }
+          70%  { transform: scale(1.2); }
+          100% { transform: scale(1);   opacity: 1; }
+        }
+      `}</style>
 
       {/* Logout Modal */}
       {showLogoutModal && (
