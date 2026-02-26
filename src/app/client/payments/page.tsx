@@ -26,7 +26,7 @@ import {
   faMoneyBillWave,
   faExternalLinkAlt,
 } from "@fortawesome/free-solid-svg-icons";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isAuthenticated } from "@/lib/auth";
@@ -407,10 +407,10 @@ function MethodSelector({
 }
 
 // ==================================================================================
-// MAIN PAGE
+// INNER PAGE COMPONENT (uses useSearchParams — must be inside Suspense)
 // ==================================================================================
 
-export default function ClientPaymentsPage() {
+function ClientPaymentsInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
@@ -1120,7 +1120,7 @@ export default function ClientPaymentsPage() {
             </div>
           </div>
 
-          {/* Table body (identical to original) */}
+          {/* Table body */}
           <div style={{ overflowX: "auto" }}>
             {paymentsLoading ? (
               <div
@@ -1306,7 +1306,6 @@ export default function ClientPaymentsPage() {
                             gap: "0.35rem",
                           }}
                         >
-                          {/* eSewa badge */}
                           {payment.payment_method === "eSewa" && (
                             <span
                               style={{
@@ -1485,7 +1484,7 @@ export default function ClientPaymentsPage() {
       </div>
 
       {/* ════════════════════════════════════════════
-          PAYMENT MODAL  (eSewa + Manual)
+          PAYMENT MODAL
           ════════════════════════════════════════════ */}
       {showPaymentModal && (
         <div
@@ -1636,7 +1635,7 @@ export default function ClientPaymentsPage() {
                   </div>
                 )}
 
-                {/* ── PAYMENT METHOD SELECTOR ── */}
+                {/* Payment Method Selector */}
                 <div>
                   <label
                     style={{
@@ -1690,7 +1689,7 @@ export default function ClientPaymentsPage() {
                   </div>
                 </div>
 
-                {/* Payment Type (shared) */}
+                {/* Payment Type */}
                 <div>
                   <label
                     style={{
@@ -1719,7 +1718,7 @@ export default function ClientPaymentsPage() {
                   </select>
                 </div>
 
-                {/* ── MANUAL-ONLY FIELDS ── */}
+                {/* Manual-only fields */}
                 {paymentMethod === "manual" && (
                   <>
                     <div className="grid grid-cols-2 gap-4">
@@ -1926,7 +1925,7 @@ export default function ClientPaymentsPage() {
       )}
 
       {/* ════════════════════════════════════════════
-          RECEIPT MODAL  (unchanged)
+          RECEIPT MODAL
           ════════════════════════════════════════════ */}
       {showReceiptModal && selectedPayment && (
         <div
@@ -2200,5 +2199,41 @@ export default function ClientPaymentsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// ==================================================================================
+// PAGE EXPORT — wraps the inner component in Suspense to satisfy Next.js
+// ==================================================================================
+
+export default function ClientPaymentsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          className="min-h-screen flex items-center justify-center"
+          style={{ backgroundColor: "var(--color-neutral-50)" }}
+        >
+          <div className="text-center">
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                border: "3px solid #e5e7eb",
+                borderTopColor: "#1ab189",
+                borderRadius: "50%",
+                animation: "spin 0.7s linear infinite",
+                margin: "0 auto 0.75rem",
+              }}
+            />
+            <p style={{ fontSize: "0.875rem", color: "#6b7280" }}>
+              Loading payments…
+            </p>
+          </div>
+        </div>
+      }
+    >
+      <ClientPaymentsInner />
+    </Suspense>
   );
 }
