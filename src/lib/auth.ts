@@ -57,7 +57,6 @@ export interface UserProfile {
   category_name?: string;
 }
 
-// Preserved from original
 export interface LogoutRequest {
   refresh_token: string;
 }
@@ -156,14 +155,17 @@ export function storeTokens(accessToken: string, refreshToken?: string): void {
   localStorage.setItem("accessToken", accessToken);
   localStorage.setItem("tokenStoredAt", Date.now().toString());
 
-  // IMPORTANT: always save the new refresh token after rotation
   if (refreshToken) {
     localStorage.setItem("refreshToken", refreshToken);
   }
 
-  const expiration = getTokenExpiration(accessToken);
-  if (expiration) {
-    console.log("🔑 Access token expires at:", expiration.toLocaleString());
+  // Set cookie so Next.js middleware can read it
+  const tokenExp = getTokenExpiration(accessToken);
+  const expires = tokenExp ? `; expires=${tokenExp.toUTCString()}` : "";
+  document.cookie = `accessToken=${accessToken}; path=/; SameSite=Lax${expires}`;
+
+  if (tokenExp) {
+    console.log("🔑 Access token expires at:", tokenExp.toLocaleString());
   }
 }
 
@@ -209,6 +211,12 @@ export function clearTokens(): void {
   localStorage.removeItem("tokenStoredAt");
   localStorage.removeItem("authToken");
   clearUserProfile();
+
+  // Clear cookies
+  document.cookie =
+    "accessToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
+  document.cookie =
+    "userType=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
 }
 
 /**
@@ -217,11 +225,6 @@ export function clearTokens(): void {
  * ⚠️  ROTATE_REFRESH_TOKENS = True means Django blacklists the old refresh
  * token and issues a NEW one on every refresh call. We MUST store the new
  * refresh token or the next refresh will get a 401 (old token blacklisted).
- *
- * Your backend wraps the response:
- *   { success: true, data: { access: "...", refresh: "..." } }
- * SimpleJWT default format is also handled:
- *   { access: "...", refresh: "..." }
  */
 export async function silentTokenRefresh(): Promise<string | null> {
   const refreshToken = getRefreshToken();
@@ -246,11 +249,9 @@ export async function silentTokenRefresh(): Promise<string | null> {
 
     const data = await response.json();
 
-    // Handle your backend's wrapped format first, then SimpleJWT default
     const newAccessToken =
       data?.data?.access || data?.access || data?.access_token || null;
 
-    // CRITICAL: capture the rotated refresh token
     const newRefreshToken =
       data?.data?.refresh || data?.refresh || data?.refresh_token || null;
 
@@ -259,7 +260,6 @@ export async function silentTokenRefresh(): Promise<string | null> {
       return null;
     }
 
-    // Store new access token + new refresh token (rotation!)
     storeTokens(newAccessToken, newRefreshToken || refreshToken);
 
     if (newRefreshToken) {
@@ -275,12 +275,6 @@ export async function silentTokenRefresh(): Promise<string | null> {
   }
 }
 
-/**
- * Returns true if the user has an active session.
- * Checks for refresh token + stored profile — NOT the access token expiry.
- * This means the user stays "logged in" even when the access token has
- * expired, as long as the refresh token is valid and stored.
- */
 export function hasSession(): boolean {
   if (typeof window === "undefined") return false;
   const refreshToken = getRefreshToken();
@@ -288,15 +282,12 @@ export function hasSession(): boolean {
   return !!(refreshToken && profile);
 }
 
-// Quick check — access token present and not expired (does NOT attempt refresh)
 export function isAuthenticated(): boolean {
   const token = getAccessToken();
   if (!token) return false;
   return !isTokenExpired(token);
 }
 
-// Preserved from original — bare API call, does NOT update localStorage.
-// Use silentTokenRefresh() for the storage-aware version instead.
 export async function refreshToken(
   refresh: string,
 ): Promise<{ access_token: string }> {
@@ -313,7 +304,6 @@ export async function refreshToken(
   return response.json();
 }
 
-// Password reset helpers
 export async function forgotPassword(email: string) {
   const response = await fetch(`${API_BASE_URL}/api/v1/auth/password/forgot/`, {
     method: "POST",
