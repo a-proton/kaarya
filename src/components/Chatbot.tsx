@@ -14,7 +14,7 @@ import {
   faInfoCircle,
 } from "@fortawesome/free-solid-svg-icons";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 interface Message {
   id: string;
