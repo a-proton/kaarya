@@ -45,7 +45,7 @@ interface TimeSlot {
   end_time: string;
   display_time: string;
   notes: string;
-  is_available?: boolean; // NEW: Track if slot is available
+  is_available?: boolean;
 }
 
 interface AvailabilityDay {
@@ -66,7 +66,7 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
   const [availableSlots, setAvailableSlots] = useState<TimeSlot[]>([]);
-  const [allSlots, setAllSlots] = useState<TimeSlot[]>([]); // NEW: Store all slots including unavailable
+  const [allSlots, setAllSlots] = useState<TimeSlot[]>([]);
   const [availabilityData, setAvailabilityData] = useState<AvailabilityDay[]>(
     [],
   );
@@ -83,7 +83,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
   });
   const [submitting, setSubmitting] = useState(false);
 
-  // Helper to get week start (Sunday)
   function getWeekStart(date: Date) {
     const d = new Date(date);
     const day = d.getDay();
@@ -91,7 +90,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
     return new Date(d.setDate(diff));
   }
 
-  // Format date for API (YYYY-MM-DD)
   function formatDate(date: Date) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -99,7 +97,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
     return `${year}-${month}-${day}`;
   }
 
-  // NEW: Generate all possible hourly slots for business hours (9 AM - 5 PM)
   function generateAllPossibleSlots(): TimeSlot[] {
     const slots: TimeSlot[] = [];
     for (let hour = 9; hour < 17; hour++) {
@@ -111,7 +108,7 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
       const endAMPM = hour + 1 >= 12 ? "PM" : "AM";
 
       slots.push({
-        slot_id: -1 * (hour - 8), // Negative ID for unavailable slots
+        slot_id: -1 * (hour - 8),
         start_time: startTime,
         end_time: endTime,
         display_time: `${startHour12}:00 ${startAMPM} - ${endHour12}:00 ${endAMPM}`,
@@ -122,7 +119,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
     return slots;
   }
 
-  // Fetch availability for current week
   useEffect(() => {
     fetchAvailability();
   }, [weekStart, provider.slug]);
@@ -131,16 +127,13 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
     setLoading(true);
     try {
       const weekStartStr = formatDate(weekStart);
-
       const response = await fetch(
         `/api/v1/calendar/weekly-availability/?provider_slug=${provider.slug}&week_start=${weekStartStr}`,
       );
-
       if (response.ok) {
         const data = await response.json();
         setAvailabilityData(data);
       } else {
-        console.error("Failed to fetch availability:", response.status);
         setAvailabilityData([]);
       }
     } catch (error) {
@@ -151,47 +144,31 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
     }
   }
 
-  // NEW: Fetch available time slots and merge with all possible slots
   async function fetchTimeSlotsForDate(dateStr: string) {
     setLoadingSlots(true);
     try {
       const response = await fetch(
         `/api/v1/calendar/available-slots/?provider_slug=${provider.slug}&date=${dateStr}`,
       );
-
       if (response.ok) {
         const data = await response.json();
         const availableSlotsList = data.slots || [];
-
-        // Generate all possible slots
         const allPossibleSlots = generateAllPossibleSlots();
-
-        // Mark which slots are available
         const mergedSlots = allPossibleSlots.map((possibleSlot) => {
           const matchingSlot = availableSlotsList.find(
             (available: TimeSlot) =>
               available.start_time === possibleSlot.start_time,
           );
-
           if (matchingSlot) {
-            return {
-              ...matchingSlot,
-              is_available: true,
-            };
+            return { ...matchingSlot, is_available: true };
           }
-
-          return {
-            ...possibleSlot,
-            is_available: false,
-          };
+          return { ...possibleSlot, is_available: false };
         });
-
         setAllSlots(mergedSlots);
         setAvailableSlots(
           mergedSlots.filter((slot) => slot.is_available === true),
         );
       } else {
-        console.error("Failed to fetch time slots:", response.status);
         setAllSlots(generateAllPossibleSlots());
         setAvailableSlots([]);
       }
@@ -204,14 +181,12 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
     }
   }
 
-  // Handle date selection
   function handleDateSelect(dateStr: string) {
     setSelectedDate(dateStr);
     setSelectedSlot(null);
     fetchTimeSlotsForDate(dateStr);
   }
 
-  // Generate week dates
   function getWeekDates() {
     const dates = [];
     for (let i = 0; i < 7; i++) {
@@ -225,14 +200,12 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
   const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const weekDates = getWeekDates();
 
-  // Check if date has availability
   function hasAvailability(date: Date): boolean {
     const dateStr = formatDate(date);
     const dayData = availabilityData.find((d) => d.date === dateStr);
     return dayData?.is_available === true;
   }
 
-  // Navigate weeks
   function goToPreviousWeek() {
     const newDate = new Date(weekStart);
     newDate.setDate(newDate.getDate() - 7);
@@ -267,36 +240,32 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
 
     setSubmitting(true);
     try {
-      const response = await fetch(
-        "http://127.0.0.1:8000/api/v1/appointments/create/",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            service_provider_id: provider.id,
-            appointment_date: selectedDate,
-            appointment_time: selectedSlot.start_time,
-            slot_id: selectedSlot.slot_id,
-            client_name: bookingForm.client_name,
-            client_email: bookingForm.client_email,
-            client_phone: bookingForm.client_phone,
-            service_type: bookingForm.service_type,
-            description: bookingForm.description,
-          }),
+      // FIXED: Use relative URL instead of hardcoded http://127.0.0.1:8000
+      const response = await fetch("/api/v1/appointments/create/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify({
+          service_provider_id: provider.id,
+          appointment_date: selectedDate,
+          appointment_time: selectedSlot.start_time,
+          slot_id: selectedSlot.slot_id,
+          client_name: bookingForm.client_name,
+          client_email: bookingForm.client_email,
+          client_phone: bookingForm.client_phone,
+          service_type: bookingForm.service_type,
+          description: bookingForm.description,
+        }),
+      });
 
       if (response.ok) {
-        // UPDATED: Better success message
         alert(
           `✅ Booking request sent successfully!\n\n` +
             `📧 We will send a confirmation to ${bookingForm.client_email}\n\n` +
             `The provider will review and confirm your appointment. ` +
             `You'll receive another email once it's confirmed.`,
         );
-
         setShowBookingModal(false);
         setBookingForm({
           client_name: "",
@@ -309,7 +278,7 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
         setSelectedSlot(null);
         setAvailableSlots([]);
         setAllSlots([]);
-        fetchAvailability(); // Refresh availability
+        fetchAvailability();
       } else {
         const error = await response.json();
         alert(
@@ -354,7 +323,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
           </div>
         </div>
 
-        {/* Week Display */}
         <p className="text-center text-neutral-600 text-sm mb-4">
           {weekStart.toLocaleDateString("en-US", {
             month: "short",
@@ -368,7 +336,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
           })}
         </p>
 
-        {/* Calendar Days */}
         <div className="grid grid-cols-7 gap-2 mb-4">
           {weekDates.map((date, index) => {
             const dateStr = formatDate(date);
@@ -403,7 +370,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
           })}
         </div>
 
-        {/* Time Slots Selection - UPDATED */}
         {selectedDate && (
           <div className="mt-4 pt-4 border-t border-neutral-200">
             <h4 className="font-semibold text-neutral-900 mb-3 flex items-center gap-2">
@@ -449,10 +415,7 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
                               : "border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed opacity-60"
                         }`}
                       >
-                        {/* Slot Time */}
                         <span className="block">{slot.display_time}</span>
-
-                        {/* Unavailable indicator */}
                         {!isAvailable && (
                           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
                             <div className="w-8 h-8 rounded-full bg-neutral-200 flex items-center justify-center">
@@ -464,8 +427,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
                           </div>
                         )}
                       </button>
-
-                      {/* Tooltip for unavailable slots */}
                       {!isAvailable && (
                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
                           <div className="bg-neutral-900 text-neutral-0 text-xs rounded-lg py-2 px-3 whitespace-nowrap shadow-lg">
@@ -486,7 +447,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
               </p>
             )}
 
-            {/* Available slots count */}
             {allSlots.length > 0 && (
               <p className="text-center text-neutral-600 text-xs mt-3">
                 {availableSlots.length} of {allSlots.length} slots available
@@ -508,7 +468,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
           </div>
         )}
 
-        {/* Request Booking Button */}
         <button
           onClick={() => setShowBookingModal(true)}
           disabled={!selectedDate || !selectedSlot || loading}
@@ -517,7 +476,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
           {loading ? "Loading..." : "Request Booking"}
         </button>
 
-        {/* Loading State */}
         {loading && (
           <div className="flex items-center justify-center mt-3">
             <FontAwesomeIcon
@@ -528,14 +486,12 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
           </div>
         )}
 
-        {/* No Availability Message */}
         {!loading && availabilityData.length === 0 && (
           <p className="text-center text-neutral-500 text-sm mt-3">
             No availability set for this week
           </p>
         )}
 
-        {/* Available Days Count */}
         {!loading && availabilityData.length > 0 && (
           <p className="text-center text-neutral-600 text-xs mt-3">
             {availabilityData.filter((d) => d.is_available).length} days
@@ -572,8 +528,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
       {/* Service Area Card */}
       <div className="bg-neutral-0 rounded-xl shadow-sm border border-neutral-200 p-6">
         <h3 className="heading-4 text-neutral-900 mb-4">Service Area</h3>
-
-        {/* Map Placeholder */}
         <div className="relative w-full h-48 bg-neutral-100 rounded-lg mb-4 overflow-hidden">
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="relative">
@@ -588,7 +542,6 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
             </div>
           </div>
         </div>
-
         <p className="text-neutral-700 body-regular text-center mb-3">
           Services within {provider.serviceArea.radius} miles of{" "}
           {provider.serviceArea.location}
@@ -659,8 +612,9 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
       {/* Booking Modal */}
       {showBookingModal && (
         <div className="fixed inset-0 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-0 rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between sticky top-0 bg-neutral-0">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between flex-shrink-0">
               <h3 className="heading-4 text-neutral-900">Request Booking</h3>
               <button
                 onClick={() => setShowBookingModal(false)}
@@ -670,15 +624,16 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
               </button>
             </div>
 
-            <div className="p-6">
+            {/* Modal Body — scrollable */}
+            <div className="p-6 overflow-y-auto flex-1">
               {/* Selected Date & Time Info */}
-              <div className="mb-4 bg-primary-50 border border-primary-200 rounded-lg p-3">
-                <div className="flex items-start gap-2">
+              <div className="mb-5 bg-primary-50 border border-primary-200 rounded-lg p-4">
+                <div className="flex items-start gap-3">
                   <FontAwesomeIcon
                     icon={faCalendarAlt}
-                    className="text-primary-600 mt-1"
+                    className="text-primary-600 mt-0.5 flex-shrink-0"
                   />
-                  <div className="flex-1">
+                  <div>
                     <p className="text-primary-900 font-semibold">
                       {selectedDate &&
                         new Date(selectedDate + "T00:00:00").toLocaleDateString(
@@ -703,7 +658,7 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
               {/* Booking Form */}
               <div className="space-y-4">
                 <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                  <label className="block text-neutral-700 font-semibold mb-1.5 text-sm">
                     Your Name <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -716,12 +671,12 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
                       })
                     }
                     placeholder="John Doe"
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
+                    className="w-full px-4 py-2.5 bg-white border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all text-sm"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                  <label className="block text-neutral-700 font-semibold mb-1.5 text-sm">
                     Email <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -734,12 +689,12 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
                       })
                     }
                     placeholder="john@example.com"
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
+                    className="w-full px-4 py-2.5 bg-white border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all text-sm"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                  <label className="block text-neutral-700 font-semibold mb-1.5 text-sm">
                     Phone <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -751,13 +706,13 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
                         client_phone: e.target.value,
                       })
                     }
-                    placeholder="+1 (555) 123-4567"
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
+                    placeholder="+977 98XXXXXXXX"
+                    className="w-full px-4 py-2.5 bg-white border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all text-sm"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                  <label className="block text-neutral-700 font-semibold mb-1.5 text-sm">
                     Service Type
                   </label>
                   <input
@@ -770,12 +725,12 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
                       })
                     }
                     placeholder="e.g., Consultation, Repair, Inquiry"
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all"
+                    className="w-full px-4 py-2.5 bg-white border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all text-sm"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-neutral-700 font-semibold mb-2 body-small">
+                  <label className="block text-neutral-700 font-semibold mb-1.5 text-sm">
                     Reason for Booking
                   </label>
                   <textarea
@@ -788,7 +743,7 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
                     }
                     placeholder="Please describe your needs..."
                     rows={3}
-                    className="w-full px-4 py-3 bg-neutral-0 border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all resize-none"
+                    className="w-full px-4 py-2.5 bg-white border border-neutral-200 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all resize-none text-sm"
                   />
                 </div>
 
@@ -801,11 +756,12 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
               </div>
             </div>
 
-            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3 sticky bottom-0">
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-3 flex-shrink-0">
               <button
                 onClick={() => setShowBookingModal(false)}
                 disabled={submitting}
-                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors disabled:opacity-50"
+                className="px-5 py-2.5 border-2 border-neutral-200 rounded-lg text-neutral-700 font-semibold hover:bg-neutral-100 transition-colors disabled:opacity-50 text-sm"
               >
                 Cancel
               </button>
