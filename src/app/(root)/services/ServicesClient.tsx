@@ -39,7 +39,7 @@ interface Provider {
   slug: string;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://206.189.147.215";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 type SearchTab = "service" | "name";
 

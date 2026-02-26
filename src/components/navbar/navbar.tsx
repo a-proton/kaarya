@@ -116,7 +116,7 @@ export default function Navbar() {
                 onClick={() => setIsMobileMenuOpen(false)}
                 className="text-gray-700 no-underline text-[0.9375rem] font-medium transition-colors duration-300 hover:text-[#1ab189] py-2"
               >
-                Services
+                Servic Providers
               </Link>
               <Link
                 href="/about"

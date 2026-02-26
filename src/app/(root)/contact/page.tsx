@@ -66,16 +66,13 @@ export default function ContactPage() {
     setErrorMessage(null);
 
     try {
-      const response = await fetch(
-        "http://localhost:8000/api/v1/contact/submit/",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(formData),
+      const response = await fetch("/api/v1/contact/submit/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify(formData),
+      });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));

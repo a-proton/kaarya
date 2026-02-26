@@ -133,7 +133,7 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
       const weekStartStr = formatDate(weekStart);
 
       const response = await fetch(
-        `http://127.0.0.1:8000/api/v1/calendar/weekly-availability/?provider_slug=${provider.slug}&week_start=${weekStartStr}`,
+        `/api/v1/calendar/weekly-availability/?provider_slug=${provider.slug}&week_start=${weekStartStr}`,
       );
 
       if (response.ok) {
@@ -156,7 +156,7 @@ export default function ProfileSidebar({ provider }: ProfileSidebarProps) {
     setLoadingSlots(true);
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/api/v1/calendar/available-slots/?provider_slug=${provider.slug}&date=${dateStr}`,
+        `/api/v1/calendar/available-slots/?provider_slug=${provider.slug}&date=${dateStr}`,
       );
 
       if (response.ok) {

@@ -22,7 +22,7 @@ export default async function ServiceProviderProfile({ params }: PageProps) {
   // Await the params Promise
   const { slug } = await params;
 
-  console.log("🔍 Page received slug:", slug); // ✅ Debug log
+  console.log("🔍 Page received slug:", slug);
 
   // Check if slug is valid
   if (!slug || slug === "undefined") {

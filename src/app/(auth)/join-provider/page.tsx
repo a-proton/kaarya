@@ -46,8 +46,7 @@ export default function JoinProviderPage() {
   useEffect(() => {
     const fetchCategories = async () => {
       try {
-        const API_BASE_URL =
-          process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+        const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
         const response = await fetch(`${API_BASE_URL}/api/v1/categories/`);
 
         if (response.ok) {
@@ -107,8 +106,7 @@ export default function JoinProviderPage() {
         city: data.city,
       };
 
-      const API_BASE_URL =
-        process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 
       const response = await fetch(
         `${API_BASE_URL}/api/v1/auth/register/provider/`,
@@ -118,7 +116,7 @@ export default function JoinProviderPage() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(payload),
-        }
+        },
       );
 
       const result = await response.json();
@@ -144,7 +142,7 @@ export default function JoinProviderPage() {
       if (result.token || result.access_token || result.access) {
         localStorage.setItem(
           "authToken",
-          result.token || result.access_token || result.access
+          result.token || result.access_token || result.access,
         );
       }
 
@@ -157,7 +155,7 @@ export default function JoinProviderPage() {
       setApiError(
         error instanceof Error
           ? error.message
-          : "An unexpected error occurred. Please try again."
+          : "An unexpected error occurred. Please try again.",
       );
     }
   };
@@ -511,7 +509,7 @@ export default function JoinProviderPage() {
                     {password && !errors.password && passwordStrength && (
                       <p
                         className={`text-xs mt-1.5 ml-1 flex items-center gap-1 ${getPasswordStrengthColor(
-                          passwordStrength
+                          passwordStrength,
                         )}`}
                       >
                         <i className="fas fa-shield-alt"></i>

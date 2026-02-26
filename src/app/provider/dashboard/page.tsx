@@ -29,8 +29,7 @@ import Link from "next/link";
 /* API                                         */
 /* ─────────────────────────────────────────── */
 const fetchDashboardData = async () => {
-  const baseUrl =
-    process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
   const token = getAccessToken();
 
   if (!token) throw new Error("No authentication token found");
