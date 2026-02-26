@@ -170,7 +170,7 @@ export default function ServicesClient() {
       const params: any = {
         query: term,
         location_text: loc && loc.trim() ? loc.trim() : "Nepal",
-        radius_km: loc && loc.trim() ? 100 : 10000,
+        radius_km: 100, // was: loc && loc.trim() ? 100 : 10000
       };
       if (categoryId && categoryId !== 0) params.category_id = categoryId;
 
