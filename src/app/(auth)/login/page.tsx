@@ -284,7 +284,7 @@ function LoginContent() {
 
           {activeTab === "provider" && (
             <>
-              <button
+              {/* <button
                 type="button"
                 title="Sign in with Google"
                 className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl mb-3 border-2 border-neutral-200 bg-white transition-all duration-300 hover:shadow-md hover:border-neutral-300 hover:-translate-y-0.5"
@@ -303,7 +303,7 @@ function LoginContent() {
                 <span className="text-sm font-semibold">
                   Continue with Apple
                 </span>
-              </button>
+              </button> */}
               <div className="relative mb-6">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-neutral-200"></div>
